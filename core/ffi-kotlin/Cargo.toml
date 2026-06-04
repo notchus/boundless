@@ -1,0 +1,11 @@
+[package]
+name = "boundless-ffi-kotlin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# UniFFI scaffolding (and the `crate-type = ["cdylib"]` lib target) is added at the
+# contract freeze in T10.

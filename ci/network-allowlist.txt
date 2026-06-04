@@ -1,0 +1,24 @@
+# Boundless dependency-source allow-list (informational scaffold — AC13 / I8).
+#
+# Today the ACTIVE CI enforcement is the tracker DENYlist (ci/forbidden-trackers.txt),
+# scanned by scripts/check-network-allowlist.sh. As each ecosystem's lock file lands,
+# that script will additionally assert every resolved dependency source resolves to one
+# of the registries/domains below. Adding a domain requires review — it widens the
+# network surface a build is allowed to trust.
+
+# Rust / crates.io
+static.crates.io
+index.crates.io
+crates.io
+
+# Node / npm (web admin)
+registry.npmjs.org
+
+# Android / Gradle (Maven)
+repo.maven.apache.org
+dl.google.com
+plugins.gradle.org
+
+# Apple / Swift Package Manager (git-based)
+github.com
+swiftpackageindex.com

@@ -1,0 +1,15 @@
+# Boundless edge/server — the deployable Cloudflare Workers (workers-rs) crate.
+# Kept as its own package (not part of the core workspace) so the pre-push/CI server
+# stage builds it independently; it depends on `boundless-server-core` once endpoints
+# land. Scaffolded by spec 001 task T01.
+[package]
+name = "boundless-worker"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.89"
+license = "AGPL-3.0-only"
+repository = "https://github.com/notchus/boundless"
+
+[dependencies]
+# workers-rs (`worker`), Hyperdrive/KV/Queues bindings, and the path dependency on
+# ../core/server are added when endpoints land (T07/T08).

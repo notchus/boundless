@@ -1,0 +1,19 @@
+# Boundless HTTP API — OpenAPI 3.1. SOURCE OF TRUTH for the HTTP contract
+# (docs/stack-matrix.md → API contracts). Generated clients live in
+# api/generated/<lang>/ and are produced by scripts/generate-bindings.sh —
+# NEVER hand-edit generated files (enforced by scripts/check-binding-drift.sh).
+#
+# SCAFFOLD PLACEHOLDER (spec 001 task T01). The contract is finalized and FROZEN in
+# task T10. At freeze, `client_min_version` and `client_recommended_version` become
+# REQUIRED fields on every /api/auth/* response (spec 001 AC7), and the /api/auth/*,
+# /api/dev/*, and /api/admin/auth/* paths are filled in.
+openapi: 3.1.0
+info:
+  title: Boundless API
+  version: 0.0.0
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+paths: {}
+components:
+  schemas: {}

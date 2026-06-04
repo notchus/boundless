@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  binding-drift:
+    name: Binding-drift gate (ADR-0001)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bindings in sync (core/api ↔ api/generated)
+        run: bash scripts/check-binding-drift.sh
+      - name: Meta-test the drift gate
+        run: bash scripts/test-binding-drift.sh
+
+  network-allowlist:
+    name: Network allow-list (I8 / AC13)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-network-allowlist.sh
+
+  rust-core:
+    name: Rust core (fmt · clippy · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml)
+        # `rustup show` materializes the channel + components + targets declared in
+        # rust-toolchain.toml; the explicit adds below are idempotent belt-and-suspenders.
+        run: |
+          rustup show
+          rustup component add rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+      - name: rustfmt
+        working-directory: core
+        run: cargo fmt --all -- --check
+      - name: clippy
+        working-directory: core
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: test
+        working-directory: core
+        run: cargo test --locked --workspace
+      - name: server build
+        working-directory: server
+        run: cargo build --locked

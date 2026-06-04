@@ -1,0 +1,13 @@
+{
+  "name": "@boundless/admin-web",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Boundless admin web (SvelteKit). The app is scaffolded in spec 001 task T15; this manifest exists in T01 only to pin the admin-WebAuthn edge-verification dependency per docs/stack-matrix.md and ADR-0017.",
+  "scripts": {
+    "test": "echo 'web: no tests yet (scaffold; real tests land in spec 001 T15)'"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.1"
+  }
+}

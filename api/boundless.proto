@@ -1,0 +1,10 @@
+// Boundless WebSocket messages — proto3 (Buf). SOURCE OF TRUTH for the WS contract
+// (docs/stack-matrix.md → API contracts). Generated code lives in api/generated/<lang>/
+// and is produced by scripts/generate-bindings.sh — NEVER hand-edit generated files
+// (enforced by scripts/check-binding-drift.sh).
+//
+// SCAFFOLD PLACEHOLDER (spec 001 task T01). Finalized and FROZEN in task T10, where the
+// open-handshake message carries `client_min_version` (spec 001 AC7).
+syntax = "proto3";
+
+package boundless.v1;

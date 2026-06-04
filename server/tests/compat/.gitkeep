@@ -1,0 +1,2 @@
+# N-2 backward-compatibility replay harness (O1) lands in spec 001 task T08.
+# Replays current + two previous minor versions' auth request fixtures against this build.

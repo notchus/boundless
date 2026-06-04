@@ -1,0 +1,36 @@
+# Forbidden third-party analytics / trackers / crash SDKs — privacy invariant I8.
+# scripts/check-network-allowlist.sh fails CI if any dependency lock file references one.
+# Matching is case-insensitive SUBSTRING against lock files; keep patterns SPECIFIC to
+# avoid false positives. Self-hosted observability (OpenTelemetry → Grafana, or
+# Cloudflare Analytics Engine for non-PII) is the only allowed path. A legitimate
+# exception requires an ADR and a comment here.
+
+# ── named explicitly in docs/privacy-invariants.md I8 ──
+google-analytics
+googletagmanager
+mixpanel
+@amplitude/
+amplitude-js
+@sentry/
+sentry-browser
+crashlytics
+firebase-crashlytics
+com.google.firebase:firebase-crashlytics
+facebook-pixel
+fbevents
+react-native-fbsdk
+com.facebook.android:facebook-
+
+# ── common kin (same class; not exhaustive) ──
+firebase-analytics
+com.google.firebase:firebase-analytics
+@segment/analytics
+segment-analytics
+posthog
+@fullstory/
+fullstory
+heap-analytics
+hotjar
+@datadog/browser-rum
+appsflyer
+adjust-sdk

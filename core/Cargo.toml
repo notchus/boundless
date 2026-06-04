@@ -1,0 +1,35 @@
+# Boundless Rust core — virtual workspace (ADR-0001, docs/architecture.md §1).
+#
+# The single source of truth for domain types, crypto, auth, and sync. Native clients
+# are GENERATED from these crates via UniFFI (Swift/Kotlin) and wasm-bindgen (web);
+# hand-rolled platform duplicates are a CI failure (see scripts/check-binding-drift.sh).
+#
+# Scaffolded by spec 001 task T01. Crate bodies are filled in by later tasks (see each
+# crate's lib.rs).
+[workspace]
+resolver = "2"
+members = [
+    "domain",
+    "auth",
+    "crypto",
+    "sync",
+    "server",
+    "ffi-swift",
+    "ffi-kotlin",
+    "ffi-wasm",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+# MSRV floor = the dryoc 0.8.0 minimum supported Rust version (verified 2026-06-04).
+# The build toolchain itself is pinned in rust-toolchain.toml.
+rust-version = "1.89"
+license = "AGPL-3.0-only"
+repository = "https://github.com/notchus/boundless"
+
+[workspace.dependencies]
+# Pinned per docs/stack-matrix.md. dryoc 0.8.0 is the latest PUBLISHED release on
+# crates.io (MIT, pure-Rust, wasm32-compatible, MSRV 1.89). It is declared here but not
+# yet activated by any member; core/crypto opts in via `dryoc.workspace = true` in T03.
+dryoc = "0.8.0"

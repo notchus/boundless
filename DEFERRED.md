@@ -56,9 +56,77 @@
       Secrets Store.
   - **WHEN:** before implementing Android push.
 
+- [ ] **Store Cloudflare API token in GitHub Actions secrets** for CI deploys.
+  - **WHEN:** setting up the deploy workflow.
+  - **Note:** Not needed for local MCP — that uses OAuth.
+
+- [ ] **Re-confirm the network allow-list (AC13/I8) as the web dep tree grows.** At T01
+      the web tier IS now scanned: pinning `@simplewebauthn/server` produced a committed
+      `web/pnpm-lock.yaml`, and `scripts/check-network-allowlist.sh` scans it (currently
+      clean — no trackers). When T15 builds the SvelteKit app and `pnpm install` expands
+      that lock with the full dep tree (SvelteKit, Tailwind, Vitest, Playwright, axe-core,
+      …), re-run/confirm the allow-list still passes and tighten patterns if needed.
+  - **WHEN:** spec 001 **T15** (SvelteKit admin web).
+
+- **Cloudflare API MCP is authorized READ-ONLY by design.** Infra mutations go
+  through Wrangler (human/CI gate), not the agent. If a task needs MCP write
+  access, re-auth with Custom scopes for just that task, then revert. Never
+  grant standing full access.
+
 - [ ] **Fill in the TODO version numbers in `docs/stack-matrix.md`** with the
       actual installed versions.
   - **WHEN:** as each part of the stack gets initialized.
+  - **Progress:** Rust toolchain filled (1.95.0) at spec 001 T01. Swift, Kotlin,
+    TypeScript, Xcode, Android Studio, pnpm, and the per-crate Rust deps remain TODO
+    until those parts are initialized.
+
+- [ ] **Re-pin `dryoc` to 0.9.0 (or the then-latest)** once it is *published* to
+      crates.io. At T01 the stack-matrix's `dryoc 0.9.0` was found to be unpublished
+      (0.9.0 exists only on the dryoc `main` branch); the pin was corrected to the
+      latest published release **0.8.0** (MIT, MSRV 1.89, pure-Rust/wasm32 — same
+      properties). 0.8.0 is fully sufficient; this is a "keep current" follow-up, not a
+      blocker.
+  - **WHEN:** when implementing `core::crypto` (T03), check crates.io for a newer
+    published dryoc and bump if available; update `docs/stack-matrix.md` to match the lock.
+
+---
+
+## Spec-Driven tooling
+
+- [x] **Spec Kit `/speckit.*` commands were not installed upstream.** Instead added
+      local command shims (`.claude/commands/speckit.{plan,tasks,implement}.md`) that
+      drive the same constitution-aware, subagent-based flow as the custom commands.
+  - **DONE:** 2026-06-04. If full GitHub Spec Kit is later wanted, install via the
+    `specify` CLI — but expect to reconcile its templates with the custom constitution
+    wiring and the existing `.claude/commands/` set.
+
+---
+
+## Auth / Onboarding (spec 001 plan deferrals)
+
+- [ ] **Three new privacy-invariant tests — implement WITH their code** (P9: the
+      implementing test ships in the same PR):
+      (1) `auth_refresh_rotation_replay_detected` — a replayed pre-rotation refresh
+      credential is rejected and kills the session family (the sole control behind
+      ADR-0016's no-forced-expiry decision);
+      (2) extend the I12 forgetting property test to the new auth artifacts (phone
+      hash + ciphertext, device tokens, sessions/refresh, outstanding Onboarding /
+      Recovery codes, admin WebAuthn creds);
+      (3) a named delete-leg device-token invalidation test, distinct from
+      `i4_tokens_invalidated_on_reonboarding` and `…_on_logout`.
+  - **WHEN:** implementing `core::auth` + `core::deletion`. Consider adding the
+    refresh-rotation invariant to `docs/privacy-invariants.md` (with its test same PR).
+
+- [ ] **Critical Alerts capability-upgrade path** — onboarding currently requests
+      *standard* notifications (interim, spec 001 OQ6). Once the Critical Alerts
+      entitlement lands, upgrade the rider doorbell path to Critical Alerts.
+  - **WHEN:** Apple approves the Critical Alerts entitlement (see **Apple** section).
+
+- [ ] **Admin WebAuthn verification host** — if the decision lands on a native Rust
+      sidecar (`webauthn-rs` can't run in Workers wasm — `openssl-sys` C-FFI), that
+      adds one always-on service to deploy/monitor; if it lands on edge-TS, no infra
+      is added.
+  - **WHEN:** resolved by the in-flight edge-TS verification → ADR-0017.
 
 ---
 

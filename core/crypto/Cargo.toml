@@ -1,0 +1,11 @@
+[package]
+name = "boundless-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Activated in T03 (the pin lives in core/Cargo.toml [workspace.dependencies]):
+#   dryoc.workspace = true

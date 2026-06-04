@@ -35,6 +35,9 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0001](./0001-rust-core.md) — Single shared Rust core for domain types and business logic
 - [ADR-0013](./0013-license.md) — AGPL-3.0 for the entire repository (+ App Store §7 exception)
 - [ADR-0014](./0014-server-driven-config.md) — Server-Driven Configuration via Cloudflare KV (supports P13 / O1–O8)
+- [ADR-0015](./0015-admin-invitation-channel.md) — Admin invitation channel; narrows I11 to permit a developer-minted single-use Email Workers registration link
+- [ADR-0016](./0016-auth-model.md) — Authentication & device-binding model (Onboarding Code, indefinite silent-refresh sessions, rider/driver recovery, admin WebAuthn)
+- [ADR-0017](./0017-admin-auth-edge-webauthn.md) — Admin auth = in-app WebAuthn verified by @simplewebauthn/server on the Cloudflare edge (no sidecar); resolves the architecture.md-vs-spec conflict; documents the P4 carve-out
 
 ## Suggested early ADRs to author (stubs)
 

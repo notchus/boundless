@@ -122,11 +122,14 @@ The logging pipeline runs every log line through a scrubber that detects PII pat
 
 ## I11 — Admin accounts are issued only by the developer
 
-There is no signup form. There is no "request access" link. There is no email-based invite for Admins (only members are invitable by Admins; Admins themselves require the developer to provision).
+There is no signup form. There is no "request access" link. No member or anonymous caller can obtain or escalate to an Admin role — Admins exist only because the Developer deliberately provisions them.
+
+> **Clarified by ADR-0015 (2026-06-04):** I11 is about *who initiates access* (only the Developer), not *how a registration link is transported*. The original "no email-based invite for Admins" wording is narrowed: the Developer **may** deliver a single-use, short-TTL, developer-minted Admin *registration* link out of band via Email Workers, provided the link carries no PII beyond the opaque token, carries no credential material, is consumed on first successful WebAuthn registration, and only initiates registration against an already-provisioned pending Admin record. Member-initiated or self-serve invites of any kind remain forbidden. This reconciles I11 with `docs/stack-matrix.md` ("Email Workers (admin invites)").
 
 **Enforcement:**
 - The Admin creation endpoint requires a developer-only auth header.
 - Developer auth is a hardware-key-backed credential (YubiKey or equivalent) verified via WebAuthn.
+- The registration link/token is single-use and TTL-bounded, validated server-side; reuse or expiry is rejected. Test: `core::auth::tests::i11_admin_invite_token_single_use` (+ spec 001 AC16).
 - Test: integration test asserts unauth'd and admin-auth'd requests to `/api/dev/admins` are both rejected.
 
 ---

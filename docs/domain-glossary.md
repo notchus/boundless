@@ -65,6 +65,16 @@ The full-bleed terra "Daniel is at your door" notification + Live Activity on th
 ### Optional Live Tracker
 An opt-in (Driver's choice) E2E-encrypted live position feed shown to the Rider after the Driver has left. Default: off. Never shows Rider's address.
 
+### Onboarding Code
+The one-time, Admin-issued secret a trusted helper enters during a member's first-launch to bind that device to the member's identity. Short-lived, single-use, rate-limited, server-validated; regenerable by an Admin. Carries no PII. Not SMS/email-based (per ADR-0016, P11, I8).
+- Code type: `OnboardingCode`.
+- See: ADR-0016, spec 001.
+
+### Recovery Code
+A single-use, **Driver-held** secret captured once at the Driver's onboarding, used to self-serve re-bind a new device without Admin involvement (phone number + Recovery Code). A fresh one is issued on use; if lost, the Driver falls back to the Admin re-issuing an **Onboarding Code**. Riders do **not** use Recovery Codes — Riders always recover via an Admin.
+- Code type: `RecoveryCode`.
+- See: ADR-0016.
+
 ---
 
 ## Concepts

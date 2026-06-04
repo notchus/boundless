@@ -56,7 +56,7 @@ Boundless is a privacy-first geofence carpooling platform for closed groups. Nat
                                                                  │  PII encrypted   │
                                                                  └──────────────────┘
 
-                          SvelteKit Admin Web ──── Cloudflare Pages ─── Access (SSO) ─── same Workers API
+                          SvelteKit Admin Web ──── Cloudflare Pages ─── WebAuthn (in-app) ─── same Workers API
 
 External:
   · APNs (Apple) and FCM (Google) — push, via Queues
@@ -76,6 +76,7 @@ Workspace under `core/`. Crates:
 - `core/domain` — `Rider`, `Driver`, `Group`, `Chain`, `OptOut`, `Gathering`, `EffortCaps`, tainted-type wrappers (`Address`, `PhoneNumber`, `DeviceToken`). Pure logic, no I/O.
 - `core/matching` — geofence algorithm, chain construction, effort-cap enforcement. Property-tested with `proptest`.
 - `core/crypto` — sealed boxes, per-Group keys, phone hashing, address encryption.
+- `core/auth` — authentication & onboarding logic: device binding (Onboarding/Recovery codes), session + silent refresh-token rotation, device-token binding `(member_id, platform, app_version)`, client-version comparison. Pure logic + injected `Clock`/RNG. See ADR-0016 and spec 001. (Admin WebAuthn *verification* is the exception — it runs in TypeScript on the edge, not here; see §4 and ADR-0017.)
 - `core/sync` — WebSocket message types (compiled from `api/boundless.proto`), state machines.
 - `core/server` — Worker entry points, Durable Object class, Hyperdrive queries.
 - `core/ffi-swift` — UniFFI binding crate → produces XCFramework.
@@ -109,7 +110,7 @@ Workspace under `core/`. Crates:
 `web/` — SvelteKit 2.
 
 - Server routes hit the same Workers API as the apps (no separate admin API).
-- Auth via Cloudflare Access (SSO + passkeys).
+- Admin auth is **in-app WebAuthn** (passkeys or hardware keys) against our own credential store — verified server-side in TypeScript (`@simplewebauthn/server`) on the SvelteKit Cloudflare edge, with WebAuthn challenges held in KV (5-min TTL). **Not** Cloudflare Access. See ADR-0016 D4 and ADR-0017.
 - Heavy table UIs with TanStack Table + TanStack Query.
 
 ### 5. Edge / server
@@ -210,7 +211,7 @@ The ETA matrix is computed by a scheduled Worker on admin address updates:
 |---|---|
 | Rider client → Worker | Authenticated; rate-limited; Turnstile on auth |
 | Driver client → Worker | Authenticated; rate-limited |
-| Admin web → Worker | Authenticated via Cloudflare Access (passkey); audit-logged |
+| Admin web → Worker | Authenticated via in-app WebAuthn (passkey/hardware key; verified on the edge via `@simplewebauthn/server`); audit-logged. See ADR-0017 |
 | Developer → Worker `/api/dev/*` | Hardware-key (WebAuthn) only |
 | Worker → DO | RPC, in-Cloudflare network only |
 | DO → Postgres | Hyperdrive, mTLS |

@@ -12,7 +12,7 @@
 
 | Tool | Version | Pinned via |
 |---|---|---|
-| Rust | TODO (use stable, latest at project init; pin in `rust-toolchain.toml`) | `rust-toolchain.toml` |
+| Rust | 1.95.0 (latest stable at project init, 2026-06-04; ≥ dryoc MSRV 1.89) | `rust-toolchain.toml` |
 | Swift | TODO (latest stable shipping with Xcode) | Xcode version pin |
 | Kotlin | TODO (2.x latest stable) | `gradle/libs.versions.toml` |
 | TypeScript | TODO (5.x strict) | `package.json` + `tsconfig.json` |
@@ -38,7 +38,7 @@
 | `insta` | TODO | Snapshot tests for serialization |
 | `chrono` or `time` | TODO (pick one — file ADR if both used) | Date/time |
 | `uuid` | TODO | Stable IDs |
-| `sodiumoxide` / `dryoc` | TODO (pick one — libsodium binding) | PII encryption (sealed boxes) |
+| `dryoc` | 0.8.0 | libsodium crypto: PII sealed-box/secretbox encryption (I1/I3), Ed25519 manifest signature verification (ADR-0014), constant-time HMAC-SHA256 phone-lookup hash (I3). **Pure-Rust, wasm32-compatible** (Workers + browser). Chosen over `sodiumoxide` (deprecated, C-FFI, no wasm). MIT. **MSRV 1.89.** 0.8.0 is the latest *published* release on crates.io (released 2026-05-15); 0.9.0 exists only as unreleased code on the dryoc `main` branch, so the pin was corrected 0.9.0 → 0.8.0 against the registry on 2026-06-04 (spec 001 T01 — "lock files win"). |
 | `geo` / `geo-types` | TODO | Geometry primitives |
 | `petgraph` | TODO | Graph algorithms for chain optimization |
 
@@ -114,6 +114,7 @@
 | Playwright | E2E tests |
 | Vitest | Unit tests |
 | axe-core | A11y CI lint |
+| `@simplewebauthn/server` 13.x | Admin WebAuthn (passkey) Relying-Party verification on the Cloudflare edge — WebCrypto-based, runs in the Workers runtime (MIT). Challenges held in KV (5-min TTL). Chosen over a native `webauthn-rs` sidecar (which can't run in Workers wasm). See ADR-0017. Verified 2026-06-04 via docs-researcher. |
 
 **Forbidden:**
 - `localStorage` for PII (use server-side session)
