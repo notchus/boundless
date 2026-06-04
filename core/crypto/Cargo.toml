@@ -7,5 +7,29 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Activated in T03 (the pin lives in core/Cargo.toml [workspace.dependencies]):
-#   dryoc.workspace = true
+# Single-source crypto (P4). Pins live in core/Cargo.toml [workspace.dependencies].
+# dryoc — Ed25519 detached-signature manifest verification (ADR-0014, AC10).
+# hmac + sha2 — HMAC-SHA256 keyed hash for phone lookup + code-at-rest (I3/AC3, ADR-0018).
+# serde/serde_json — canonical (sorted-key) manifest bytes the signature covers.
+# boundless-domain — the tainted value types (expose_secret confined to this crate).
+dryoc.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+boundless-domain.workspace = true
+
+[dev-dependencies]
+# static_assertions — compile-time proof keys/hashes expose no Debug/Display (P2).
+# base64 — decode the manifest fixtures' signature/public-key fields.
+static_assertions.workspace = true
+base64.workspace = true
+
+# dryoc 0.8.0 hard-depends (NOT feature-gated) on `rand` → `getrandom 0.4`, which
+# compile_error!s on wasm32-unknown-unknown unless a backend is chosen. core/crypto must
+# build for wasm32 (the Cloudflare Worker server + browser admin web), so we select
+# getrandom's `wasm_js` backend (Web Crypto — present in Workers AND browsers). This is
+# COMPILE-enablement only: T03's code calls zero randomness (deterministic HMAC-verify +
+# Ed25519-verify), so no ambient randomness is *used* (ADR-0018; see DEFERRED → Crypto).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }

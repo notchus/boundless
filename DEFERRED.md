@@ -78,10 +78,11 @@
   - **WHEN:** as each part of the stack gets initialized.
   - **Progress:** Rust toolchain filled (1.95.0) at spec 001 T01. `core/domain` deps
     filled at spec 001 T02 from the lock: `serde` 1.0.228 (+ `serde_core`), `serde_json`
-    1.0.150, `uuid` 1.23.2, `insta` 1.47.2, `static_assertions` 1.1.0. Swift, Kotlin,
-    TypeScript, Xcode, Android Studio, pnpm, and the remaining Rust deps (`uniffi`,
-    `tokio`, `proptest`, `chrono`/`time`, `geo`, `petgraph`, …) remain TODO until those
-    parts are initialized.
+    1.0.150, `uuid` 1.23.2, `insta` 1.47.2, `static_assertions` 1.1.0. `core/crypto` deps
+    filled at spec 001 **T03**: `hmac` 0.13.0, `sha2` 0.11.0, `base64` 0.22.1 (dev), and
+    the `getrandom` 0.4.2 wasm32 shim (`wasm_js`). Swift, Kotlin, TypeScript, Xcode,
+    Android Studio, pnpm, and the remaining Rust deps (`uniffi`, `tokio`, `proptest`,
+    `chrono`/`time`, `geo`, `petgraph`, …) remain TODO until those parts are initialized.
 
 - [ ] **Re-pin `dryoc` to 0.9.0 (or the then-latest)** once it is *published* to
       crates.io. At T01 the stack-matrix's `dryoc 0.9.0` was found to be unpublished
@@ -91,6 +92,10 @@
       blocker.
   - **WHEN:** when implementing `core::crypto` (T03), check crates.io for a newer
     published dryoc and bump if available; update `docs/stack-matrix.md` to match the lock.
+  - **Checked 2026-06-04 (T03):** 0.8.0 is still the latest *published* release (lib.rs:
+    released 2026-05-15; docs.rs has nothing newer). **No bump.** Re-check at the next
+    crypto task. NB: dryoc 0.8.0 hard-depends (un-feature-gated) on `rand`→`getrandom 0.4`,
+    handled via the wasm32 `wasm_js` shim — see the Crypto register below and ADR-0018.
 
 ---
 
@@ -130,6 +135,68 @@
       adds one always-on service to deploy/monitor; if it lands on edge-TS, no infra
       is added.
   - **WHEN:** resolved by the in-flight edge-TS verification → ADR-0017.
+
+---
+
+## Crypto / `core::crypto` (spec 001 T03 — out-of-scope register)
+
+> T03 implemented exactly: HMAC-SHA256 phone-lookup + Onboarding/Recovery code-at-rest
+> hashing with constant-time verify (I3/AC3), and Ed25519 manifest verification + the
+> ADR-0014 tiered fallback (AC10). Everything below was **deliberately left out** of that
+> slice (per the approved plan + the "keep track of everything out of scope" instruction).
+> Each carries a WHEN trigger so it is picked up at the right task.
+
+- [ ] **Per-Group sealed-box / secretbox PII encryption (I1).** dryoc-based encryption of
+      `Address` (and any field-level PII) at rest. The `core/crypto` doc still names this as
+      the crate's eventual scope, but T03 does **not** implement it (addresses are entered at
+      admin *issuance*, not on the onboarded device).
+  - **WHEN:** **spec 008** (admin member-management / issuance), where `Address` persistence
+    and the per-Group key + KEK (Secrets Store) land. Adds the `i1_addresses_encrypted` test.
+
+- [ ] **Onboarding/Recovery code generation, TTL, rate-limit, single-use + regenerate-
+      invalidates-prior.** T03 ships only the at-rest **hash** primitive (`*_code_hash` /
+      `*_code_matches`). The lifecycle/validation logic is separate.
+  - **WHEN:** **T04** (`core::auth` code logic, server-time semantics) + **T07** (server
+    enforcement). Tests: `prop_onboarding_code_single_use_ttl_ratelimit`, `ac17_*`.
+
+- [ ] **Phone-number normalization (E.164) before hashing.** `core::crypto` hashes the exact
+      bytes it is handed; the caller must normalize so the *same* human phone always yields
+      the same `phone_lookup_hash`. Not done in T03 (no normalization in the crypto layer).
+  - **WHEN:** **T04** (`core::auth`) / **T07** (server sign-in lookup path).
+
+- [ ] **`HmacKey` provisioning + rotation.** The per-instance secret is *passed in*
+      (`HmacKey::from_bytes`); loading it from Cloudflare **Secrets Store** and any rotation
+      policy are infra/server, not core (forbidden-patterns: no hardcoded secrets).
+  - **WHEN:** **T07** (server) + infra (Secrets Store wiring).
+
+- [ ] **Manifest-mint Worker (server-side signing) + signing-key management + bundled
+      public key.** T03 implements client-side **verification**, the canonical-bytes contract
+      (`canonical_manifest_bytes` = sorted-key compact JSON), and a reproducible test vector.
+      Still out of scope: the production Ed25519 *signing* Worker, the signing key in Secrets
+      Store, quarterly rotation, and embedding the trusted **public** key in each client
+      binary. **The signer MUST canonicalize identically** to `canonical_manifest_bytes`
+      (sorted-key compact JSON) **and keep the manifest integer-only — no floats** (floats have
+      no canonical cross-impl serialization), or signatures won't verify. A float-valued
+      manifest field is a breaking change to the signing contract.
+  - **WHEN:** a server/infra task for ADR-0014's manifest pipeline (not in spec 001's task
+    list — surface when the manifest service is built).
+
+- [ ] **Key/secret zeroization on drop.** `HmacKey` has no `Debug`/`Display` (can't be
+      logged), but its bytes are not zeroized on drop. Marginal here (it lives the process
+      lifetime, loaded once from Secrets Store), deferred as hardening (consider `zeroize`).
+  - **WHEN:** a crypto-hardening pass before GA.
+
+- [ ] **Workspace RNG-backend policy.** dryoc transitively pulls `rand`→`getrandom 0.4`;
+      T03 enabled `getrandom`'s `wasm_js` backend on wasm32 *only to compile* (it uses zero
+      randomness). Decide workspace-wide whether to keep `wasm_js` (for the server's eventual
+      real RNG — code/nonce generation) or install a custom *erroring* backend until then, to
+      keep "no ambient randomness" literally enforced. See ADR-0018.
+  - **WHEN:** **T07** (server), when server-side randomness is first genuinely needed.
+
+- [ ] **`core/crypto/tests/invariants.rs` enumerating *every* privacy invariant (P9 goal).**
+      T03 covers **I3** (+ the AC10 manifest tiers). I1/I2/etc. get their named tests when
+      their primitives exist.
+  - **WHEN:** as each invariant's primitive lands (I1 → spec 008; I2 → matching, spec 004+).
 
 ---
 

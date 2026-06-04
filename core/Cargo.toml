@@ -44,9 +44,28 @@ dryoc = "0.8.0"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["serde"] }
 
-# Test-only. serde_json — load/round-trip the golden fixtures. insta — serialization +
-# redacted-summary snapshots (`json` feature is required for assert_json_snapshot!).
-# static_assertions — compile-time proof that the tainted types expose no Debug/Display.
+# Keyed-hash crypto for core/crypto (spec 001 T03). HMAC-SHA256 backs the phone-lookup
+# hash and the Onboarding/Recovery code-at-rest hash (I3/AC3). dryoc (declared above) has
+# no SHA-256 — its `crypto_auth` is HMAC-SHA512-256 — so per ADR-0018 the keyed hash uses
+# RustCrypto `hmac` + `sha2`, while dryoc remains the SOLE Ed25519 manifest-signature impl
+# (ADR-0014). Both are pure-Rust, wasm32-safe, no `getrandom` (HMAC/SHA are deterministic).
+# Versions verified 2026-06-04 against crates.io (`cargo add --dry-run`); lock is ground truth.
+hmac = "0.13"
+sha2 = "0.11"
+
+# Internal crate, shared via the workspace. core/crypto takes the tainted value types
+# (PhoneNumber/OnboardingCode/RecoveryCode) by reference so `expose_secret()` is confined
+# to the crypto crate. core/auth + core/sync will reuse this entry.
+boundless-domain = { path = "domain" }
+
+# serde_json — load/round-trip the golden fixtures (test) AND the canonical, sorted-key
+# manifest serialization that the Ed25519 signature covers (normal dep of core/crypto, T03).
 serde_json = "1"
+
+# Test-only. insta — serialization + redacted-summary snapshots (`json` feature required
+# for assert_json_snapshot!). static_assertions — compile-time proof that the tainted /
+# key / hash types expose no Debug/Display. base64 — decode the manifest fixtures' detached
+# signature + public-key fields in core/crypto's invariants tests (T03).
 insta = { version = "1", features = ["json"] }
 static_assertions = "1.1"
+base64 = "0.22"

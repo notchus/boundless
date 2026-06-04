@@ -16,6 +16,12 @@ whose `ac10_manifest_*` tests are the actual verifiers — keeping crypto single
 - A present `signature`/`public_key` (all-zero base64) is a deliberately **invalid**
   vector — it decodes to the right length (64-byte sig / 32-byte key) but does not verify.
 
+> **The envelope `public_key` is informational/provenance only.** Verification (`core::crypto`
+> `verify_manifest_signature`) trusts the **bundled-in-binary** key supplied by the caller,
+> **never** the key carried in the envelope — trusting an envelope key would let an attacker
+> sign with their own key. The consuming client task (T04+) must wire the bundled key, never
+> `envelope.public_key`. Proven by `manifest_verify_rejects_attacker_supplied_key`.
+
 ## Scenarios → expected client behavior
 
 | File | `manifest_version` | Signature | Expected outcome (ADR-0014 tiers) |

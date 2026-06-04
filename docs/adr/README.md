@@ -38,6 +38,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0015](./0015-admin-invitation-channel.md) — Admin invitation channel; narrows I11 to permit a developer-minted single-use Email Workers registration link
 - [ADR-0016](./0016-auth-model.md) — Authentication & device-binding model (Onboarding Code, indefinite silent-refresh sessions, rider/driver recovery, admin WebAuthn)
 - [ADR-0017](./0017-admin-auth-edge-webauthn.md) — Admin auth = in-app WebAuthn verified by @simplewebauthn/server on the Cloudflare edge (no sidecar); resolves the architecture.md-vs-spec conflict; documents the P4 carve-out
+- [ADR-0018](./0018-keyed-hash-hmac-sha256.md) — Keyed-hash algorithm: HMAC-SHA256 via RustCrypto `hmac`+`sha2` (dryoc has no SHA-256); I3 kept verbatim; dryoc stays the sole Ed25519 signature impl; getrandom `wasm_js` backend on wasm32
 
 ## Suggested early ADRs to author (stubs)
 

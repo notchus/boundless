@@ -23,6 +23,6 @@
       "AUTH_BELOW_MIN_VERSION": "This device needs {adminName}'s help. {adminName} has been told."
     }
   },
-  "signature": null,
-  "public_key": null
+  "signature": "ZWlNChLAKX1WAH6LH8a+TrTBZZjSU0TjTLc06B3vLtB/R8DpD9pbw2d2Kl1Avp0xn6rCvIQwdqWfXPH0tJFrBQ==",
+  "public_key": "dWUmDvf2fLZdB2+zVx8R+xWJWo0LVmkIeWqQwP5HMgA="
 }
