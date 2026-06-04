@@ -60,6 +60,11 @@ sha2 = "0.11"
 # (lifecycle gates → constant-time secret match) is single-sourced (P4).
 boundless-domain = { path = "domain" }
 boundless-crypto = { path = "crypto" }
+# boundless-auth (spec 001 T04/T05) — the device-side auth decisions. core/server (spec 001
+# T07) composes these (evaluate_onboarding_code/evaluate_recovery_code/evaluate_refresh/
+# evaluate_version + the Clock trait + DeviceBinding/Session types) so the server enforces the
+# exact same decisions the clients see — no drift (P4).
+boundless-auth = { path = "auth" }
 
 # serde_json — load/round-trip the golden fixtures (test) AND the canonical, sorted-key
 # manifest serialization that the Ed25519 signature covers (normal dep of core/crypto, T03).

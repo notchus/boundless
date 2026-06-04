@@ -104,6 +104,16 @@ version = "0.0.0"
 [[package]]
 name = "boundless-server-core"
 version = "0.0.0"
+dependencies = [
+ "boundless-auth",
+ "boundless-crypto",
+ "boundless-domain",
+ "proptest",
+ "serde",
+ "serde_json",
+ "static_assertions",
+ "uuid",
+]
 
 [[package]]
 name = "boundless-sync"

@@ -7,3 +7,21 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# The member-auth orchestration engine (spec 001 T07, Layer A). Pure + deterministic + wasm-
+# safe: it composes the existing core decisions and exposes the I/O boundary as port traits,
+# so the deployable Worker (server/, T07-shell) supplies Cloudflare/Postgres impls and tests
+# supply in-memory ones. No new EXTERNAL deps — all pinned in core/Cargo.toml.
+boundless-domain.workspace = true
+boundless-auth.workspace = true
+boundless-crypto.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# proptest — code-consume / alert-dedup invariants (seeds committed, P9). uuid — test ids.
+# serde_json — assert the PII-free admin-alert payload shape (deterministic). static_assertions —
+# compile-time proof that the secret-bearing response types expose no Debug/Display/Serialize (P2,
+# sec-audit F1). All dev-only / host-only.
+proptest.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+static_assertions.workspace = true

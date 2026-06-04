@@ -8,7 +8,7 @@
 //! `expose_secret()` is called **only here** (the sanctioned crypto boundary) — the
 //! plaintext phone/code is hashed and immediately dropped; only the keyed hash is returned.
 
-use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode};
+use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -26,6 +26,7 @@ pub const HMAC_KEY_LEN: usize = 32;
 const DOMAIN_PHONE_LOOKUP: &[u8] = b"boundless:phone-lookup:v1";
 const DOMAIN_ONBOARDING_CODE: &[u8] = b"boundless:onboarding-code:v1";
 const DOMAIN_RECOVERY_CODE: &[u8] = b"boundless:recovery-code:v1";
+const DOMAIN_REFRESH_TOKEN: &[u8] = b"boundless:refresh-token:v1";
 
 /// A per-instance HMAC secret (from Cloudflare Secrets Store in production).
 ///
@@ -78,6 +79,28 @@ impl CodeHash {
     }
 
     /// The raw hash bytes, for storage as a `code_hash bytea` column.
+    pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
+        &self.0
+    }
+}
+
+/// The HMAC-SHA256 of a refresh credential, keyed for at-rest storage (ADR-0016 D2).
+///
+/// The server's session-lineage classification compares a *presented* refresh credential
+/// against the stored hashes of a family's current + rotated-away credentials, constant-time
+/// (T07). Same discipline as [`CodeHash`]: no `Debug`/`Display`/`Serialize`, and **no
+/// `PartialEq`** — compare only via the constant-time [`refresh_token_matches`], never `==`
+/// (which would be a non-constant-time oracle on a long-lived credential, R2/R6).
+#[derive(Clone)]
+pub struct RefreshTokenHash([u8; HASH_LEN]);
+
+impl RefreshTokenHash {
+    /// Rebuild from stored bytes (e.g. a `refresh_token_hash bytea` column read).
+    pub fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw hash bytes, for storage as a `refresh_token_hash bytea` column.
     pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
         &self.0
     }
@@ -166,6 +189,32 @@ pub fn recovery_code_matches(key: &HmacKey, code: &RecoveryCode, stored: &CodeHa
     )
 }
 
+/// Derive the at-rest hash of a refresh credential (ADR-0016 D2). The plaintext is touched
+/// only to hash it; only the keyed hash is stored, so the lineage table holds no usable token.
+pub fn refresh_token_hash(key: &HmacKey, token: &RefreshToken) -> RefreshTokenHash {
+    RefreshTokenHash(keyed_hash(
+        key,
+        DOMAIN_REFRESH_TOKEN,
+        token.expose_secret().as_bytes(),
+    ))
+}
+
+/// Constant-time test that `token` matches a stored refresh hash (R6: no timing oracle on a
+/// long-lived credential). The server uses this to classify a presented credential as the
+/// family's current vs a rotated-away (replayed) one.
+pub fn refresh_token_matches(
+    key: &HmacKey,
+    token: &RefreshToken,
+    stored: &RefreshTokenHash,
+) -> bool {
+    keyed_verify(
+        key,
+        DOMAIN_REFRESH_TOKEN,
+        token.expose_secret().as_bytes(),
+        &stored.0,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,6 +228,7 @@ mod tests {
             DOMAIN_PHONE_LOOKUP,
             DOMAIN_ONBOARDING_CODE,
             DOMAIN_RECOVERY_CODE,
+            DOMAIN_REFRESH_TOKEN,
         ] {
             assert!(
                 !tag.contains(&0x00),

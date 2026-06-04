@@ -402,6 +402,66 @@
 
 ---
 
+## Server / core (spec 001 T07 — out-of-scope register)
+
+> T07 shipped exactly **Layer A**: the pure, deterministic, wasm-safe member-auth orchestration
+> engine in `core/server` (`boundless-server-core`) — the four `/api/auth/*` endpoints
+> (`sign_in`/`bind_device`/`refresh`/`recovery_rebind`) + `record_notification_decision` +
+> `note_session_invalidated` + the `GroupHubState` decision state + the PII-free `AdminAlert`s —
+> behind port traits (`AuthStore`/`AdminAlertSink`/`SecretSource`) with in-memory stubs, composing
+> T03/T04/T05. Plus the one in-scope crypto primitive (refresh-credential at-rest hash) and the
+> E.164 `normalize_phone`. 48 server-core tests + 3 new crypto tests; **no new external deps**;
+> wasm32-clean. The deployable **Worker shell (T07-shell)** was deliberately deferred (user
+> decision 2026-06-04: "core engine only"). Everything below is its scope + the port contracts it
+> must satisfy. Closes the server-logic legs of AC4/AC7(data)/AC8/AC14/AC15/AC17/AC18/AC19.
+
+- [ ] **T07-shell — the deployable workers-rs Worker.** The `#[event]`/Router entry point, the
+      `GroupHub` Durable Object (persisting `GroupHubState`), and the Cloudflare bindings — Queues
+      (admin alerts), KV (manifest + per-Group `{adminName}`), Turnstile (code-guess + refresh
+      throttle), Hyperdrive → Postgres. Plus the **Postgres-backed `AuthStore`** honoring the port
+      contracts: `SET LOCAL app.current_group_id` per request txn (T06 carry-forward), a
+      non-superuser / non-`BYPASSRLS` role, and the mutating methods as **atomic**
+      `UPDATE … WHERE … RETURNING` / single-txn statements (supersede-then-insert) —
+      `consume_onboarding_if_live`, `rotate_session`, `revoke_family`, `consume_and_rotate_recovery`.
+      Plus the real **CSPRNG `SecretSource`**, **access-token signing** (JWT, the ~15-min TTL),
+      **APNs/FCM** device-token registration, the `RefreshResponse::server_verdict` → PII-free
+      `emit()` logging (never returned to the client), and the **per-source refresh-rejection 429**
+      (the `GroupHubState` counter exists; the network enforcement is the shell's).
+  - **Needs `docs-researcher`:** workers-rs + the Postgres-over-Hyperdrive driver — vanilla `sqlx`
+    likely can't target the Workers wasm runtime, so research them as a unit — then pin
+    `sqlx`/`worker` and fill `docs/stack-matrix.md` (the `sqlx` row is still unversioned; T06
+    follow-up).
+  - **WHEN:** the T07-shell infra task (after T07-core).
+
+- [ ] **Live integration tests of the atomic contracts** (postgres:16 / miniflare): the true
+      DB-level TOCTOU proofs the in-memory stub only *models* — `bind` single-consume under real
+      concurrency, **`concurrent_rotate_and_replay_resolves_to_revoked`** (T05 carry-forward),
+      classification-correctness (rotated-N-times-ago ⇒ `Superseded`, so replay *kills*), the
+      family-kill persistence (`sessions.revoked_at` + legit-current-then-rejected), and the RLS
+      `SET LOCAL` isolation. T07-core proves the *contract* (the orchestration honors the atomic
+      commit's verdict over a stale snapshot); the DB proof is the shell's.
+  - **WHEN:** T07-shell.
+
+- [ ] **Multi-device (phone + watch + iPad) concurrent bindings.** T07-core **decided: single
+      active device per member** — re-onboarding invalidates **all** of a member's prior device
+      bindings (sec-audit F5 "invalidate all"; no stale token survives; matches AC4 device-
+      replacement). When watch/Wear/iPad pairing is specced (out of scope this spec), revisit
+      whether a member may hold multiple concurrent bindings and scope invalidation per-platform
+      instead of all-for-member.
+  - **WHEN:** the watch/Wear-pairing spec.
+
+> **Resolved in T07-core (2026-06-04)** — moved here from the T03/T04/T05/T06 registers above:
+> phone **E.164 normalization** before hashing (`normalize_phone`, single-source for spec-008
+> issuance); the **refresh-credential at-rest hash** primitive (`core::crypto::refresh_token_hash`);
+> the **code-lifecycle decision composition** + **atomic consume-on-accept *contract*** +
+> **sign-in response shape parity** (no existence leak); the **refresh rotation/replay *policy***
+> + **classification *port*** + **shape-identical reject** (no lineage leak); the **per-member-
+> per-day alert dedup** (AC8/AC15) and the **rate-limit *window* logic** (AC17). Their *DB/Worker
+> enforcement* (persistence, real server-time, atomic SQL, Turnstile, Queues, 429) is T07-shell
+> above. `chrono`/`time` stays deferred — T07-core needs only integer epoch math.
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

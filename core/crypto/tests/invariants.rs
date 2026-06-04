@@ -15,11 +15,12 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boundless_crypto::{
     canonical_manifest_bytes, decide_manifest, onboarding_code_hash, onboarding_code_matches,
-    phone_lookup_hash, phone_lookup_matches, recovery_code_hash, recovery_code_matches, CodeHash,
-    FetchedManifest, HmacKey, ManifestCache, ManifestDecision, ManifestErrorCode, PhoneLookupHash,
-    Signature, VerifyingKey,
+    phone_lookup_hash, phone_lookup_matches, recovery_code_hash, recovery_code_matches,
+    refresh_token_hash, refresh_token_matches, CodeHash, FetchedManifest, HmacKey, ManifestCache,
+    ManifestDecision, ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature,
+    VerifyingKey,
 };
-use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode};
+use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
 use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
 use serde_json::Value;
 
@@ -114,6 +115,45 @@ fn domain_separation_across_code_kinds() {
         &OnboardingCode::new(shared),
         &as_recovery
     ));
+}
+
+#[test]
+fn refresh_token_hashes_at_rest_and_verifies_constant_time() {
+    // T07: the refresh-credential at-rest hash backs the session-lineage classification
+    // (current vs rotated-away), compared constant-time (R6 — no oracle on a long-lived
+    // credential). Deterministic for a stable lookup; bound to the per-instance secret.
+    let key = test_key();
+    let token = RefreshToken::new("refresh-aaaa-bbbb-cccc");
+    let hash = refresh_token_hash(&key, &token);
+
+    assert!(refresh_token_matches(&key, &token, &hash));
+    assert!(!refresh_token_matches(
+        &key,
+        &RefreshToken::new("refresh-aaaa-bbbb-WRONG"),
+        &hash
+    ));
+    // The hash is deterministic (re-derivable for a lineage lookup)...
+    assert_eq!(refresh_token_hash(&key, &token).as_bytes(), hash.as_bytes());
+    // ...and bound to the per-instance secret.
+    assert!(!refresh_token_matches(
+        &HmacKey::from_bytes([0x43; 32]),
+        &token,
+        &hash
+    ));
+}
+
+#[test]
+fn refresh_token_domain_separated_from_codes() {
+    // A refresh credential and a code that happen to share the same string must hash
+    // differently — distinct domain tags prevent any cross-artifact reuse. The hashes are
+    // distinct *types*, so the only observable is the underlying bytes.
+    let key = test_key();
+    let shared = "SAME-STRING-1234";
+    let as_refresh = refresh_token_hash(&key, &RefreshToken::new(shared));
+    let as_onboarding = onboarding_code_hash(&key, &OnboardingCode::new(shared));
+    let as_recovery = recovery_code_hash(&key, &RecoveryCode::new(shared));
+    assert_ne!(as_refresh.as_bytes(), as_onboarding.as_bytes());
+    assert_ne!(as_refresh.as_bytes(), as_recovery.as_bytes());
 }
 
 // === AC10 / O2 — manifest verification + tiered fallback ==========================
@@ -436,10 +476,12 @@ mod no_formatter {
     assert_not_impl_any!(HmacKey: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(PhoneLookupHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(CodeHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
+    assert_not_impl_any!(RefreshTokenHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
 
     // The hashes must NOT be `==`-comparable: a derived `PartialEq` on `[u8; 32]` short-circuits
     // and would be a non-constant-time membership oracle (R2). Callers must use the constant-time
     // `*_matches` functions instead. This makes "no `==` path" a compile-time guarantee.
     assert_not_impl_any!(PhoneLookupHash: core::cmp::PartialEq);
     assert_not_impl_any!(CodeHash: core::cmp::PartialEq);
+    assert_not_impl_any!(RefreshTokenHash: core::cmp::PartialEq);
 }

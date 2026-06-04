@@ -39,6 +39,7 @@
 | `AUTH_SESSION_INVALIDATED` | A previously-valid session was ended (admin revoke/logout, I4 device change, or deletion). | `NeedsReauthHelp` (Rider) / `PhoneEntry` (Driver) · AC15/AC18 | `auth.below_min_version` (Rider) / `auth.signin_again` (Driver) | Rider: no (admin) · Driver: yes |
 | `AUTH_REFRESH_REPLAY_DETECTED` | A rotated (stale) refresh credential was replayed; the whole session family is killed. Backs the no-forced-expiry decision. | AC18 · ADR-0016 D2 · invariant `auth_refresh_rotation_replay_detected` | `auth.below_min_version` (Rider) / `auth.signin_again` (Driver) | no |
 | `AUTH_DEVICE_TOKEN_INVALIDATED` | A `(member_id, platform, app_version)` device token was invalidated (re-onboard, logout/revoke, deletion). | AC4 · I4 | — (silent; client re-registers on next bind) | n/a |
+| `AUTH_NOTIFICATIONS_NOT_ENABLED` | Notification permission was declined at onboarding (or Critical Alerts is unavailable-because-pending). A non-PII admin flag is recorded (deduped per member per day) and the flow advances — **operational flag, not a client-facing error** (onboarding never blocks/scolds). | AC14 · O8/P10 | — (no client surface) | n/a |
 | `AUTH_RECOVERY_CODE_INVALID` | Driver Recovery Code did not match, expired-by-use, or already consumed. | Driver recovery · AC19 | `onboarding.binding.code_invalid` | no (Admin fallback) |
 | `AUTH_RECOVERY_NOT_AVAILABLE` | Self-serve recovery attempted for a non-Driver (Riders recover only via Admin re-issue). | AC19 | `auth.below_min_version` | no (admin) |
 
