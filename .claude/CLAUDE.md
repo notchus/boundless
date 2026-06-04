@@ -33,8 +33,21 @@ This project uses Spec-Driven Development (Spec Kit) with the following non-nego
 | `docs/forbidden-patterns.md` | Per-stack anti-patterns. Reviewer grep-checks. |
 | `docs/architecture.md` | The diagram + the why. |
 | `docs/update-strategy.md` | The ladder for getting new behavior to riders (read on-demand for update-touching work). |
+| `DEFERRED.md` (repo root) | Decided-but-not-yet-done checklist with WHEN triggers. |
 
 Read **all** of these on session start. They are short by design.
+
+## Imports (these actually load the files above into context at launch)
+@../.specify/memory/constitution.md
+@../docs/domain-glossary.md
+@../docs/personas.md
+@../docs/voice-and-tone.md
+@../docs/privacy-invariants.md
+@../docs/operational-invariants.md
+@../docs/stack-matrix.md
+@../DEFERRED.md
+
+**Check `DEFERRED.md` at the repo root at the start of every session** — it tracks decided-but-deferred work, each item tagged with a WHEN trigger. If an item's trigger has arrived, act on it or surface it. When you defer something new, **record it in `DEFERRED.md` rather than leaving a `// TODO` in code** (the hooks reject those anyway).
 
 ---
 
