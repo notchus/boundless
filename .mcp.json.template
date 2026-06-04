@@ -1,0 +1,47 @@
+{
+  "_comment": "Copy this file to .mcp.json (without the .template suffix). Replace the YOUR_*_HERE placeholders with your actual keys. NEVER commit .mcp.json itself — it's in .gitignore. Restart Claude Code after editing.",
+
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "env": {
+        "CONTEXT7_API_KEY": "TOKEN"
+      }
+    },
+
+    "brave-search": {
+      "_comment": "Brave Search API. Free tier: 2000 queries/month. Get a key at https://brave.com/search/api. Replace YOUR_BRAVE_API_KEY_HERE.",
+      "command": "npx",
+      "args": ["-y", "@brave/brave-search-mcp-server"],
+      "env": {
+        "BRAVE_API_KEY": "YOUR_BRAVE_API_KEY_HERE"
+      }
+    },
+
+    "github": {
+      "_comment": "GitHub MCP. Useful for issues/PRs/code search. Get a Personal Access Token (fine-grained) at https://github.com/settings/personal-access-tokens. Replace YOUR_GITHUB_PAT_HERE.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT_HERE"
+      }
+    },
+
+    "cloudflare": {
+      "_comment": "Cloudflare MCP — Workers, KV, R2, DOs, etc. Get an API token at https://dash.cloudflare.com/profile/api-tokens with scopes for Workers/Pages/D1/KV/R2/Durable Objects/Hyperdrive. Replace YOUR_CLOUDFLARE_API_TOKEN_HERE and YOUR_CLOUDFLARE_ACCOUNT_ID_HERE. Confirm the package name in Cloudflare's current docs — there are several CF-MCP variants; the one Anthropic / Cloudflare publish jointly is the most stable choice.",
+      "command": "npx",
+      "args": ["-y", "@cloudflare/mcp-server-cloudflare"],
+      "env": {
+        "CLOUDFLARE_API_TOKEN": "YOUR_CLOUDFLARE_API_TOKEN_HERE",
+        "CLOUDFLARE_ACCOUNT_ID": "YOUR_CLOUDFLARE_ACCOUNT_ID_HERE"
+      }
+    },
+
+    "sequential-thinking": {
+      "_comment": "Sequential thinking — slows the model down on hard architectural decisions. No key required.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    }
+  }
+}

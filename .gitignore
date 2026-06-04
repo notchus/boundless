@@ -1,0 +1,88 @@
+# Boundless .gitignore
+
+# ─── SECRETS — never commit ────────────────────────────────────────────────
+.mcp.json
+.claude/settings.json
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.keystore
+*.jks
+service-account*.json
+**/secrets/
+
+# ─── Claude Code session artifacts ─────────────────────────────────────────
+.claude/cache/
+.claude/sessions/
+
+# ─── Rust ──────────────────────────────────────────────────────────────────
+target/
+Cargo.lock.bak
+**/*.rs.bk
+
+# ─── Apple ─────────────────────────────────────────────────────────────────
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+.build/
+xcuserdata/
+Package.resolved.bak
+*.dSYM.zip
+*.dSYM/
+**/*.xcframework/build/
+
+# ─── Android / Kotlin / Gradle ─────────────────────────────────────────────
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+**/captures/
+**/release/
+**/*.aab
+**/*.apk
+gradle.properties.local
+
+# ─── Node / pnpm / web ─────────────────────────────────────────────────────
+node_modules/
+.svelte-kit/
+.vite/
+dist/
+.turbo/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+
+# ─── Cloudflare Workers (wrangler) ─────────────────────────────────────────
+.wrangler/
+wrangler.toml.local
+
+# ─── OS / editor ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+!.vscode/settings.json.example
+
+# ─── Logs / coverage ───────────────────────────────────────────────────────
+*.log
+coverage/
+.nyc_output/
+*.lcov
+
+# ─── Generated bindings — these ARE committed (CI checks them in sync) ─────
+# (do NOT add api/generated/ or core/ffi-*/generated/ here)
+
+# ─── Python (uv tools, if any local pollution) ─────────────────────────────
+__pycache__/
+.venv/
+
+# ─── Snapshot test failures (artifacts, not source) ────────────────────────
+**/__snapshots__/*.failed.png
+**/snapshot-tests/failures/

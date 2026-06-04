@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy to .claude/settings.json. Project-level settings for Claude Code. Wires up the hooks defined in .claude/hooks/.",
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-edit.sh"
+          }
+        ]
+      }
+    ]
+  },
+
+  "_subagentModelComment": "Default model for subagents that declare 'model: inherit'. Override per-agent in their frontmatter. Common choices: claude-sonnet-4-6, claude-opus-4-7 (parent), claude-haiku-4-5 (cheap subagents).",
+
+  "_permissionsComment": "By default, Claude Code prompts for permission on Edit/Write/Bash. Keep this default during early development. Add an 'allow' allow-list for trusted commands later if desired.",
+
+  "permissions": {
+    "allow": [],
+    "deny": []
+  }
+}
