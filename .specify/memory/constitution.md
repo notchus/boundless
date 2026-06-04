@@ -3,7 +3,7 @@
 > **This file is the highest authority in the project.** Specs reference it. Plans must obey it. Implementation must enforce it through code, not comments. Amendments require an ADR.
 
 Version: 1.0.0 (initial)
-Ratified: TODO
+Ratified: Jun 4, 2026
 
 ---
 
