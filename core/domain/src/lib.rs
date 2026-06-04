@@ -3,8 +3,8 @@
 //!
 //! This crate defines:
 //!
-//! - **Value types** — [`MemberId`], [`Role`], [`Platform`], [`AppVersion`],
-//!   [`ClientVersion`]. Plain, serializable, safe to log.
+//! - **Value types** — [`MemberId`], [`SessionFamilyId`], [`Role`], [`Platform`],
+//!   [`AppVersion`], [`ClientVersion`]. Plain, serializable, safe to log.
 //! - **Tainted secret newtypes** — [`PhoneNumber`], [`DeviceToken`], [`OnboardingCode`],
 //!   [`RecoveryCode`], [`AccessToken`], [`RefreshToken`]. Each has **no `Debug`/`Display`/
 //!   `Serialize`**, only `redacted_summary()` (**P2**); the raw value is reachable only via
@@ -22,7 +22,7 @@ mod role;
 mod tainted;
 mod version;
 
-pub use ids::MemberId;
+pub use ids::{MemberId, SessionFamilyId};
 pub use platform::Platform;
 pub use role::Role;
 pub use tainted::{

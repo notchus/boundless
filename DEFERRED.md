@@ -113,18 +113,22 @@
 
 ## Auth / Onboarding (spec 001 plan deferrals)
 
-- [ ] **Three new privacy-invariant tests — implement WITH their code** (P9: the
-      implementing test ships in the same PR):
-      (1) `auth_refresh_rotation_replay_detected` — a replayed pre-rotation refresh
+- [x] **(1) `auth_refresh_rotation_replay_detected`** — a replayed pre-rotation refresh
       credential is rejected and kills the session family (the sole control behind
-      ADR-0016's no-forced-expiry decision);
+      ADR-0016's no-forced-expiry decision).
+  - **DONE:** 2026-06-04 — shipped in **T05** (`core/auth/tests/session.rs`). The
+    refresh-rotation control is recorded under **I4** in `docs/privacy-invariants.md` (it
+    underwrites I4 rather than being a new numbered invariant — the doc is PII-scoped).
+
+- [ ] **Two remaining new privacy-invariant tests — implement WITH their code** (P9: the
+      implementing test ships in the same PR):
       (2) extend the I12 forgetting property test to the new auth artifacts (phone
       hash + ciphertext, device tokens, sessions/refresh, outstanding Onboarding /
       Recovery codes, admin WebAuthn creds);
       (3) a named delete-leg device-token invalidation test, distinct from
       `i4_tokens_invalidated_on_reonboarding` and `…_on_logout`.
-  - **WHEN:** implementing `core::auth` + `core::deletion`. Consider adding the
-    refresh-rotation invariant to `docs/privacy-invariants.md` (with its test same PR).
+  - **WHEN:** implementing `core::deletion` (the account-deletion flow is out of scope for
+    spec 001 — spec §Out of scope).
 
 - [ ] **Critical Alerts capability-upgrade path** — onboarding currently requests
       *standard* notifications (interim, spec 001 OQ6). Once the Critical Alerts
@@ -236,13 +240,13 @@
   - **WHEN:** before shipping a `2.0.0` server (or when the compat harness, AC9, first spans
     a major bump).
 
-- [ ] **Sessions, silent refresh-token rotation, device-token binding (ADR-0016 D2, I4).**
+- [x] **Sessions, silent refresh-token rotation, device-token binding (ADR-0016 D2, I4).**
       Indefinite sessions, rotation with replay/lineage detection, the
       `(member_id, platform, app_version)` device-token binding + invalidation triggers, and
-      the new **`auth_refresh_rotation_replay_detected`** privacy-invariant test are **T05** —
-      the sibling `core::auth` slice, explicitly *not* in T04. (Already tracked above under
-      "Auth / Onboarding (spec 001 plan deferrals)".)
-  - **WHEN:** **T05** (`core::auth` sessions/refresh).
+      the new **`auth_refresh_rotation_replay_detected`** privacy-invariant test were the
+      sibling `core::auth` slice, explicitly *not* in T04.
+  - **DONE:** 2026-06-04 — shipped in **T05** (see the T05 out-of-scope register below for
+    what T05 itself deferred onward).
 
 - [ ] **UniFFI export of the `core::auth` surface.** T04's types are UniFFI-shaped (plain
       enums/structs, no exotic generics) but carry **no `#[uniffi::export]`/UDL** yet — codegen
@@ -260,6 +264,82 @@
 - [ ] **Promote `Clock`/`UnixSeconds` to a shared crate** if `core::sync`/`core::server`/
       matching need the same time abstraction (today it lives in `core::auth`).
   - **WHEN:** when a second crate needs an injected clock.
+
+---
+
+## `core::auth` (spec 001 T05 — out-of-scope register)
+
+> T05 implemented exactly the **device-side pure session logic**: the indefinite-session model
+> (`Session::is_live` time-independent, `needs_refresh` on an injected `Clock`), the
+> refresh-rotation **policy** with replay detection (`evaluate_refresh` /
+> `RefreshVerdict::ReplayDetectedKillFamily` → family revoked), the `(member_id, platform,
+> app_version)` device-binding tuple (`DeviceBinding`), the exhaustive admin-mediated
+> invalidation triggers (`invalidation_for`, `reonboarding_invalidation`, AC4/AC18), and the
+> §10-F secure-store contract (`required_refresh_store`). Added `SessionFamilyId` to
+> `core::domain`. Everything below was **deliberately left out** of that slice.
+
+- [ ] **Server-side refresh persistence + lineage classification.** T05 ships the pure
+      *policy* (`evaluate_refresh` over a `RefreshPresentation`). The server (T07) owns: the
+      Postgres `sessions` rotation lineage chain, the refresh credential's **at-rest HMAC
+      hashing**, and the **DB lookup + constant-time compare** that classifies a presented
+      credential as `Current`/`Superseded`/`Unknown` (the input to the policy). The
+      replay→kill-family verdict must be persisted **atomically** with the family revoke.
+      **Carry-forward from the T05 security + test review (must land in T07):**
+      (a) **rate-limit** `/api/auth/refresh` on `Rejected`/`Unknown` outcomes per source
+      (mirror the R4 code rate-limit) and keep the rejected response **timing/shape-identical**
+      to a revoked-family reject, so it leaks no lineage-existence signal (sec-audit F1);
+      (b) **atomic rotate-vs-replay** — a concurrent presentation of the current credential and
+      a replay of a superseded one must resolve to a revoked family, never a second valid
+      rotation (TOCTOU; integration test `concurrent_rotate_and_replay_resolves_to_revoked`);
+      (c) **classification correctness** — a credential rotated N times ago must classify as
+      `Superseded` (so replay *kills*), not `Unknown` (which would merely reject);
+      (d) **family-kill persistence** — assert `sessions.revoked_at` is written and the
+      *legitimate current* credential is rejected on its next refresh (the AC18 promise the
+      core test only asserts at the model level);
+      (e) `AUTH_DEVICE_TOKEN_INVALIDATED` is **silent** (no catalog key) — assert it is
+      logged/audited but never surfaced to the client.
+  - **WHEN:** **T07** (member-auth endpoints + DO) and **T06** (the `sessions`/`device_tokens`
+    tables).
+
+- [ ] **Multi-device-per-member policy for the `PriorDevice` invalidation scope.** `core::auth`
+      `reonboarding_invalidation` compares a single `prior` binding to the `new` one and returns
+      `PriorDevice` scope; the `AllForMember` scope (revoke/logout/delete) already covers
+      multi-device correctly. ADR-0016 D2 does not bound device count per member. T07 must
+      decide whether a member may hold multiple concurrent device bindings and, if so, enumerate
+      **all** prior bindings on re-onboard/revoke rather than a single `prior` (else a stale
+      token could survive). Test (T07): `reonboarding_with_multiple_prior_bindings_invalidates_all`
+      (or assert the documented single-device constraint). (sec-audit F5.)
+  - **WHEN:** **T07** (member-auth endpoints + DO).
+
+- [ ] **Access-token issuance/signing + the ~15-min wall-clock TTL.** T05 models only the
+      access-token *expiry instant* (`Session::access_token_expires_at`) and the
+      `needs_refresh` decision against an injected clock; minting/signing the token and
+      supplying real server time are server concerns.
+  - **WHEN:** **T07** (server, real server-time — ties into the `chrono`-vs-`time` pick above).
+
+- [ ] **Actual push device-token registration (APNs/FCM).** T05 owns the binding *tuple* and
+      its *invalidation policy*; registering/deregistering the real push token with
+      APNs/FCM and persisting it is server + platform work.
+  - **WHEN:** the Doorbell push spec (**007**) / **T07**.
+
+- [ ] **UniFFI export of the session/device surface.** Like the T04 types, the new
+      `Session`/`RefreshVerdict`/`DeviceBinding`/… are UniFFI-shaped but carry no
+      `#[uniffi::export]`/UDL yet — codegen to Swift/Kotlin is the **T10** contract-freeze.
+  - **WHEN:** **T10** (API contracts + generated bindings).
+
+- [ ] **`SecureStoreClass` wiring per platform (plan §10-F).** T05 ships the contract
+      (`required_refresh_store` → Keychain / Keystore / httpOnly-Secure-SameSite cookie); the
+      actual platform secure-store reads/writes of the `RefreshToken` are the UI tasks.
+  - **WHEN:** **T11–T15** (the five UIs).
+
+- [ ] **P9 process: guarantee `core/<crate>/proptest-regressions/` is tracked in CI.** Noted in
+      the T05 review (applies crate-wide, predates T05): proptest writes a failing-seed file only
+      *on failure*, into `proptest-regressions/` (currently **not** gitignored — good, so the
+      commit-on-failure workflow is sound). But nothing yet *forces* the directory to be tracked,
+      so a first CI failure could write a seed to an untracked path and lose it. Add a tiny CI
+      check (or a committed `.gitkeep`) so the P9 "reproducible seeds checked into the repo"
+      guarantee is enforced rather than conventional.
+  - **WHEN:** next CI-hardening pass (not blocking; no property has failed yet).
 
 ---
 

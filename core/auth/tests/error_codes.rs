@@ -2,7 +2,8 @@
 //! `docs/error-codes.md` (mirrors `core/crypto`'s `manifest_error_codes_match_registry`).
 
 use boundless_auth::{
-    OnboardingCodeVerdict, RecoveryCodeVerdict, VersionVerdict, SESSION_INVALIDATED_CODE,
+    OnboardingCodeVerdict, RecoveryCodeVerdict, RefreshVerdict, VersionVerdict,
+    DEVICE_TOKEN_INVALIDATED_CODE, SESSION_INVALIDATED_CODE,
 };
 use std::path::Path;
 
@@ -27,7 +28,14 @@ fn auth_verdict_error_codes_match_registry() {
     }
     codes.push(RecoveryCodeVerdict::Invalid.error_code().unwrap());
     codes.push(RecoveryCodeVerdict::NotAvailable.error_code().unwrap());
+    codes.push(
+        RefreshVerdict::ReplayDetectedKillFamily
+            .error_code()
+            .unwrap(),
+    );
+    codes.push(RefreshVerdict::Rejected.error_code().unwrap());
     codes.push(SESSION_INVALIDATED_CODE);
+    codes.push(DEVICE_TOKEN_INVALIDATED_CODE);
 
     for code in codes {
         // Match the code as a whole backtick-wrapped table cell (`docs/error-codes.md` formats
@@ -43,6 +51,7 @@ fn auth_verdict_error_codes_match_registry() {
     // The success verdicts carry no code.
     assert_eq!(OnboardingCodeVerdict::Accepted.error_code(), None);
     assert_eq!(RecoveryCodeVerdict::Accepted.error_code(), None);
+    assert_eq!(RefreshVerdict::Rotate.error_code(), None);
     assert_eq!(VersionVerdict::Supported.error_code(), None);
     assert_eq!(VersionVerdict::SupportedButOutdated.error_code(), None);
 }

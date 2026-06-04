@@ -18,7 +18,10 @@ boundless-crypto.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-# proptest — property tests for the code/version invariants (P9; seeds in proptest-regressions/).
+# proptest — property tests for the code/version/session invariants (P9; seeds in proptest-regressions/).
 # serde_json — replay the golden auth fixtures (fixtures/auth/**) in the decision tests.
+# uuid — construct MemberId/SessionFamilyId values in the session/device tests (test-only;
+#   already a workspace dep backing those domain types — no new runtime/wasm surface).
 proptest.workspace = true
 serde_json.workspace = true
+uuid.workspace = true

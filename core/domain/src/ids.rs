@@ -34,3 +34,34 @@ impl From<Uuid> for MemberId {
         Self(id)
     }
 }
+
+/// A stable, opaque identifier for a **session family** — the lineage of one member login
+/// and all of its rotated refresh credentials (ADR-0016 D2). Every silent refresh rotates
+/// the credential but keeps the same `SessionFamilyId`, so replay detection can revoke the
+/// whole family at once (see `core::auth`).
+///
+/// Like [`MemberId`] it is opaque, never shown in the UI, and **not** PII — safe to carry on
+/// the wire and in audit logs. Serializes transparently as the canonical hyphenated UUID
+/// string. We only ever *parse/format* it here; generation (which needs randomness) happens
+/// server-side, keeping `core::domain` pure and wasm-safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionFamilyId(Uuid);
+
+impl SessionFamilyId {
+    /// Wrap an existing UUID.
+    pub const fn from_uuid(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    /// The underlying UUID.
+    pub const fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+impl From<Uuid> for SessionFamilyId {
+    fn from(id: Uuid) -> Self {
+        Self(id)
+    }
+}

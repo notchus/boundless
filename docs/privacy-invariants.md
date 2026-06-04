@@ -51,7 +51,17 @@ Tokens are bound to (Member, Platform, App Version). On any auth change, all tok
 **Enforcement:**
 - Token table has `(member_id, platform, app_version)` composite key.
 - `DeviceToken` type wraps `String` with no `Display` impl.
-- Test: `core::auth::tests::i4_tokens_invalidated_on_logout`.
+- The `(member_id, platform, app_version)` binding and the admin-mediated invalidation
+  triggers (revoke/logout, new-device re-onboarding, deletion) are decided once in
+  `core::auth` (`DeviceBinding`, `invalidation_for`, `reonboarding_invalidation`).
+- Tests: `core::auth::tests::i4_tokens_invalidated_on_logout` and
+  `core::auth::tests::i4_tokens_invalidated_on_reonboarding` (the new-device case, AC4).
+- **Refresh-rotation underwrites I4** (ADR-0016 D2): because member sessions are indefinite,
+  a stolen refresh credential is bounded not by expiry but by **rotation with replay
+  detection** — replaying a rotated-away credential revokes the whole session family. Test:
+  `core::auth::tests::auth_refresh_rotation_replay_detected` (the sole enforced control behind
+  the no-forced-expiry decision; risk register R5/R6). The delete-leg device-token
+  invalidation test ships with the deletion work (I12; tracked in `DEFERRED.md`).
 
 ---
 
