@@ -1,0 +1,28 @@
+{
+  "publicKey": {
+    "rp": {
+      "id": "boundless.example",
+      "name": "Boundless"
+    },
+    "user": {
+      "id": "YWRtaW4tb3BhcXVlLWhhbmRsZS1uby1waWk",
+      "name": "admin-invite",
+      "displayName": "Boundless Admin"
+    },
+    "challenge": "Q2hhbGxlbmdlLXBsYWNlaG9sZGVyLTMyLWJ5dGVzLW9wYXF1ZQ",
+    "pubKeyCredParams": [
+      { "type": "public-key", "alg": -8 },
+      { "type": "public-key", "alg": -7 },
+      { "type": "public-key", "alg": -257 }
+    ],
+    "timeout": 300000,
+    "attestation": "none",
+    "authenticatorSelection": {
+      "residentKey": "preferred",
+      "requireResidentKey": false,
+      "userVerification": "required"
+    },
+    "excludeCredentials": []
+  },
+  "challenge_ttl_secs": 300
+}

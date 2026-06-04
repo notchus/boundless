@@ -14,3 +14,8 @@ all required suites — is a parity gap CI flags.
 
 Scaffolded by spec 001 task **T01**; fixtures land in **T02** (and **T16** for the
 onboarding log lines).
+
+See `auth/README.md` and `manifest/README.md` for the per-fixture descriptor tables
+(what each represents, the state/AC it maps to, and the expected behavior). **T02 freezes
+the manifest content bytes; the Ed25519 signature vectors are generated in T03** where
+`core::crypto`/`dryoc` lives — see `manifest/README.md`.

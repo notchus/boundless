@@ -1,0 +1,13 @@
+---
+source: domain/tests/serialization_snapshots.rs
+expression: "[Platform::Ios, Platform::IpadOs, Platform::WatchOs, Platform::MacOs,\nPlatform::Android, Platform::WearOs, Platform::Web,]"
+---
+[
+  "ios",
+  "ipados",
+  "watchos",
+  "macos",
+  "android",
+  "wearos",
+  "web"
+]

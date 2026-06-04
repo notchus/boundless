@@ -1,0 +1,4 @@
+{
+  "error_code": "ADMIN_INVITE_EXPIRED",
+  "routes_to": "InviteExpired"
+}

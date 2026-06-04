@@ -76,9 +76,12 @@
 - [ ] **Fill in the TODO version numbers in `docs/stack-matrix.md`** with the
       actual installed versions.
   - **WHEN:** as each part of the stack gets initialized.
-  - **Progress:** Rust toolchain filled (1.95.0) at spec 001 T01. Swift, Kotlin,
-    TypeScript, Xcode, Android Studio, pnpm, and the per-crate Rust deps remain TODO
-    until those parts are initialized.
+  - **Progress:** Rust toolchain filled (1.95.0) at spec 001 T01. `core/domain` deps
+    filled at spec 001 T02 from the lock: `serde` 1.0.228 (+ `serde_core`), `serde_json`
+    1.0.150, `uuid` 1.23.2, `insta` 1.47.2, `static_assertions` 1.1.0. Swift, Kotlin,
+    TypeScript, Xcode, Android Studio, pnpm, and the remaining Rust deps (`uniffi`,
+    `tokio`, `proptest`, `chrono`/`time`, `geo`, `petgraph`, …) remain TODO until those
+    parts are initialized.
 
 - [ ] **Re-pin `dryoc` to 0.9.0 (or the then-latest)** once it is *published* to
       crates.io. At T01 the stack-matrix's `dryoc 0.9.0` was found to be unpublished

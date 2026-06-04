@@ -1,0 +1,5 @@
+{
+  "error_code": "AUTH_ONBOARDING_CODE_EXPIRED",
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0"
+}

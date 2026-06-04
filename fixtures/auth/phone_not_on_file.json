@@ -1,0 +1,5 @@
+{
+  "error_code": "AUTH_PHONE_NOT_ON_FILE",
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0"
+}

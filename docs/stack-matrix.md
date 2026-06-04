@@ -30,14 +30,15 @@
 
 | Crate | Version | Used for |
 |---|---|---|
-| `serde` + `serde_json` | TODO | Domain type (de)serialization |
+| `serde` + `serde_json` | 1.0.228 / 1.0.150 | Domain type (de)serialization. `serde` with `derive` (pulls transitive `serde_core` 1.0.228); `serde_json` is **test-only** (golden-fixture round-trip). MIT OR Apache-2.0, wasm32-safe. Pinned 2026-06-04 (spec 001 T02; lock = ground truth). |
 | `uniffi` | TODO (latest stable) | Swift/Kotlin binding generation |
 | `wasm-bindgen` | TODO | wasm target for admin web (limited) |
 | `tokio` | TODO | Async runtime (server side only) |
 | `proptest` | TODO | Property-based tests for matching |
-| `insta` | TODO | Snapshot tests for serialization |
+| `insta` | 1.47.2 | Snapshot tests for serialization (feature `json` for `assert_json_snapshot!`). **Dev-only.** Apache-2.0. Pinned 2026-06-04 (spec 001 T02). |
+| `static_assertions` | 1.1.0 | Compile-time proof that the tainted PII types expose **no** `Debug`/`Display`/`Serialize` (P2/I3) via `assert_not_impl_any!`. **Dev-only.** MIT OR Apache-2.0. Pinned 2026-06-04 (spec 001 T02). |
 | `chrono` or `time` | TODO (pick one — file ADR if both used) | Date/time |
-| `uuid` | TODO | Stable IDs |
+| `uuid` | 1.23.2 | Stable IDs (backs `MemberId`). Feature `serde` **only** — deliberately **no** `v4`/`rng` (those pull `getrandom`, which breaks wasm32 and violates the no-ambient-randomness rule in `core::domain`). MIT OR Apache-2.0. Pinned 2026-06-04 (spec 001 T02). |
 | `dryoc` | 0.8.0 | libsodium crypto: PII sealed-box/secretbox encryption (I1/I3), Ed25519 manifest signature verification (ADR-0014), constant-time HMAC-SHA256 phone-lookup hash (I3). **Pure-Rust, wasm32-compatible** (Workers + browser). Chosen over `sodiumoxide` (deprecated, C-FFI, no wasm). MIT. **MSRV 1.89.** 0.8.0 is the latest *published* release on crates.io (released 2026-05-15); 0.9.0 exists only as unreleased code on the dryoc `main` branch, so the pin was corrected 0.9.0 → 0.8.0 against the registry on 2026-06-04 (spec 001 T01 — "lock files win"). |
 | `geo` / `geo-types` | TODO | Geometry primitives |
 | `petgraph` | TODO | Graph algorithms for chain optimization |

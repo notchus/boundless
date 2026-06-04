@@ -1,0 +1,9 @@
+---
+source: domain/tests/serialization_snapshots.rs
+expression: "[Role::Rider, Role::Driver, Role::Admin]"
+---
+[
+  "rider",
+  "driver",
+  "admin"
+]

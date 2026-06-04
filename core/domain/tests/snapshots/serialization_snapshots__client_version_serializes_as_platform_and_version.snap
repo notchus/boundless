@@ -1,0 +1,8 @@
+---
+source: domain/tests/serialization_snapshots.rs
+expression: "ClientVersion\n{ platform: Platform::Ios, app_version: AppVersion::new(1, 2, 0), }"
+---
+{
+  "platform": "ios",
+  "app_version": "1.2.0"
+}

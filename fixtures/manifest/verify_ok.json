@@ -1,0 +1,28 @@
+{
+  "manifest": {
+    "manifest_version": 7,
+    "locale": "en-US",
+    "client_min_version": "1.0.0",
+    "client_recommended_version": "1.2.0",
+    "admin_name": "Sarah",
+    "copy": {
+      "onboarding.helper.intro": "Let's set up this phone together.",
+      "onboarding.autoupdate.enabled": "Automatic updates are on.",
+      "auth.below_min_version": "This device needs {adminName}'s help. {adminName} has been told.",
+      "auth.below_min_version_generic": "This device needs your group's help. They've been told."
+    },
+    "design_tokens": {
+      "font_scale_max": "accessibility5",
+      "spacing_unit": 8
+    },
+    "feature_flags": {
+      "optional_live_tracker": false
+    },
+    "error_messages": {
+      "AUTH_PHONE_NOT_ON_FILE": "That number doesn't match what's on file. Try again or call {adminName}.",
+      "AUTH_BELOW_MIN_VERSION": "This device needs {adminName}'s help. {adminName} has been told."
+    }
+  },
+  "signature": null,
+  "public_key": null
+}

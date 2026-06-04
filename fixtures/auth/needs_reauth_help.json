@@ -1,0 +1,7 @@
+{
+  "error_code": "AUTH_SESSION_INVALIDATED",
+  "role": "rider",
+  "routes_to": "NeedsReauthHelp",
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0"
+}

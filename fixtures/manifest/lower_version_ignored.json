@@ -1,0 +1,14 @@
+{
+  "manifest": {
+    "manifest_version": 2,
+    "locale": "en-US",
+    "client_min_version": "1.0.0",
+    "client_recommended_version": "1.2.0",
+    "admin_name": "Sarah",
+    "copy": {
+      "onboarding.autoupdate.enabled": "Automatic updates are on."
+    }
+  },
+  "signature": null,
+  "public_key": null
+}

@@ -1,0 +1,10 @@
+{
+  "outcome": "member_matched",
+  "next_step": "device_binding",
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0",
+  "manifest_pointer": {
+    "index_key": "manifest:v1:index",
+    "locale_key_prefix": "manifest:v1:"
+  }
+}

@@ -1,0 +1,5 @@
+---
+source: domain/tests/serialization_snapshots.rs
+expression: "AppVersion::new(1, 2, 0)"
+---
+"1.2.0"

@@ -33,3 +33,20 @@ repository = "https://github.com/notchus/boundless"
 # crates.io (MIT, pure-Rust, wasm32-compatible, MSRV 1.89). It is declared here but not
 # yet activated by any member; core/crypto opts in via `dryoc.workspace = true` in T03.
 dryoc = "0.8.0"
+
+# Domain & value types (spec 001 T02). Versions verified 2026-06-04 (docs-researcher
+# against crates.io); exact resolved versions are recorded in Cargo.lock (ground truth)
+# and mirrored into docs/stack-matrix.md. All are MIT OR Apache-2.0 and wasm32-safe.
+#
+# serde — derive on the plain value types. uuid — backs MemberId; the `serde` feature
+# ONLY, deliberately NO `v4`/`rng` (those pull `getrandom`, which would break wasm32 and
+# violate "no ambient randomness" in core/domain — see docs/forbidden-patterns.md).
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["serde"] }
+
+# Test-only. serde_json — load/round-trip the golden fixtures. insta — serialization +
+# redacted-summary snapshots (`json` feature is required for assert_json_snapshot!).
+# static_assertions — compile-time proof that the tainted types expose no Debug/Display.
+serde_json = "1"
+insta = { version = "1", features = ["json"] }
+static_assertions = "1.1"

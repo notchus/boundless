@@ -1,0 +1,15 @@
+{
+  "outcome": "device_rebound",
+  "member_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "roles": ["driver"],
+  "platform": "ios",
+  "app_version": "1.2.0",
+  "old_device_token_invalidated": true,
+  "recovery_code_rotated": true,
+  "session": {
+    "access_token_expires_in_secs": 900,
+    "refresh": "indefinite_silent_rotation"
+  },
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0"
+}

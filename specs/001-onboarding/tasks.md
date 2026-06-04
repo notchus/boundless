@@ -38,12 +38,13 @@ Wave 8:  T16 (cross-cutting verification)
 
 ## Wave 1 — core types
 
-### T02 — Core domain & value types + golden fixtures
+### T02 — Core domain & value types + golden fixtures — ✅ DONE (2026-06-04)
 - **Does:** Define the P4-generated types in `core/domain`: `MemberId`, `Role`, `Platform`, `AppVersion`, `ClientVersion`, and the tainted newtypes `PhoneNumber`, `DeviceToken`, `OnboardingCode`, `RecoveryCode`, `AccessToken`/`RefreshToken` — all with **no `Debug`/`Display`**, only `redacted_summary()` (P2). Author the golden JSON fixtures in `fixtures/auth/**` and `fixtures/manifest/**` named in plan §5.
 - **Touches:** `core/domain/`, `fixtures/`.
 - **Closes/enables:** enables **AC4, AC7** (types); fixtures underpin AC8/AC10/AC15/AC19.
 - **Tests:** `insta` serialization snapshots of each wire type + the `redacted_summary()` forms; a compile/inspection test asserting tainted types expose no `Debug`/`Display`.
 - **Blocked by:** T01 · **∥:** no (blocks 3–6, 10).
+- **Done (2026-06-04):** `core/domain` defines the value types (`MemberId` transparent-UUID; `Role`; `Platform` with canonical `ios/ipados/watchos/macos/android/wearos/web` wire names; `AppVersion` string wire-form with **semantic** (not lexicographic) ordering + `FromStr`/`Display`/custom serde; `ClientVersion{platform, app_version}`) and the six tainted newtypes (`PhoneNumber`/`DeviceToken`/`OnboardingCode`/`RecoveryCode`/`AccessToken`/`RefreshToken`) — **no `Debug`/`Display`/`Serialize`**, only `redacted_summary()` + `expose_secret()`, enforced at compile time via `static_assertions::assert_not_impl_any!` (P2/I3). 15 golden fixtures authored (`fixtures/auth/`×9, `manifest/`×4, `compat/`×2) + per-dir README descriptors; the manifest Ed25519 **signature vectors are deferred to T03** (content bytes frozen; documented in `fixtures/manifest/README.md`). Deps pinned from the lock into `docs/stack-matrix.md`: `serde` 1.0.228, `serde_json` 1.0.150, `uuid` 1.23.2 (**`serde` feature only — no `rng`/getrandom**, keeping the lib wasm-safe + randomness-free), `insta` 1.47.2, `static_assertions` 1.1.0. **14 tests** green; `cargo fmt`/`clippy -D warnings`/`test` all `--locked` clean; **`cargo build --target wasm32-unknown-unknown` clean** (lib dep graph = serde + uuid only); binding-drift gate green (27 inputs, lock regenerated); network allow-list clean (3 lock files, no trackers). Reviewed via a 4-agent adversarial workflow (`reviewer` + `security-auditor` + `platform-parity` + `test-strategist`): **0 confirmed in-scope defects** (security-auditor clean on P2/I3/I4/I8). Two low/info test-hardening notes applied (inbound JSON round-trip for `MemberId`/`ClientVersion`; explicit named-fixture presence check). `platform-parity`'s 3 notes are forward-guidance for the **T10** UniFFI codegen (AppVersion record-vs-string, MemberId custom-type mapping, tainted-type formatter-free binding surface) — out of scope here, noted for T10.
 
 ---
 

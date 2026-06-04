@@ -1,0 +1,14 @@
+{
+  "outcome": "device_bound",
+  "member_id": "550e8400-e29b-41d4-a716-446655440000",
+  "roles": ["rider"],
+  "platform": "ios",
+  "app_version": "1.2.0",
+  "device_token_registered": true,
+  "session": {
+    "access_token_expires_in_secs": 900,
+    "refresh": "indefinite_silent_rotation"
+  },
+  "client_min_version": "1.0.0",
+  "client_recommended_version": "1.2.0"
+}
