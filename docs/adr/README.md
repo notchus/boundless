@@ -33,6 +33,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 ## Currently-active ADRs
 
 - [ADR-0001](./0001-rust-core.md) — Single shared Rust core for domain types and business logic
+- [ADR-0013](./0013-license.md) — AGPL-3.0 for the entire repository (+ App Store §7 exception)
 - [ADR-0014](./0014-server-driven-config.md) — Server-Driven Configuration via Cloudflare KV (supports P13 / O1–O8)
 
 ## Suggested early ADRs to author (stubs)
@@ -50,7 +51,6 @@ These were decided during the planning chats and should be formalized:
 - ADR-0010 — Optional Live Tracker is E2E encrypted (server cannot decrypt)
 - ADR-0011 — Spec-Driven Development with GitHub Spec Kit as the development methodology
 - ADR-0012 — Weblate as the translator workflow (self-host vs hosted: open)
-- ADR-0013 — License choice (AGPL-3.0 vs MIT — open)
 
 Write these as you encounter the decisions during implementation, not all at once.
 
