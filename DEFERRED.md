@@ -343,6 +343,65 @@
 
 ---
 
+## Server / migrations (spec 001 T06 — out-of-scope register)
+
+> T06 shipped exactly the **schema**: the 8 reversible migrations (`server/migrations/0001…0008`),
+> a dependency-free static convention test (`server/tests/migrations.rs`), a self-skipping live
+> psql apply/RLS/revert script (`scripts/test-migrations.sh`), and the CI wiring (server step
+> `build`→`test`; a `postgres:16` `server-migrations` job). No endpoint logic, no row writes, no
+> new Rust dependencies. The live cycle was verified against real `postgres:16` (apply → bytea +
+> forced-RLS + isolation/deny/WITH-CHECK smoke → revert → clean teardown). Everything below was
+> deliberately left out; each carries a WHEN trigger.
+
+- [ ] **RLS GUC must be set per *request transaction* on the Hyperdrive/Worker connection.**
+      Tenant isolation depends on `SET LOCAL app.current_group_id = '<group>'` inside each request's
+      transaction (the resolver `current_group_id()` maps unset/empty → NULL → deny, so the failure
+      mode is fail-*closed*). The trap is **pooled-connection reuse**: Hyperdrive pools physical
+      connections, so a value set without `SET LOCAL` (or never reset) could carry a prior tenant
+      into the next request. T07 must use `SET LOCAL` within the request txn (resets at COMMIT/
+      ROLLBACK), or explicitly reset on checkout. **Highest-leverage carry-forward.** (reviewer M2 /
+      sec-audit R1)
+  - **WHEN:** **T07** (member-auth endpoints + DO connection layer).
+
+- [ ] **The runtime DB role must be non-superuser and non-`BYPASSRLS`.** `FORCE ROW LEVEL SECURITY`
+      covers the table owner, but a superuser / `BYPASSRLS` role bypasses RLS regardless. The
+      Hyperdrive/Worker role must be a plain role. (sec-audit R3)
+  - **WHEN:** **T07** / infra (DB role provisioning).
+
+- [ ] **Atomic supersede-then-insert for the four partial-unique indexes.** The schema *enforces*
+      "at most one live row" via partial unique indexes on `onboarding_codes`/`recovery_codes`
+      (one live code per member), `sessions` (one current credential per family), and
+      `admin_invitations` (one live invite per admin). A regenerate/rotate that inserts the new row
+      before superseding the prior in the **same transaction** will hit a unique violation — T07/T08
+      must order it supersede-then-insert atomically (the DB twin of T04's "atomic consume-on-accept"
+      carry-forward). (reviewer / sec-audit R5-adjacent)
+  - **WHEN:** **T07** (code/session rotation) and **T08** (admin invite re-issue).
+
+- [ ] **`audit_log` table + admin-PII-read audit (I5).** This slice provides only `created_by`
+      (write-side actor). The `audit_log` table and the `#[require_audit]` read-path obligation must
+      exist before any endpoint returns `phone_encrypted` to an Admin. (sec-audit R9)
+  - **WHEN:** **T07** / **spec 008** (admin member-management).
+
+- [ ] **sqlx `Migrator` programmatic up/down integration harness + the `sqlx` pin.** T06 is
+      zero-dependency on purpose (filenames are already sqlx-reversible-compatible — `NNNN_*.{up,down}.sql`,
+      verified via docs-researcher). When T07 pulls in `sqlx` for queries, adopt `sqlx::migrate!`
+      and a programmatic up/down test, **pin `sqlx` (latest published = 0.8.6)** in the manifests,
+      and **fill `docs/stack-matrix.md`** (the `sqlx` row is named but unversioned). Keep LF line
+      endings (CRLF changes sqlx's migration hash).
+  - **WHEN:** **T07** (first real Postgres queries).
+
+- [ ] **PostGIS / `pgcrypto` extensions + `address_encrypted` + per-Group key/KEK columns (I1).**
+      Onboarding tables have no geometry and no address (crypto is core-owned, §10-H). Address
+      persistence, the per-Group encryption key, and the KEK (Secrets Store) land with issuance.
+  - **WHEN:** **spec 008** (admin issuance) — adds the `i1_addresses_encrypted` enforcement.
+
+- [ ] **Actual row writes** (group/member issuance, sign-in lookup, device-bind, refresh rotation,
+      recovery re-bind, admin invite mint/consume) — the schema defines the columns; the writes are
+      the endpoint slices.
+  - **WHEN:** **T07** (member auth) / **T08** (dev admin-create + invite) / **spec 008** (issuance).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

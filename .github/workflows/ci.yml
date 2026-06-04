@@ -51,6 +51,36 @@ jobs:
       - name: test
         working-directory: core
         run: cargo test --locked --workspace
-      - name: server build
+      - name: server build + test
+        # `cargo test` builds the Worker crate AND runs the dependency-free static migration
+        # convention test (server/tests/migrations.rs, T06). The live apply runs in the
+        # `server-migrations` job below.
         working-directory: server
-        run: cargo build --locked
+        run: cargo test --locked
+
+  server-migrations:
+    name: Migrations (apply · RLS · revert on Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boundless_test
+        ports:
+          - 5432:5432
+        # Hold the job until Postgres accepts connections.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # ubuntu-latest ships the postgresql-client (psql); DATABASE_URL makes the script run
+      # (not self-skip). It applies 0001→0008, asserts bytea PII + forced RLS + isolation, then
+      # reverts and asserts a clean teardown.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/boundless_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply, verify, and revert migrations
+        run: bash scripts/test-migrations.sh

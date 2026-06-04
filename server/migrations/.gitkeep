@@ -1,2 +1,0 @@
-# Numbered SQL migrations (0001_groups … 0008_admin_invitations) land in spec 001 task T06.
-# Conventions: PII columns `*_encrypted bytea`; every row created_at/updated_at/created_by; RLS.
