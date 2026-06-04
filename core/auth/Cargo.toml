@@ -7,3 +7,18 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Pins live in core/Cargo.toml [workspace.dependencies] (P4 single-source).
+# boundless-domain — value/tainted types (MemberId, Role, AppVersion, OnboardingCode, …).
+# boundless-crypto — the constant-time code/phone matchers (CodeHash, HmacKey); composing
+#   them keeps the code-validation decision order single-sourced in core::auth (no oracle).
+# serde — derive Serialize/Deserialize on the (non-PII) verdict/state enums for golden
+#   fixtures and the eventual T10 wire/UniFFI surface.
+boundless-domain.workspace = true
+boundless-crypto.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+# proptest — property tests for the code/version invariants (P9; seeds in proptest-regressions/).
+# serde_json — replay the golden auth fixtures (fixtures/auth/**) in the decision tests.
+proptest.workspace = true
+serde_json.workspace = true

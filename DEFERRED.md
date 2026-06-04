@@ -80,9 +80,10 @@
     filled at spec 001 T02 from the lock: `serde` 1.0.228 (+ `serde_core`), `serde_json`
     1.0.150, `uuid` 1.23.2, `insta` 1.47.2, `static_assertions` 1.1.0. `core/crypto` deps
     filled at spec 001 **T03**: `hmac` 0.13.0, `sha2` 0.11.0, `base64` 0.22.1 (dev), and
-    the `getrandom` 0.4.2 wasm32 shim (`wasm_js`). Swift, Kotlin, TypeScript, Xcode,
-    Android Studio, pnpm, and the remaining Rust deps (`uniffi`, `tokio`, `proptest`,
-    `chrono`/`time`, `geo`, `petgraph`, …) remain TODO until those parts are initialized.
+    the `getrandom` 0.4.2 wasm32 shim (`wasm_js`). `proptest` 1.11.0 (dev) filled at spec 001
+    **T04** (first property tests, `core/auth`). Swift, Kotlin, TypeScript, Xcode, Android
+    Studio, pnpm, and the remaining Rust deps (`uniffi`, `tokio`, `chrono`/`time`, `geo`,
+    `petgraph`, …) remain TODO until those parts are initialized.
 
 - [ ] **Re-pin `dryoc` to 0.9.0 (or the then-latest)** once it is *published* to
       crates.io. At T01 the stack-matrix's `dryoc 0.9.0` was found to be unpublished
@@ -197,6 +198,68 @@
       T03 covers **I3** (+ the AC10 manifest tiers). I1/I2/etc. get their named tests when
       their primitives exist.
   - **WHEN:** as each invariant's primitive lands (I1 → spec 008; I2 → matching, spec 004+).
+
+---
+
+## `core::auth` (spec 001 T04 — out-of-scope register)
+
+> T04 implemented exactly the **device-side pure logic**: the `OnboardingState` machine,
+> `AppVersion` vs `client_min_version` comparison (O4) + the N-2 window (O1), and the
+> Onboarding/Recovery **code lifecycle decision** (single-use / TTL / rate-limit /
+> regenerate-invalidates-prior, AC17; driver-only recovery, AC19) on an injected `Clock`.
+> Everything below was **deliberately left out** of that slice (per the approved plan + the
+> "keep track of everything out of scope" instruction). Each carries a WHEN trigger.
+
+- [ ] **Server-time enforcement of the code lifecycle.** T04 ships the pure *decision*
+      (`evaluate_onboarding_code`/`evaluate_recovery_code`); the server is the authority that
+      feeds it **server time**, persists the `onboarding_codes`/`recovery_codes` rows, runs
+      the rate-limit **window** bookkeeping (5 attempts / 15 min — T04 only models the lock
+      decision `recent_attempts ≥ max`), wires **Turnstile**, and emits the lock admin alert.
+      **Carry-forward from the T04 security review (must land in T07):** (a) **atomic
+      consume-on-accept** — the core renders `Accepted`, but the server must mark
+      `consumed`/`superseded` transactionally with the accept, or two concurrent presentations
+      of one live code could both see `Accepted`; (b) **sign-in response-timing/shape parity**
+      for matched-vs-unmatched phone (no existence leak — the constant-time hash compare is
+      necessary but the *response* must not branch on existence either); (c) the production
+      `Clock` impl **must** supply server time (a device clock re-enters the threat model
+      otherwise). The driver-only recovery role gate is now enforced **inside** the core
+      (`evaluate_recovery_code` takes `role`), so it is no longer a caller contract — but T07
+      should still short-circuit via `recovery_available_for` before loading a challenge.
+  - **WHEN:** **T07** (member-auth endpoints + DO) and **T06** (the code tables).
+
+- [ ] **N-2 support policy across a *major* version bump.** `minimum_supported(current, n)`
+      deliberately floors within the current major (it does not roll back across a major) —
+      so the moment the server ships `2.0.0`, every `1.x` client falls below the window. This
+      is a defensible reading of O1 ("N-2 *minor* versions"), but it tensions with P13/O1's
+      "a rider on a 4-month-old build still works" across a major boundary. Make the
+      across-major support policy an explicit **ADR** decision before the first `2.0.0`.
+  - **WHEN:** before shipping a `2.0.0` server (or when the compat harness, AC9, first spans
+    a major bump).
+
+- [ ] **Sessions, silent refresh-token rotation, device-token binding (ADR-0016 D2, I4).**
+      Indefinite sessions, rotation with replay/lineage detection, the
+      `(member_id, platform, app_version)` device-token binding + invalidation triggers, and
+      the new **`auth_refresh_rotation_replay_detected`** privacy-invariant test are **T05** —
+      the sibling `core::auth` slice, explicitly *not* in T04. (Already tracked above under
+      "Auth / Onboarding (spec 001 plan deferrals)".)
+  - **WHEN:** **T05** (`core::auth` sessions/refresh).
+
+- [ ] **UniFFI export of the `core::auth` surface.** T04's types are UniFFI-shaped (plain
+      enums/structs, no exotic generics) but carry **no `#[uniffi::export]`/UDL** yet — codegen
+      to Swift/Kotlin is the T10 contract-freeze (matches T02/T03). The injected `Clock` is a
+      Rust-side server concern, not part of the client UniFFI surface (clients don't validate
+      codes — that's server-side).
+  - **WHEN:** **T10** (API contracts + generated bindings).
+
+- [ ] **`chrono`-vs-`time` crate decision.** T04 uses a homegrown `UnixSeconds(i64)` (UTC) +
+      a `Clock` trait for the only time need so far (TTL `<` comparisons), keeping the
+      stack-matrix `chrono`/`time` TODO ("pick one — file ADR if both used") correctly
+      deferred. Pick the crate when real wall-clock/formatting/parsing is first needed.
+  - **WHEN:** **T07** (server, real server-time) or the first locale-aware time display.
+
+- [ ] **Promote `Clock`/`UnixSeconds` to a shared crate** if `core::sync`/`core::server`/
+      matching need the same time abstraction (today it lives in `core::auth`).
+  - **WHEN:** when a second crate needs an injected clock.
 
 ---
 

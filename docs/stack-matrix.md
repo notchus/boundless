@@ -34,7 +34,7 @@
 | `uniffi` | TODO (latest stable) | Swift/Kotlin binding generation |
 | `wasm-bindgen` | TODO | wasm target for admin web (limited) |
 | `tokio` | TODO | Async runtime (server side only) |
-| `proptest` | TODO | Property-based tests for matching |
+| `proptest` | 1.11.0 | Property-based tests. **Dev-only** (host test runner — never compiled into the wasm32 client/server target, so no `getrandom`/wasm caveat). First used in `core/auth` (spec 001 T04) for the code/version invariants (`prop_onboarding_code_single_use_ttl_ratelimit`, `prop_n_minus_2_version_window`); also the future matching property tests. Failing seeds persist to each crate's committed `proptest-regressions/` (P9 reproducible seeds). MIT OR Apache-2.0; MSRV 1.85 (≤ the workspace 1.89 floor). Latest published release, verified 2026-06-04 via docs-researcher (lock = ground truth). Pinned spec 001 T04. |
 | `insta` | 1.47.2 | Snapshot tests for serialization (feature `json` for `assert_json_snapshot!`). **Dev-only.** Apache-2.0. Pinned 2026-06-04 (spec 001 T02). |
 | `static_assertions` | 1.1.0 | Compile-time proof that the tainted PII types (T02) **and** the `core/crypto` key/hash types — `HmacKey`/`PhoneLookupHash`/`CodeHash` (T03) — expose **no** `Debug`/`Display`/`Serialize` (P2/I3) via `assert_not_impl_any!`. **Dev-only.** MIT OR Apache-2.0. Pinned 2026-06-04 (spec 001 T02). |
 | `base64` | 0.22.1 | **Dev-only.** Decodes the `fixtures/manifest/**` detached-signature + public-key fields in `core/crypto`'s `invariants.rs` (T03). MIT OR Apache-2.0. Pinned 2026-06-04 (spec 001 T03). |

@@ -53,10 +53,13 @@ uuid = { version = "1", features = ["serde"] }
 hmac = "0.13"
 sha2 = "0.11"
 
-# Internal crate, shared via the workspace. core/crypto takes the tainted value types
+# Internal crates, shared via the workspace. core/crypto takes the tainted value types
 # (PhoneNumber/OnboardingCode/RecoveryCode) by reference so `expose_secret()` is confined
-# to the crypto crate. core/auth + core/sync will reuse this entry.
+# to the crypto crate. core/auth (spec 001 T04) reuses boundless-domain and additionally
+# composes boundless-crypto's constant-time matchers so the code-validation decision order
+# (lifecycle gates → constant-time secret match) is single-sourced (P4).
 boundless-domain = { path = "domain" }
+boundless-crypto = { path = "crypto" }
 
 # serde_json — load/round-trip the golden fixtures (test) AND the canonical, sorted-key
 # manifest serialization that the Ed25519 signature covers (normal dep of core/crypto, T03).
@@ -69,3 +72,11 @@ serde_json = "1"
 insta = { version = "1", features = ["json"] }
 static_assertions = "1.1"
 base64 = "0.22"
+
+# Property-based testing for core::auth's code/version invariants (spec 001 T04; P9).
+# Latest published release on crates.io, verified 2026-06-04 via docs-researcher (MIT OR
+# Apache-2.0, MSRV 1.85 ≤ the workspace 1.89 floor). DEV-ONLY / host-only — it never
+# compiles into the wasm32 client/server target, so it carries no getrandom/wasm caveat.
+# Failing seeds persist to each crate's committed `proptest-regressions/` (the Proptest
+# Book's sanctioned "check these in" workflow — satisfies P9's reproducible-seeds rule).
+proptest = "1.11"
