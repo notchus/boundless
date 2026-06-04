@@ -1,0 +1,37 @@
+# boundless-server-store — the Postgres-backed AuthStore data-access layer (spec 001 T07-shell
+# slice A). NATIVE crate (tokio-postgres): it is NOT compiled to the Workers wasm target. It
+# implements the SQL + transaction logic for the member-auth store contracts (atomic
+# supersede-then-insert, rotate-vs-replay, RLS tenant scoping) and is exercised by real-Postgres
+# integration tests (server/store/tests). The deployable Worker (T07-shell-B) drives the same
+# tokio-postgres queries over a Hyperdrive `worker::Socket`; wiring it into the (currently sync)
+# core/server `AuthService` is the async-port bridge, also deferred (see DEFERRED.md, ADR-0019).
+[package]
+name = "boundless-server-store"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.89"
+license = "AGPL-3.0-only"
+repository = "https://github.com/notchus/boundless"
+
+[dependencies]
+# The port record types this adapter returns are single-sourced from core/server (P4): MemberRecord,
+# OnboardingCodeRow, RecoveryCodeRow, FamilyInfo, RefreshClassification. boundless-auth supplies
+# Session / SessionFamilyStatus / RefreshPresentation / UnixSeconds; boundless-crypto the keyed
+# hashes + constant-time matchers; boundless-domain the ids / Role / tainted token types.
+boundless-server-core = { path = "../../core/server" }
+boundless-auth = { path = "../../core/auth" }
+boundless-crypto = { path = "../../core/crypto" }
+boundless-domain = { path = "../../core/domain" }
+
+# Postgres driver. `0.7` resolves to 0.7.17 in Cargo.lock (the latest published release; verified
+# 2026-06-05 via docs-researcher against crates.io/docs.rs; MIT OR Apache-2.0; lock = ground truth).
+# `with-uuid-1` is the only non-default feature needed (uuid::Uuid <-> Postgres `uuid`);
+# SystemTime<->timestamptz, bytea, and text[] are built-in. The default `runtime` feature provides
+# `NoTls`. The Worker (T07-shell-B) will revisit feature flags + the Socket transport for wasm32
+# (ADR-0019).
+tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
+uuid = "1"
+
+[dev-dependencies]
+# Drive the tokio-postgres Connection future + spawn concurrent tasks in the integration tests.
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }

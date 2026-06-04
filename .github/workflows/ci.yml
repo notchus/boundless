@@ -84,3 +84,40 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply, verify, and revert migrations
         run: bash scripts/test-migrations.sh
+
+  server-store:
+    name: Server store (Postgres AuthStore adapter — ADR-0019)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boundless_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Makes the boundless-server-store integration tests RUN (not self-skip): each applies the
+      # T06 migrations into a fresh schema, connects as a NON-superuser role, and proves the
+      # atomic / RLS / rotate-vs-replay-TOCTOU contracts against real Postgres (T07-shell slice A).
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/boundless_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup component add rustfmt clippy
+      - name: rustfmt
+        working-directory: server
+        run: cargo fmt --all -- --check
+      - name: clippy
+        working-directory: server
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: integration tests (real Postgres)
+        working-directory: server
+        run: cargo test --locked -p boundless-server-store

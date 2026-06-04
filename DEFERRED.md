@@ -382,13 +382,14 @@
       exist before any endpoint returns `phone_encrypted` to an Admin. (sec-audit R9)
   - **WHEN:** **T07** / **spec 008** (admin member-management).
 
-- [ ] **sqlx `Migrator` programmatic up/down integration harness + the `sqlx` pin.** T06 is
-      zero-dependency on purpose (filenames are already sqlx-reversible-compatible — `NNNN_*.{up,down}.sql`,
-      verified via docs-researcher). When T07 pulls in `sqlx` for queries, adopt `sqlx::migrate!`
-      and a programmatic up/down test, **pin `sqlx` (latest published = 0.8.6)** in the manifests,
-      and **fill `docs/stack-matrix.md`** (the `sqlx` row is named but unversioned). Keep LF line
-      endings (CRLF changes sqlx's migration hash).
-  - **WHEN:** **T07** (first real Postgres queries).
+- [x] **~~sqlx `Migrator` + the `sqlx` pin~~ — SUPERSEDED by ADR-0019 (sqlx dropped).** Research at
+      T07-shell slice A found **`sqlx` cannot run in the Workers wasm runtime**, so it is not on the
+      Worker→Postgres path. The driver is **`tokio-postgres` over a Hyperdrive Socket** (ADR-0019).
+      Migrations stay plain reversible `NNNN_*.{up,down}.sql` applied **out of band** (CI `psql` /
+      `scripts/test-migrations.sh`; the store tests apply them via `batch_execute`) — there is no
+      `sqlx::migrate!` and **no `sqlx` dependency**. `docs/stack-matrix.md` updated (sqlx row dropped;
+      `tokio-postgres`/`tokio` added). Keep LF line endings regardless.
+  - **DONE/decided:** 2026-06-05 (ADR-0019).
 
 - [ ] **PostGIS / `pgcrypto` extensions + `address_encrypted` + per-Group key/KEK columns (I1).**
       Onboarding tables have no geometry and no address (crypto is core-owned, §10-H). Address
@@ -415,32 +416,41 @@
 > decision 2026-06-04: "core engine only"). Everything below is its scope + the port contracts it
 > must satisfy. Closes the server-logic legs of AC4/AC7(data)/AC8/AC14/AC15/AC17/AC18/AC19.
 
-- [ ] **T07-shell — the deployable workers-rs Worker.** The `#[event]`/Router entry point, the
-      `GroupHub` Durable Object (persisting `GroupHubState`), and the Cloudflare bindings — Queues
-      (admin alerts), KV (manifest + per-Group `{adminName}`), Turnstile (code-guess + refresh
-      throttle), Hyperdrive → Postgres. Plus the **Postgres-backed `AuthStore`** honoring the port
-      contracts: `SET LOCAL app.current_group_id` per request txn (T06 carry-forward), a
-      non-superuser / non-`BYPASSRLS` role, and the mutating methods as **atomic**
-      `UPDATE … WHERE … RETURNING` / single-txn statements (supersede-then-insert) —
-      `consume_onboarding_if_live`, `rotate_session`, `revoke_family`, `consume_and_rotate_recovery`.
-      Plus the real **CSPRNG `SecretSource`**, **access-token signing** (JWT, the ~15-min TTL),
-      **APNs/FCM** device-token registration, the `RefreshResponse::server_verdict` → PII-free
-      `emit()` logging (never returned to the client), and the **per-source refresh-rejection 429**
-      (the `GroupHubState` counter exists; the network enforcement is the shell's).
-  - **Needs `docs-researcher`:** workers-rs + the Postgres-over-Hyperdrive driver — vanilla `sqlx`
-    likely can't target the Workers wasm runtime, so research them as a unit — then pin
-    `sqlx`/`worker` and fill `docs/stack-matrix.md` (the `sqlx` row is still unversioned; T06
-    follow-up).
-  - **WHEN:** the T07-shell infra task (after T07-core).
+> **Slice A DONE (2026-06-05):** the **Postgres `AuthStore` adapter** (`boundless-server-store`,
+> `server/store/`) is built + proven against real `postgres:16` — see the dedicated
+> "Server / store (T07-shell slice A)" register below. Driver = **`tokio-postgres` over a Hyperdrive
+> Socket** (sqlx dropped, ADR-0019). The rest of T07-shell is **T07-shell-B** below.
 
-- [ ] **Live integration tests of the atomic contracts** (postgres:16 / miniflare): the true
-      DB-level TOCTOU proofs the in-memory stub only *models* — `bind` single-consume under real
-      concurrency, **`concurrent_rotate_and_replay_resolves_to_revoked`** (T05 carry-forward),
-      classification-correctness (rotated-N-times-ago ⇒ `Superseded`, so replay *kills*), the
-      family-kill persistence (`sessions.revoked_at` + legit-current-then-rejected), and the RLS
-      `SET LOCAL` isolation. T07-core proves the *contract* (the orchestration honors the atomic
-      commit's verdict over a stale snapshot); the DB proof is the shell's.
-  - **WHEN:** T07-shell.
+- [ ] **T07-shell-B — the deployable workers-rs Worker + the async-port bridge.** The `#[event]`/
+      Router entry point, the `GroupHub` Durable Object (persisting `GroupHubState`), and the
+      Cloudflare bindings — Queues (admin alerts), KV (manifest + per-Group `{adminName}`), Turnstile
+      (code-guess + refresh throttle), Hyperdrive → Postgres. Drives the **already-built `PgAuthStore`**
+      over a `hyperdrive.connect()` `worker::Socket` — which requires (i) resolving the
+      `tokio-postgres` **wasm32 feature flags** and (ii) the **pooler-safe `query_raw`** path (the
+      Hyperdrive pooler dislikes tokio-postgres unnamed prepared statements; native tests don't hit
+      this). Plus the **async-port bridge**: `core/server`'s `AuthStore`/`AuthService` are currently
+      **sync** and cannot block-on-async in wasm, so the ports must become `async` (touches the
+      committed, 48-test T07-core — its own slice) before `PgAuthStore` can be wired in. Plus the real
+      **CSPRNG `SecretSource`**, **access-token signing** (JWT, ~15-min TTL), **APNs/FCM** device-token
+      registration, the `RefreshResponse::server_verdict` → PII-free `emit()` logging (never returned
+      to the client), and the **per-source refresh-rejection 429** (the `GroupHubState` counter exists;
+      the network enforcement is the shell's).
+  - **Needs `docs-researcher`:** the workers-rs runtime (`worker`/`worker-build` versions, the
+    `#[event]`/Router/DO/`hyperdrive.connect()` Socket API) + the miniflare/workerd test harness —
+    then pin `worker`/`worker-build` and fill `docs/stack-matrix.md`. (`tokio-postgres`/`tokio` are
+    already pinned by slice A.) Toolchain note (verified 2026-06-05): `wrangler` + `worker-build` are
+    **not installed** in the dev env, and the only supported Worker test path is a **JS/TS miniflare**
+    harness — both are part of this slice's setup cost.
+  - **WHEN:** the T07-shell-B infra task (after slice A).
+
+- [x] **Live DB-level integration tests of the atomic contracts (postgres:16) — DONE in slice A.**
+      The true DB-level TOCTOU proofs the in-memory stub only *modelled* now exist in
+      `server/store/tests/integration.rs` against real Postgres: single-consume under real
+      concurrency, **`concurrent_rotate_and_replay_resolves_to_revoked`** (which *caught a real bug*
+      — see the slice-A register), classification-correctness (rotated-N-times-ago ⇒ `Superseded`),
+      family-kill persistence (`sessions.revoked_at` + legit-current-then-refused), and RLS
+      isolation + fail-closed. **DONE:** 2026-06-05. Remaining → T07-shell-B: the *Worker-level*
+      proof through the Hyperdrive Socket + pooler (miniflare/workerd), once that wiring exists.
 
 - [ ] **Multi-device (phone + watch + iPad) concurrent bindings.** T07-core **decided: single
       active device per member** — re-onboarding invalidates **all** of a member's prior device
@@ -459,6 +469,73 @@
 > per-day alert dedup** (AC8/AC15) and the **rate-limit *window* logic** (AC17). Their *DB/Worker
 > enforcement* (persistence, real server-time, atomic SQL, Turnstile, Queues, 429) is T07-shell
 > above. `chrono`/`time` stays deferred — T07-core needs only integer epoch math.
+
+---
+
+## Server / store (spec 001 T07-shell slice A — out-of-scope register)
+
+> Slice A shipped **`boundless-server-store`** (`server/store/`, a NATIVE crate, member of the new
+> `server/` workspace): `PgAuthStore` — the `tokio-postgres` (0.7.17, `with-uuid-1`) SQL +
+> transaction layer for nine of the `AuthStore` contract methods (member lookup; onboarding
+> load/consume; refresh classify/rotate/revoke/create-family; recovery load/consume-rotate), with
+> per-request RLS tenant scoping (`set_config('app.current_group_id', $1, true)`). Methods are
+> `async + Result` (mirroring the sync `AuthStore` 1:1) and proven against real `postgres:16` —
+> **10 integration tests**, self-skipping without `DATABASE_URL`; CI job `server-store`. The
+> rotate-vs-replay TOCTOU test **caught a real bug** (a concurrent rotate's new current row escaped
+> a concurrent revoke under READ COMMITTED); fixed with a `pg_advisory_xact_lock` on the family in
+> both `rotate_session` and `revoke_family`. Driver decision = **ADR-0019** (tokio-postgres over a
+> Hyperdrive Socket; sqlx dropped). Everything below was deliberately left out.
+
+- [ ] **The async-port bridge.** `core/server`'s `AuthStore`/`AuthService` are **sync** (in-memory
+      stub shape). `PgAuthStore` is `async + Result`, so wiring it into `AuthService` requires making
+      the core ports async — touches the committed, 48-test T07-core, so it is its own slice (not a
+      silent refactor). `PgAuthStore`'s method names/args/returns already mirror `AuthStore` 1:1 to
+      make the eventual trait impl mechanical.
+  - **WHEN:** **T07-shell-B** (with the Worker runtime), or a dedicated "async ports" slice before it.
+
+- [ ] **Device-token store methods** (`current_device_bindings` / `invalidate_device` /
+      `register_device`). Left out of slice A: `register_device` must write `token_encrypted bytea`,
+      and **device-token at-rest encryption does not exist yet** (the I1-adjacent sealed-box crypto is
+      deferred to spec 008; the push registration itself to spec 007). The DeviceToken is PII (P2) —
+      storing it without encryption would violate "encrypt before writing." Implement these when the
+      encryption primitive lands.
+  - **WHEN:** push spec **007** / issuance spec **008** (whichever brings device-token encryption).
+
+- [ ] **wasm32 feature flags + pooler-safe `query_raw`.** Slice A uses `tokio-postgres` with default
+      (native) features and idiomatic `query`/`execute`/`transaction`. The Worker (T07-shell-B) must
+      (i) build `tokio-postgres` for `wasm32` configured to use a `worker::Socket`, and (ii) use the
+      **pooler-safe** query path (`query_raw` / simple protocol) — the Hyperdrive pooler dislikes
+      tokio-postgres unnamed prepared statements. Native tests don't exercise this; it is an explicit
+      slice-B risk (ADR-0019).
+  - **WHEN:** **T07-shell-B**.
+
+- [ ] **Real server-time `now`.** `PgAuthStore` takes `now: UnixSeconds` and binds it (no
+      `SystemTime::now` in the lib — server-time is injected, T04/T05 carry-forward). The Worker
+      supplies real server time; ties into the still-deferred `chrono`-vs-`time` pick (only needed
+      when wall-clock formatting/parsing is required — integer epoch math suffices today).
+  - **WHEN:** **T07-shell-B**.
+
+- [ ] **Connection lifecycle + non-superuser role provisioning (sec-audit W2 — highest-impact).**
+      `PgAuthStore::new(client, group)` takes an established client; connecting
+      (`hyperdrive.connect()` → Socket, spawn the driver) and provisioning the **non-superuser /
+      non-`BYPASSRLS`** runtime DB role (T06 R3; the tests connect as `boundless_app`) are the
+      Worker's / infra's. **If the Worker's Neon/Hyperdrive credential is a superuser or has
+      `BYPASSRLS` (the Neon default `postgres` role often is), RLS is fully bypassed → cross-tenant
+      PII read/write** — the single highest-impact way the privacy model fails in production, and
+      invisible to slice A's tests (they drop privilege via `SET ROLE`). T07-shell-B must add a
+      **boot-time assertion** that refuses to start (and a CI smoke test) if
+      `current_setting('is_superuser')` is `on` or `rolbypassrls` is true for `current_user`.
+  - **WHEN:** **T07-shell-B** / infra (DB role).
+
+- [ ] **Route `StoreError` through the scrubbed log path (sec-audit W4).** `StoreError::Db` wraps a
+      `tokio_postgres::Error` whose `Display`/`Debug` includes the SQL + the Postgres server message
+      — for a unique-violation that message echoes the **conflicting `bytea` key value** (e.g. a
+      `refresh_token_hash` / `phone_lookup_hash`). That is a keyed hash, not plaintext PII, but a
+      stored credential hash in a log is a hardening concern. The Worker (T07-shell-B) must log
+      `StoreError` only via `boundless::logging::emit()` (P2/I10) — never `{e}`/`{:?}` of a `Db`
+      error raw — and the I10 scrubber suite should gain a fixture with a synthetic unique-violation
+      `DETAIL` carrying a `\x…` hex blob, asserting the emitter drops it.
+  - **WHEN:** **T07-shell-B** (logging wiring) + the I10 scrubber suite.
 
 ---
 

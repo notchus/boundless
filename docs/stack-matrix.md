@@ -134,7 +134,9 @@
 | `workers-rs` | Cloudflare Workers Rust SDK |
 | `worker` crate | Bindings to DOs, KV, R2, Queues, Hyperdrive |
 | `axum` (server option) | If running supplementary services outside Workers |
-| `sqlx` | Postgres via Hyperdrive |
+| `tokio-postgres` | 0.7 (lock = **0.7.17**, feature `with-uuid-1`). Postgres via Hyperdrive — the Worker drives it over a `worker::Socket` from `hyperdrive.connect()`. **Replaces `sqlx`**, which cannot run in the Workers wasm runtime (ADR-0019). MIT OR Apache-2.0. Used by `boundless-server-store` (`server/store/`, spec 001 T07-shell slice A); the wasm/Socket wiring + pooler-safe `query_raw` are T07-shell-B. `SystemTime`↔`timestamptz`, `bytea`, `text[]` are built-in; `with-uuid-1` maps `uuid::Uuid`↔`uuid`. Verified 2026-06-05 via docs-researcher; lock = ground truth. |
+| ~~`sqlx`~~ | **Dropped (ADR-0019)** — does not compile/run on `wasm32-unknown-unknown` in the Workers runtime, so it is not on the Worker→Postgres path. Migrations stay plain reversible `NNNN_*.{up,down}.sql` (T06), applied out of band (CI `psql`); **not** `sqlx::migrate!`. |
+| `tokio` | 1.52 (lock = **1.52.3**). **Test-only** in `boundless-server-store` (`rt-multi-thread`/`macros`/`net`/`time`/`sync`) — drives the `tokio-postgres` connection + spawns concurrent tasks in the real-Postgres integration tests. Pinned 2026-06-05 (spec 001 T07-shell slice A). |
 | `serde_json` | JSON |
 | `tower` / `tower-http` | If using Axum |
 | `tracing` + `tracing-subscriber` | Structured logging |

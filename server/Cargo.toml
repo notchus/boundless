@@ -2,6 +2,16 @@
 # Kept as its own package (not part of the core workspace) so the pre-push/CI server
 # stage builds it independently; it depends on `boundless-server-core` once endpoints
 # land. Scaffolded by spec 001 task T01.
+#
+# This manifest is also the ROOT of a small server workspace (spec 001 T07-shell slice A):
+# the `store` member is the NATIVE Postgres AuthStore adapter (tokio-postgres), kept out of
+# the core/ workspace so it never pollutes the core's wasm-portability guarantee. `default-
+# members` lists both so a bare `cargo test` here builds/tests the Worker crate AND the store
+# crate (the store's integration tests self-skip without a database).
+[workspace]
+members = ["store"]
+default-members = [".", "store"]
+
 [package]
 name = "boundless-worker"
 version = "0.0.0"
@@ -12,4 +22,4 @@ repository = "https://github.com/notchus/boundless"
 
 [dependencies]
 # workers-rs (`worker`), Hyperdrive/KV/Queues bindings, and the path dependency on
-# ../core/server are added when endpoints land (T07/T08).
+# ../core/server are added when endpoints land (T07-shell-B/T08).
