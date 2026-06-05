@@ -643,14 +643,18 @@
       token (no PII, no credential material — ADR-0015's 6 constraints) are the shell's.
   - **WHEN:** **T08-shell** (Email Workers binding).
 
-- [ ] **Invite consume on first WebAuthn registration (single-use, AC16 consume leg) → T09.** T08 ships
-      only the **mint** + the constant-time at-rest hash (`admin_invitation_token_matches`); the
-      *validation* (TTL + single-use + `consumed_at` stamp on successful WebAuthn registration, routing a
-      reused/expired link to `InviteExpired` — `ADMIN_INVITE_EXPIRED`/`ADMIN_INVITE_CONSUMED`) is the
-      SvelteKit-edge consume path. Note the P4 tension: hashing the presented token with the per-instance
-      HMAC to compare against `token_hash` would put a crypto step in edge-TS — resolve under ADR-0017's
-      documented WebAuthn P4 carve-out (or expose a Worker/core verify endpoint the edge calls).
-  - **WHEN:** **T09** (admin WebAuthn registration, edge TS).
+- [~] **Invite consume on first WebAuthn registration (single-use, AC16 consume leg) → T09.** T08 shipped
+      only the **mint** + the constant-time at-rest hash (`admin_invitation_token_matches`). **T09
+      (2026-06-05) shipped the consume *logic*:** `evaluateInvite` (server-time TTL + single-use →
+      `ADMIN_INVITE_EXPIRED`/`ADMIN_INVITE_CONSUMED`, routes to `InviteExpired`) and `verifyRegistration`
+      consuming the invite (`InviteStore.markConsumed`) on a successful WebAuthn registration, behind the
+      `InviteStore` port + tested (Vitest `ac16_*` + Playwright consume assertion). **Remaining → T09-shell
+      (with T15):** the **real DB consume** — the Worker/Postgres `InviteStore` that hashes the presented
+      token with the per-instance HMAC and compares against `admin_invitations.token_hash` (the P4 tension:
+      resolved per ADR-0017's documented WebAuthn carve-out — that crypto stays server-side, routed through
+      the core's `admin_invitation_token_matches`, NOT in edge-TS), and the **atomic** `consumed_at` stamp
+      (the T06 supersede-then-insert twin).
+  - **WHEN:** **T09-shell / T15** (deployable SvelteKit routes + KV/Postgres bindings).
 
 - [ ] **`created_by` = the Developer's identity (write-side audit, I5).** T08 writes `created_by = NULL`
       (system) on the pending-admin member + invitation rows, because the Developer is not authenticated
@@ -666,6 +670,65 @@
   - **WHEN:** revisit only if the registration UX (T15) wants a typable token.
 
 ---
+
+## Server / admin-WebAuthn (spec 001 T09 — out-of-scope register)
+
+> T09 shipped the **framework-agnostic WebAuthn verification core** (`web/src/lib/server/webauthn/`) +
+> tests (23 Vitest + 4 Playwright-virtual-authenticator) — the registration/assertion verification, invite
+> consume *logic* (AC16), UV enforcement (R11/AC20), multi-cred + Developer-re-invite revoke (D4), KV
+> challenge one-time-use (ADR-0017 D3) — all behind ports with in-memory fakes, **no `wrangler`/SvelteKit
+> runtime needed**. Everything below was deliberately left out (the deployable shell); each carries a WHEN.
+
+- [ ] **Additive backup-key enrollment (the second half of AC20 / ADR-0016 D4 "register a backup key").**
+      T09's `verifyRegistration` is the **invite-gated** path and is **revoke-and-replace** by design
+      (initial registration + lost-key **recovery** — a Developer re-invite revokes the prior credential(s),
+      D4). That makes two *simultaneously-active* credentials unreachable via the invite path. Enrolling an
+      *additional* key without revoking the first is an **authenticated** add-credential flow (the admin is
+      already signed in, no invite) — it needs the **post-assertion session** (deferred shell, §10-F), so it
+      lands with **T15**. The `CredentialStore` already supports >1 active credential per admin (a non-invite
+      `insert` does not revoke); only the new entry point + UI are missing. Plan §7 (AC→test map, line ~158)
+      names a second Playwright test **`ac20_register_passkey_and_backup_key`** for this additive flow — it is
+      deferred here with the flow (T09 ships `ac20_webauthn_requires_uv_no_attestation_multi_credential`, which
+      covers UV/attestation/recovery-revoke; the additive-backup test lands with the authenticated add-key UI).
+  - **WHEN:** **T15** (admin onboarding/settings UI — needs the authenticated admin session).
+
+- [ ] **The deployable SvelteKit `+server.ts` routes.** `/api/admin/auth/{invite,register,signin}` (or the
+      SvelteKit-idiomatic equivalents) that wire the verification functions to HTTP requests/responses, set
+      the post-assertion session, and map `WebAuthnError.code` → catalog copy + `routesTo`. Needs the
+      scaffolded SvelteKit app (**T15**).
+  - **WHEN:** **T15** (admin onboarding UI) / **T09-shell**.
+
+- [ ] **Real Cloudflare **KV** `ChallengeStore` impl.** The production one-time-use, 5-min-TTL challenge
+      store on KV (ADR-0017 D3). T09 ships the port + the consume-once/TTL semantics (proven against the
+      in-memory fake); the KV binding is the shell's.
+  - **WHEN:** **T15 / T09-shell** (KV binding).
+
+- [ ] **Real Postgres `InviteStore` + `CredentialStore` via the Worker.** Reads/writes of
+      `admin_invitations` (load + atomic `consumed_at` stamp) and `admin_webauthn_credentials` (list active
+      / insert / revoke-all-for-admin / bump sign_count) through the deployable Worker. **Includes the
+      invite-token HMAC compare routed through the core** (`admin_invitation_token_matches`) per ADR-0017's
+      P4 carve-out — that crypto stays server-side, **not** in edge-TS (the T08-flagged tension). The
+      credential `public_key`/`credential_id` are `bytea`; storing them is not PII but follows the
+      `_encrypted`/`bytea` conventions.
+  - **WHEN:** **T15 / T09-shell** (Hyperdrive/Postgres binding) — pairs with the T07-shell-B Worker runtime.
+
+- [ ] **Post-assertion session establishment (plan §10-F).** The **httpOnly + Secure + SameSite=Strict**
+      server-side session cookie minted after a successful WebAuthn assertion (the admin session; separate
+      and shorter-lived than member sessions, ADR-0016). T09 returns the verified `adminId`; the cookie is
+      the shell's.
+  - **WHEN:** **T15 / T09-shell**.
+
+- [ ] **AC11b — admin-web a11y (axe-core + keyboard ceremony).** Zero axe violations on each admin
+      onboarding route, keyboard-operable WebAuthn ceremony, `aria-live` on invite-expired/error, 200%/400%
+      reflow, RTL/dark. This is a **UI** concern (the screens don't exist until T15) — Playwright+axe lives
+      with the UI, not the verification core.
+  - **WHEN:** **T15** (admin onboarding UI).
+
+- [ ] **Live deployed-edge E2E + the `webauthn-rs`-sidecar fallback (ADR-0017).** A smoke test against the
+      deployed SvelteKit Worker (Miniflare/workerd), and — only if `@simplewebauthn`'s "unofficially
+      supported" Workers status ever breaks — the documented fallback to a native `webauthn-rs` sidecar.
+      Not built now.
+  - **WHEN:** the deploy/CI-hardening pass (with T07-shell-B / T15) — or if the edge runtime breaks.
 
 ## Constitution
 

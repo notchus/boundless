@@ -57,6 +57,13 @@ dist/
 pnpm-debug.log*
 npm-debug.log*
 
+# ─── Playwright (admin-web e2e) ────────────────────────────────────────────
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+.last-run.json
+
 # ─── Cloudflare Workers (wrangler) ─────────────────────────────────────────
 .wrangler/
 wrangler.toml.local

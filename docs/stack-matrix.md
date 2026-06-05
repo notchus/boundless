@@ -15,7 +15,7 @@
 | Rust | 1.95.0 (latest stable at project init, 2026-06-04; ≥ dryoc MSRV 1.89) | `rust-toolchain.toml` |
 | Swift | TODO (latest stable shipping with Xcode) | Xcode version pin |
 | Kotlin | TODO (2.x latest stable) | `gradle/libs.versions.toml` |
-| TypeScript | TODO (5.x strict) | `package.json` + `tsconfig.json` |
+| TypeScript | 6.0.3 (strict; `web/` pinned exact 2026-06-05, spec 001 T09 — lock = ground truth; the SvelteKit app at T15 may widen the tree) | `package.json` + `tsconfig.json` |
 | Node.js | 22 LTS (current LTS) | `.nvmrc` |
 | Xcode | TODO (latest GM) | `.xcode-version` |
 | Android Studio | TODO (latest stable) | (developer machine) |
@@ -118,10 +118,11 @@
 | TanStack Table | Tables |
 | TanStack Query | Server state |
 | Zod | Schema validation |
-| Playwright | E2E tests |
-| Vitest | Unit tests |
-| axe-core | A11y CI lint |
-| `@simplewebauthn/server` 13.x | Admin WebAuthn (passkey) Relying-Party verification on the Cloudflare edge — WebCrypto-based, runs in the Workers runtime (MIT). Challenges held in KV (5-min TTL). Chosen over a native `webauthn-rs` sidecar (which can't run in Workers wasm). See ADR-0017. Verified 2026-06-04 via docs-researcher. |
+| `@playwright/test` 1.60.0 | E2E tests. **First used spec 001 T09** for the AC20 admin-WebAuthn ceremony via Chromium's CDP **virtual authenticator** (`WebAuthn.addVirtualAuthenticator`/`setUserVerified`) on a secure-context `http://localhost` page → real attestation/assertion bytes through the real verifier. Chromium-only. Browser fetched in CI via `playwright install chromium`. devDep, exact-pinned (lock = ground truth). MIT/Apache-2.0. |
+| `vitest` 4.1.8 | Unit/integration tests. **First used spec 001 T09** for the WebAuthn verification module's pure legs (AC16 invite TTL/consume, KV challenge one-time-use, options policy, multi-cred/recovery, error-code registry parity). devDep, exact-pinned. MIT. |
+| `@types/node` 25.9.1 | Node typings for the Vitest/Playwright harness + the edge module. devDep, exact-pinned (T09). MIT. |
+| axe-core | A11y CI lint (AC11b — lands with the admin UI, T15) |
+| `@simplewebauthn/server` 13.3.1 | Admin WebAuthn (passkey) Relying-Party verification on the Cloudflare edge — WebCrypto-based, runs in the Workers runtime (MIT). Challenges held in KV (5-min TTL). Chosen over a native `webauthn-rs` sidecar (which can't run in Workers wasm). See ADR-0017. **Consumed spec 001 T09** (`web/src/lib/server/webauthn`): v13 shapes verified via docs-researcher (`requireUserVerification` defaults true; `registrationInfo.credential = {id, publicKey: Uint8Array, counter, transports}`; helpers at `@simplewebauthn/server/helpers`). Verified 2026-06-04/05 via docs-researcher; lock = ground truth. |
 
 **Forbidden:**
 - `localStorage` for PII (use server-side session)

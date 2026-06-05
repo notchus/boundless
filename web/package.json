@@ -3,11 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "Boundless admin web (SvelteKit). The app is scaffolded in spec 001 task T15; this manifest exists in T01 only to pin the admin-WebAuthn edge-verification dependency per docs/stack-matrix.md and ADR-0017.",
+  "description": "Boundless admin web (SvelteKit). The SvelteKit app + UI is scaffolded in spec 001 task T15. Spec 001 T09 adds the framework-agnostic admin-WebAuthn edge verification module (web/src/lib/server/webauthn) + its tests, per docs/stack-matrix.md and ADR-0017.",
   "scripts": {
-    "test": "echo 'web: no tests yet (scaffold; real tests land in spec 001 T15)'"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@simplewebauthn/server": "13.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
   }
 }
