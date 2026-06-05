@@ -724,11 +724,76 @@
       with the UI, not the verification core.
   - **WHEN:** **T15** (admin onboarding UI).
 
+- [ ] **Invite token rides in the URL path — harden the shell against log/referrer leakage** (sec-audit
+      F1, surfaced at the T10 contract freeze). The frozen contract's `GET /api/admin/auth/invite/{token}`
+      carries the single-use invitation token in the **URL path** (it must be openable from an email
+      click). The token is opaque + no-PII + single-use + 72h-TTL + consumed-on-first-registration (so the
+      blast radius is bounded, ADR-0015) — **not** a contract defect — but a live invite token in an access
+      log / `Referer` / browser history is a credential-in-logs concern (the P2/I10 reasoning that makes
+      device tokens PII). The shell must: (a) never emit the `{token}` segment to the structured log path —
+      route through `boundless::logging::emit()` and add an **I10 scrubber fixture** for a URL-embedded
+      opaque token (assert the segment is redacted); (b) set **`Referrer-Policy: no-referrer`** on the
+      registration page so the path can't leak via sub-resource `Referer`; (c) keep the single-use consume
+      atomic so a leaked-but-consumed token is inert (already the T09 consume design).
+  - **WHEN:** **T15 / T09-shell** (the deployable invite route) + the I10 scrubber suite.
+
 - [ ] **Live deployed-edge E2E + the `webauthn-rs`-sidecar fallback (ADR-0017).** A smoke test against the
       deployed SvelteKit Worker (Miniflare/workerd), and — only if `@simplewebauthn`'s "unofficially
       supported" Workers status ever breaks — the documented fallback to a native `webauthn-rs` sidecar.
       Not built now.
   - **WHEN:** the deploy/CI-hardening pass (with T07-shell-B / T15) — or if the edge runtime breaks.
+
+---
+
+## API contracts / codegen (spec 001 T10 — out-of-scope register)
+
+> T10 **froze** the wire contracts (`api/openapi.yaml` + `api/boundless.proto`) and closed AC7's
+> contract leg with two host-testable parsing tests (`web/tests/contract/api-contract.test.ts` +
+> `core/sync/tests/proto_contract.rs`) + the regenerated binding-drift lock — all in the installed
+> toolchains. The **actual binding generation** was deliberately deferred: the codegen toolchains
+> (`buf`/`protoc`, `swift-openapi-generator`, `openapi-generator`, `uniffi-bindgen`/`wasm-pack`) are
+> **not installed**, and the UIs that consume the generated bindings (T11–T15) are themselves
+> toolchain-blocked — so generating committed artifacts we cannot build/verify end-to-end would
+> violate "evidence > intuition". The freeze is the substantive gate; codegen is downstream mechanics
+> reproducible from the frozen contract. Everything below is the T10-shell.
+
+- [ ] **Real per-target codegen + the `generate-bindings.sh` "real generators" block.** Wire each
+      generator into `scripts/generate-bindings.sh` (replacing the scaffold-mode hash-only step) and
+      commit the produced `api/generated/<lang>/` trees + the refreshed drift lock:
+      - **Swift:** `swift-openapi-generator` + `protoc-gen-swift` → `api/generated/swift/` + the UniFFI
+        **`BoundlessKit` XCFramework** (`uniffi-bindgen`). **WHEN: with/before T11–T12** (SwiftUI UIs;
+        needs Xcode/SwiftPM-plugin + `uniffi-bindgen`).
+      - **Kotlin:** `openapi-generator` (kotlin) + `protoc-gen-kotlin` → `api/generated/kotlin/` + the
+        UniFFI **`core-bridge` AAR**. **WHEN: with/before T13–T14** (Compose UIs; needs Android
+        Studio/Gradle + `openapi-generator` + `uniffi-bindgen`).
+      - **TypeScript:** `openapi-typescript` + `ts-proto` → `api/generated/typescript/` +
+        `web/src/lib/api/generated/`. `openapi-typescript` is Node-only (could be wired early since
+        Node/pnpm exist), but `ts-proto` needs `protoc`/`buf` — so the **full TS set** lands together.
+        **WHEN: with T15** (SvelteKit admin UI).
+      - Each landing needs `docs-researcher` to pin the generator versions (lock = ground truth) +
+        fill `docs/stack-matrix.md`. Until then `api/generated/**` stays committed `.gitkeep`
+        placeholders and the drift gate runs in scaffold mode (hash-only).
+
+- [ ] **Carry T02's platform-parity UniFFI mapping notes into the codegen.** When the UniFFI
+      XCFramework/AAR are generated: `AppVersion` record-vs-string mapping, `MemberId` UniFFI
+      custom-type mapping, and the tainted-type formatter-free binding surface (no `Debug`/`Display`
+      leaking across the FFI — P2/I3). Flagged by `platform-parity` at T02; actionable at codegen.
+  - **WHEN:** the Swift/Kotlin codegen above (T11–T14).
+
+- [ ] **Strict fixture↔OpenAPI conformance test (host-only hardening).** The T10 AC7 tests check the
+      *version-handshake* invariant on every `/api/auth/*` response, and the core↔wire `ManifestPointer`
+      drift that platform-parity caught was fixed at the source (core `ManifestPointer` now carries
+      `locale_key_prefix`). A stronger guard would validate each `fixtures/auth/*.json` against its
+      corresponding frozen OpenAPI schema (de-`$ref`'d `oneOf` member) so ANY field-name/shape drift
+      between a golden fixture and the contract fails CI — e.g. a small Vitest test using a JSON-Schema
+      validator (`ajv`). Deferred because it adds a new dep beyond the freeze slice; the actual drift it
+      targets is already closed.
+  - **WHEN:** a contract-hardening pass (could ride with **T15**, when the web dep tree expands anyway).
+
+- [ ] **Live deployed-edge contract-conformance E2E.** Replay the golden fixtures against the
+      deployed Worker to prove the runtime responses actually conform to the frozen OpenAPI (the T10
+      tests check the *contract document*, not a live server — which doesn't exist yet).
+  - **WHEN:** with the Worker runtime (**T07-shell-B**) / the deploy-hardening pass.
 
 ## Constitution
 

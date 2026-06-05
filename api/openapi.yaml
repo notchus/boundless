@@ -1,19 +1,679 @@
 # Boundless HTTP API — OpenAPI 3.1. SOURCE OF TRUTH for the HTTP contract
-# (docs/stack-matrix.md → API contracts). Generated clients live in
-# api/generated/<lang>/ and are produced by scripts/generate-bindings.sh —
-# NEVER hand-edit generated files (enforced by scripts/check-binding-drift.sh).
+# (docs/stack-matrix.md → API contracts). Generated clients live in api/generated/<lang>/
+# and are produced by scripts/generate-bindings.sh — NEVER hand-edit generated files
+# (enforced by scripts/check-binding-drift.sh).
 #
-# SCAFFOLD PLACEHOLDER (spec 001 task T01). The contract is finalized and FROZEN in
-# task T10. At freeze, `client_min_version` and `client_recommended_version` become
-# REQUIRED fields on every /api/auth/* response (spec 001 AC7), and the /api/auth/*,
-# /api/dev/*, and /api/admin/auth/* paths are filled in.
+# FROZEN at spec 001 task T10 (the contract-freeze gate, blocks Wave-7 UIs). Any future
+# change to a shipped shape is a deliberate, ADR-gated event (see plan §5 DR-5 + ADR-0001).
+#
+# Fidelity (P4): the response shapes mirror the frozen golden fixtures (fixtures/auth/*.json,
+# authored T02 and replayed in T04/T07), which are the authoritative HTTP *wire* shapes. The
+# Rust core's internal response structs are the orchestration representation; the deferred Worker
+# shell (T07-shell-B) maps them to this wire. Two kinds of correspondence:
+#   • LEAF value types are reused verbatim from the verified core serde forms: AppVersion → string
+#     "1.2.0"; Platform / Role enums; ManifestPointer → {index_key, locale_key_prefix} (the core
+#     `ManifestPointer` carries both legs as of T10 — core/server/src/service.rs).
+#   • RESPONSE ENVELOPES are flattened/renamed PROJECTIONS of the core structs, not identity maps:
+#     core `VersionRequirement{min, recommended}` → the flat wire `client_min_version` /
+#     `client_recommended_version`; the nested core `SignInResponse{version, manifest_pointer,
+#     result}` → flat top-level fields; `manifest_pointer` is projected onto the matched variant
+#     only (the core attaches it on every outcome). The Worker shell owns this projection.
+#
+# Authoring rule: golden fixtures deliberately carry NO secret values (no real tokens/codes are
+# committed), using descriptive placeholders. Secret-bearing wire fields (access_token, refresh,
+# fresh_recovery_code) are modeled here as documented, OPTIONAL, sensitive fields (TLS-only, to
+# the legitimate client) so the contract is complete without invalidating a fixture.
+#
+# AC7: client_min_version + client_recommended_version are REQUIRED on EVERY /api/auth/* response
+# (the VersionHandshake component, shared via allOf). Verified by web/tests/contract/
+# api-contract.test.ts. Domain outcomes ride in the 200 body (no 4xx for not-on-file / below-min:
+# HTTP status would itself be an existence oracle — carry-forward (b), no-existence-leak).
+#
+# Real codegen (swift-openapi-generator / openapi-generator-kotlin / openapi-typescript) is wired
+# in T10-shell, per target, alongside the consuming UI tasks (T11–T15) — see DEFERRED.md.
 openapi: 3.1.0
 info:
   title: Boundless API
-  version: 0.0.0
+  version: 1.0.0
+  summary: Onboarding & authentication (spec 001) — the auth + launch handshake.
+  description: |
+    The bottom-of-the-stack auth contract: member sign-in / device-bind / refresh / Driver
+    recovery, the developer-only Admin-creation endpoint, and admin WebAuthn registration +
+    assertion. Member-management (issuance) is spec 008 and not described here.
   license:
     name: AGPL-3.0-only
     identifier: AGPL-3.0-only
-paths: {}
+
+paths:
+  /api/auth/signin:
+    post:
+      operationId: authSignIn
+      summary: Phone-hash sign-in (no existence leak).
+      description: |
+        Looks up a member by `phone_lookup_hash` (the plaintext phone never crosses the wire —
+        I3/AC3). The response is uniform whether or not the phone matched (carry-forward (b)): it
+        always carries the version handshake (AC7) and a manifest pointer, and the routing outcome
+        rides in the body. A below-minimum client collapses to `AUTH_BELOW_MIN_VERSION` (O4/O8).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Sign-in evaluated (matched / not-on-file / below-min — routed in the body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignInResponse'
+
+  /api/auth/bind-device:
+    post:
+      operationId: authBindDevice
+      summary: Onboarding-Code device bind (server-validated, cannot complete offline).
+      description: |
+        Binds a `(member_id, platform, app_version)` device token (I4/AC4) after validating the
+        Onboarding Code against server time (AC17 — single-use / TTL / rate-limit). All rejection
+        causes route to the same calm `BindingFailed` screen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindDeviceRequest'
+      responses:
+        '200':
+          description: Bind evaluated (bound / failed / below-min — routed in the body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BindDeviceResponse'
+
+  /api/auth/refresh:
+    post:
+      operationId: authRefresh
+      summary: Silent refresh-credential rotation (replay detection).
+      description: |
+        Rotates the refresh credential (ADR-0016 D2). Every non-rotating outcome — unknown
+        credential, revoked family, or detected replay — returns the uniform `AUTH_SESSION_INVALIDATED`
+        (no lineage-existence leak; the replay-vs-unknown distinction is server-log-only). Access
+        token = opaque-random bearer (ADR-0021).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Refresh evaluated (rotated / invalidated / below-min — routed in the body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+
+  /api/auth/recovery/rebind:
+    post:
+      operationId: authRecoveryRebind
+      summary: Driver self-serve device replacement (Recovery Code).
+      description: |
+        Driver-only (ADR-0016 D3): re-binds a new device with a Recovery Code, invalidates the old
+        token (I4), rotates the Recovery Code, and issues a session. Non-Drivers get
+        `AUTH_RECOVERY_NOT_AVAILABLE` (Riders recover via an Admin re-issue). AC19.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryRebindRequest'
+      responses:
+        '200':
+          description: Recovery evaluated (rebound / rejected / below-min — routed in the body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryRebindResponse'
+
+  /api/dev/admins:
+    post:
+      operationId: devCreateAdmin
+      summary: Developer-only Admin creation + invitation mint (I11).
+      description: |
+        Hardware-key-gated (WebAuthn) Developer endpoint. Mints a pending Admin + a single-use,
+        72h, server-time-TTL invitation; the registration link is delivered out-of-band via Email
+        Workers (ADR-0015) — the token is NOT returned in this response body. Unauthenticated AND
+        admin-authenticated callers are both rejected (`DEV_ADMIN_CREATE_FORBIDDEN`, AC1/I11). The
+        Developer WebAuthn verification + Email Workers delivery are the T08-shell (see DEFERRED.md).
+      security:
+        - developerWebAuthn: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminRequest'
+      responses:
+        '201':
+          description: A pending Admin and a single-use invitation were minted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminInvitationMinted'
+        '401':
+          description: Unauthenticated caller — rejected (I11).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '403':
+          description: Authenticated non-Developer (e.g. an Admin) — rejected (I11).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/auth/invite/{token}:
+    get:
+      operationId: adminAuthInvite
+      summary: Open an Admin registration link → WebAuthn registration options.
+      description: |
+        Resolves a single-use invitation. On a live invite, returns the WebAuthn
+        PublicKeyCredentialCreationOptions for the registration ceremony (the W3C/@simplewebauthn
+        shape; UV required, attestation none, resident keys preferred — AC20/ADR-0017 D4). On a
+        reused/expired link, returns `ADMIN_INVITE_EXPIRED` / `ADMIN_INVITE_CONSUMED` routing to
+        `InviteExpired`. The detailed ceremony I/O is owned by the edge-TS verifier (T09) and the
+        SvelteKit shell (T15) — the documented P4 carve-out (ADR-0017 D4).
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The opaque, single-use invitation token (no PII; ADR-0015).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A live invite — returns WebAuthn registration options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnRegistrationOptions'
+        '410':
+          description: The invite was reused or has expired (single-use, server-time TTL — AC16).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteExpired'
+
+  /api/admin/auth/register:
+    post:
+      operationId: adminAuthRegister
+      summary: Verify a WebAuthn registration; consume the invite (AC16/AC20).
+      description: |
+        Verifies the attestation response (UV required, attestation none), consumes the invitation
+        single-use, and stores the credential (multiple per admin; a Developer re-invite revokes
+        prior credentials — D4 recovery). Edge-TS verification (ADR-0017 D4 carve-out); request /
+        response are the standard WebAuthn registration shapes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationCredential'
+      responses:
+        '200':
+          description: Credential registered; the admin is Active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAuthResult'
+        '400':
+          description: Verification failed / invite already consumed/expired / UV missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/auth/signin:
+    post:
+      operationId: adminAuthSignIn
+      summary: Admin WebAuthn assertion sign-in (no password anywhere — AC2).
+      description: |
+        Verifies a WebAuthn assertion (UV required) and establishes the admin session (an
+        httpOnly+Secure+SameSite=Strict cookie — §10-F, set by the SvelteKit shell). There is no
+        password field anywhere in the admin auth flow (AC2). Edge-TS verification (ADR-0017 D4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnAssertionCredential'
+      responses:
+        '200':
+          description: Assertion verified; admin session established.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAuthResult'
+        '400':
+          description: Assertion verification failed / UV missing / unknown credential.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
 components:
-  schemas: {}
+  securitySchemes:
+    developerWebAuthn:
+      type: http
+      scheme: bearer
+      description: |
+        The Developer's hardware-key-backed WebAuthn credential (I11). Verification is the
+        T08-shell concern; modeled here only so the dev endpoint declares its auth requirement.
+
+  schemas:
+    # ── Shared value types (verified serde wire forms from core/domain) ───────────────────
+    AppVersion:
+      type: string
+      pattern: '^\d+\.\d+\.\d+$'
+      description: Semantic application version `major.minor.patch` (core/domain AppVersion).
+      examples: ['1.2.0']
+
+    Platform:
+      type: string
+      description: Client build target (one leg of the I4 device-token tuple).
+      enum: [ios, ipados, watchos, macos, android, wearos, web]
+
+    Role:
+      type: string
+      description: A member's role within a Group (glossary).
+      enum: [rider, driver, admin]
+
+    ClientVersion:
+      type: object
+      description: What a client reports about itself at the auth handshake.
+      required: [platform, app_version]
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        app_version:
+          $ref: '#/components/schemas/AppVersion'
+
+    # The AC7 anchor: every /api/auth/* response allOf's this, so both fields are REQUIRED
+    # in every variant. Mirrors core/auth VersionRequirement (O4 / O5).
+    VersionHandshake:
+      type: object
+      required: [client_min_version, client_recommended_version]
+      properties:
+        client_min_version:
+          allOf: [{ $ref: '#/components/schemas/AppVersion' }]
+          description: Below this, the client shows only the calm degradation screen (O4/O8).
+        client_recommended_version:
+          allOf: [{ $ref: '#/components/schemas/AppVersion' }]
+          description: The O5 straggler signal (admin device-versions panel).
+
+    ManifestPointer:
+      type: object
+      description: Where the client fetches the signed KV manifest at launch (ADR-0014).
+      required: [index_key, locale_key_prefix]
+      properties:
+        index_key:
+          type: string
+          examples: ['manifest:v1:index']
+        locale_key_prefix:
+          type: string
+          examples: ['manifest:v1:']
+
+    SessionMaterial:
+      type: object
+      description: |
+        The session issued on a successful bind / rebind / rotate. The access token is an
+        opaque-random bearer (ADR-0021). Golden fixtures carry NO secret values — they show
+        only `access_token_expires_in_secs` + the descriptive `refresh` placeholder.
+      required: [access_token_expires_in_secs]
+      properties:
+        access_token:
+          type: string
+          description: |
+            Opaque-random bearer (ADR-0021). Sensitive; delivered over TLS to the legitimate
+            client only. Omitted from committed fixtures (no secrets in the repo).
+        access_token_expires_in_secs:
+          type: integer
+          examples: [900]
+        refresh:
+          type: string
+          description: |
+            Refresh-credential handling. Native: the rotated opaque refresh credential, stored in
+            Keychain / Android Keystore (§10-F). Web admin: delivered as an httpOnly+Secure+
+            SameSite=Strict cookie, NOT this field. Golden fixtures use the descriptive placeholder
+            "indefinite_silent_rotation".
+
+    # ── /api/auth/signin ──────────────────────────────────────────────────────────────────
+    SignInRequest:
+      type: object
+      required: [phone_lookup_hash, reported]
+      properties:
+        phone_lookup_hash:
+          type: string
+          description: |
+            HMAC-SHA256 phone-lookup hash, computed by the client (I3/AC3). The plaintext phone
+            never crosses the wire. Base64.
+        reported:
+          $ref: '#/components/schemas/ClientVersion'
+
+    SignInResponse:
+      description: Uniform sign-in response (matched / not-on-file / below-min). AC7/AC8.
+      allOf:
+        - $ref: '#/components/schemas/VersionHandshake'
+        - oneOf:
+            - $ref: '#/components/schemas/SignInMatched'
+            - $ref: '#/components/schemas/PhoneNotOnFile'
+            - $ref: '#/components/schemas/BelowMinVersion'
+
+    SignInMatched:
+      type: object
+      required: [outcome, next_step, manifest_pointer]
+      properties:
+        outcome:
+          type: string
+          const: member_matched
+        next_step:
+          type: string
+          const: device_binding
+        manifest_pointer:
+          $ref: '#/components/schemas/ManifestPointer'
+
+    PhoneNotOnFile:
+      type: object
+      description: Lookup miss — never reveals whether a number exists (AUTH_PHONE_NOT_ON_FILE).
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          const: AUTH_PHONE_NOT_ON_FILE
+
+    BelowMinVersion:
+      type: object
+      description: Reporting client below client_min_version — calm degradation only (O4/O8).
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          const: AUTH_BELOW_MIN_VERSION
+        reported_client_version:
+          $ref: '#/components/schemas/ClientVersion'
+
+    # ── /api/auth/bind-device ──────────────────────────────────────────────────────────────
+    BindDeviceRequest:
+      type: object
+      required: [phone_lookup_hash, onboarding_code, reported, device_token]
+      properties:
+        phone_lookup_hash:
+          type: string
+          description: HMAC-SHA256 phone-lookup hash (I3). Base64.
+        onboarding_code:
+          type: string
+          description: The Onboarding Code the helper entered. Sensitive; server-validated.
+        reported:
+          $ref: '#/components/schemas/ClientVersion'
+        device_token:
+          type: string
+          description: The APNs/FCM push token to bind to (member_id, platform, app_version) (I4).
+
+    BindDeviceResponse:
+      description: Uniform device-bind response (bound / failed / below-min). AC17/AC4/AC7.
+      allOf:
+        - $ref: '#/components/schemas/VersionHandshake'
+        - oneOf:
+            - $ref: '#/components/schemas/DeviceBound'
+            - $ref: '#/components/schemas/BindingFailed'
+            - $ref: '#/components/schemas/BelowMinVersion'
+
+    DeviceBound:
+      type: object
+      required:
+        [outcome, member_id, roles, platform, app_version, device_token_registered, session]
+      properties:
+        outcome:
+          type: string
+          const: device_bound
+        member_id:
+          type: string
+          format: uuid
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        app_version:
+          $ref: '#/components/schemas/AppVersion'
+        device_token_registered:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/SessionMaterial'
+
+    BindingFailed:
+      type: object
+      description: |
+        Onboarding Code rejected — all causes route to the same calm `BindingFailed` screen
+        (onboarding.binding.code_invalid). AC17.
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          enum:
+            - AUTH_ONBOARDING_CODE_INVALID
+            - AUTH_ONBOARDING_CODE_EXPIRED
+            - AUTH_ONBOARDING_CODE_CONSUMED
+            - AUTH_ONBOARDING_CODE_RATE_LIMITED
+
+    # ── /api/auth/refresh ──────────────────────────────────────────────────────────────────
+    RefreshRequest:
+      type: object
+      required: [reported]
+      properties:
+        reported:
+          $ref: '#/components/schemas/ClientVersion'
+        refresh_token:
+          type: string
+          description: |
+            The presented refresh credential. Sensitive. Native clients send it here; the web
+            admin presents it via the httpOnly session cookie (§10-F) instead of this field.
+
+    RefreshResponse:
+      description: Uniform refresh response (rotated / invalidated / below-min). AC18/AC7.
+      allOf:
+        - $ref: '#/components/schemas/VersionHandshake'
+        - oneOf:
+            - $ref: '#/components/schemas/RefreshRotated'
+            - $ref: '#/components/schemas/SessionInvalidated'
+            - $ref: '#/components/schemas/BelowMinVersion'
+
+    RefreshRotated:
+      type: object
+      required: [outcome, session]
+      properties:
+        outcome:
+          type: string
+          const: rotated
+        session:
+          $ref: '#/components/schemas/SessionMaterial'
+
+    SessionInvalidated:
+      type: object
+      description: |
+        The session is over — unknown credential, revoked family, or a detected replay, all
+        UNIFORM (no lineage-existence leak). `role` / `routes_to` are populated ONLY when the
+        server authoritatively knows the member (e.g. a known-but-revoked session, as in the
+        needs_reauth_help fixture); they are ABSENT on an unknown-credential reject. AC15/AC18.
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          const: AUTH_SESSION_INVALIDATED
+        role:
+          $ref: '#/components/schemas/Role'
+        routes_to:
+          type: string
+          description: Client routing target for a known invalidated session.
+          enum: [NeedsReauthHelp, PhoneEntry]
+
+    # ── /api/auth/recovery/rebind ──────────────────────────────────────────────────────────
+    RecoveryRebindRequest:
+      type: object
+      required: [phone_lookup_hash, recovery_code, reported, device_token]
+      properties:
+        phone_lookup_hash:
+          type: string
+          description: HMAC-SHA256 phone-lookup hash (I3). Base64.
+        recovery_code:
+          type: string
+          description: The Driver-held Recovery Code. Sensitive; server-validated, rotated on use.
+        reported:
+          $ref: '#/components/schemas/ClientVersion'
+        device_token:
+          type: string
+          description: The push token for the new device (I4).
+
+    RecoveryRebindResponse:
+      description: Uniform recovery response (rebound / rejected / below-min). AC19/AC7.
+      allOf:
+        - $ref: '#/components/schemas/VersionHandshake'
+        - oneOf:
+            - $ref: '#/components/schemas/DeviceRebound'
+            - $ref: '#/components/schemas/RecoveryRejected'
+            - $ref: '#/components/schemas/BelowMinVersion'
+
+    DeviceRebound:
+      type: object
+      required:
+        - outcome
+        - member_id
+        - roles
+        - platform
+        - app_version
+        - old_device_token_invalidated
+        - recovery_code_rotated
+        - session
+      properties:
+        outcome:
+          type: string
+          const: device_rebound
+        member_id:
+          type: string
+          format: uuid
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        app_version:
+          $ref: '#/components/schemas/AppVersion'
+        old_device_token_invalidated:
+          type: boolean
+        recovery_code_rotated:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/SessionMaterial'
+        fresh_recovery_code:
+          type: string
+          description: |
+            The rotated Recovery Code, shown once to the Driver to capture (ADR-0016 D3).
+            Sensitive; TLS-only to the legitimate Driver. Omitted from committed fixtures (which
+            instead signal rotation via `recovery_code_rotated: true`).
+
+    RecoveryRejected:
+      type: object
+      description: |
+        Rejected — a bad/used code (`AUTH_RECOVERY_CODE_INVALID`), or self-serve recovery is not
+        available for this member's role (`AUTH_RECOVERY_NOT_AVAILABLE`; Riders recover via Admin).
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          enum:
+            - AUTH_RECOVERY_CODE_INVALID
+            - AUTH_RECOVERY_NOT_AVAILABLE
+
+    # ── /api/dev/admins + /api/admin/auth/* (not AC7-bearing; shapes finalized by their shells) ─
+    CreateAdminRequest:
+      type: object
+      description: |
+        Developer admin-create input (e.g. a display name for the pending Admin). The detailed
+        shape is finalized by the T08-shell; the authz gate (I11) is the contract here.
+      additionalProperties: true
+
+    AdminInvitationMinted:
+      type: object
+      description: |
+        A pending Admin + single-use invitation were minted. PII-free; the registration token is
+        delivered out-of-band via Email Workers (ADR-0015), NOT in this body.
+      required: [admin_id, invitation_expires_at]
+      properties:
+        admin_id:
+          type: string
+          format: uuid
+        invitation_expires_at:
+          type: string
+          format: date-time
+          description: Server-time TTL (default 72h, AC16).
+
+    WebAuthnRegistrationOptions:
+      type: object
+      description: |
+        WebAuthn PublicKeyCredentialCreationOptions (W3C / @simplewebauthn). UV required,
+        attestation none, resident keys preferred (AC20/ADR-0017 D4). The full shape is the
+        standard WebAuthn options object; the edge-TS verifier (T09) owns it.
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: object
+          additionalProperties: true
+        challenge_ttl_secs:
+          type: integer
+          examples: [300]
+
+    WebAuthnRegistrationCredential:
+      type: object
+      description: The WebAuthn registration (attestation) response (W3C / @simplewebauthn).
+      additionalProperties: true
+
+    WebAuthnAssertionCredential:
+      type: object
+      description: The WebAuthn assertion response (W3C / @simplewebauthn).
+      additionalProperties: true
+
+    AdminAuthResult:
+      type: object
+      description: A successful admin registration / assertion outcome.
+      required: [admin_id]
+      properties:
+        admin_id:
+          type: string
+          format: uuid
+
+    InviteExpired:
+      type: object
+      description: A reused or expired Admin registration link (single-use, server-time TTL — AC16).
+      required: [error_code, routes_to]
+      properties:
+        error_code:
+          type: string
+          enum: [ADMIN_INVITE_EXPIRED, ADMIN_INVITE_CONSUMED]
+        routes_to:
+          type: string
+          const: InviteExpired
+
+    ErrorBody:
+      type: object
+      description: |
+        A generic error envelope carrying a stable, PII-free error code from docs/error-codes.md
+        (P12). Used by the non-/api/auth/* endpoints (the auth endpoints carry their outcome +
+        version handshake in the 200 body instead).
+      required: [error_code]
+      properties:
+        error_code:
+          type: string
+          description: A stable code from docs/error-codes.md (e.g. DEV_ADMIN_CREATE_FORBIDDEN, ADMIN_WEBAUTHN_*).

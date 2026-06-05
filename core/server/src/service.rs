@@ -25,18 +25,24 @@ use crate::ports::{AdminAlertSink, AuthStore, DeviceStore, SecretSource, Session
 pub const ACCESS_TTL_SECS: i64 = 15 * 60;
 
 /// A pointer to the signed KV manifest the client fetches at launch (ADR-0014). Non-PII; carried
-/// in the sign-in response. The Worker supplies the real index key (e.g. `"manifest:v1:index"`).
+/// in the sign-in response. The client reads `index_key` first, then the per-locale manifest at
+/// `{locale_key_prefix}{locale}` (spec §C.6) — e.g. `"manifest:v1:index"` then `"manifest:v1:en"`.
+/// The Worker supplies both keys. Both legs are part of the frozen wire contract
+/// (`fixtures/auth/signin_ok.json`, `api/openapi.yaml` `ManifestPointer`, spec 001 T10/AC7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestPointer {
-    /// The KV index key the client reads first (then the per-locale manifest).
+    /// The KV index key the client reads first.
     pub index_key: String,
+    /// The KV key prefix for the per-locale manifest; the client appends its locale (spec §C.6).
+    pub locale_key_prefix: String,
 }
 
 impl ManifestPointer {
-    /// Construct a manifest pointer from its index key.
-    pub fn new(index_key: impl Into<String>) -> Self {
+    /// Construct a manifest pointer from its index key and per-locale key prefix.
+    pub fn new(index_key: impl Into<String>, locale_key_prefix: impl Into<String>) -> Self {
         Self {
             index_key: index_key.into(),
+            locale_key_prefix: locale_key_prefix.into(),
         }
     }
 }

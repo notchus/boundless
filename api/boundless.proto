@@ -3,8 +3,39 @@
 // and is produced by scripts/generate-bindings.sh — NEVER hand-edit generated files
 // (enforced by scripts/check-binding-drift.sh).
 //
-// SCAFFOLD PLACEHOLDER (spec 001 task T01). Finalized and FROZEN in task T10, where the
-// open-handshake message carries `client_min_version` (spec 001 AC7).
+// FROZEN at spec 001 task T10 (the contract-freeze gate). This slice freezes only the
+// WebSocket OPEN-HANDSHAKE — the version compatibility check that every connection performs
+// (spec 001 AC7 / O1 / O4 / O5), mirroring the HTTP /api/auth/* handshake. Matching / realtime
+// / live-tracker message types belong to later specs and are deliberately NOT added here.
+//
+// Codegen (protoc-gen-swift / protoc-gen-kotlin / ts-proto, consumed by core/sync and the
+// clients) is wired in T10-shell once protoc/buf are available — see DEFERRED.md.
 syntax = "proto3";
 
 package boundless.v1;
+
+// What a client reports about itself when the WebSocket opens (mirrors the HTTP
+// auth handshake's ClientVersion — core/domain). The matching engine never reads this (O6);
+// it is purely an auth/compat-layer signal.
+message ClientVersion {
+  // Canonical platform id: "ios" | "ipados" | "watchos" | "macos" | "android" | "wearos" | "web".
+  string platform = 1;
+  // Semantic application version "major.minor.patch".
+  string app_version = 2;
+}
+
+// Client -> server, the first frame after the WebSocket opens.
+message ClientOpenHandshake {
+  ClientVersion reported = 1;
+}
+
+// Server -> client, the open-handshake acknowledgement. Carries the version requirement so a
+// too-old client degrades to the single calm screen identically to the HTTP path — no "Update
+// Now" on the rider surface (AC7 / O4 / O8). `client_recommended_version` feeds the O5 straggler
+// signal. A below-`client_min_version` client must show only the degradation screen.
+message ServerOpenHandshake {
+  // Below this the client shows only the calm degradation screen (O4 / O8). REQUIRED field (AC7).
+  string client_min_version = 1;
+  // The O5 straggler signal (admin device-versions panel).
+  string client_recommended_version = 2;
+}

@@ -121,6 +121,7 @@
 | `@playwright/test` 1.60.0 | E2E tests. **First used spec 001 T09** for the AC20 admin-WebAuthn ceremony via Chromium's CDP **virtual authenticator** (`WebAuthn.addVirtualAuthenticator`/`setUserVerified`) on a secure-context `http://localhost` page → real attestation/assertion bytes through the real verifier. Chromium-only. Browser fetched in CI via `playwright install chromium`. devDep, exact-pinned (lock = ground truth). MIT/Apache-2.0. |
 | `vitest` 4.1.8 | Unit/integration tests. **First used spec 001 T09** for the WebAuthn verification module's pure legs (AC16 invite TTL/consume, KV challenge one-time-use, options policy, multi-cred/recovery, error-code registry parity). devDep, exact-pinned. MIT. |
 | `@types/node` 25.9.1 | Node typings for the Vitest/Playwright harness + the edge module. devDep, exact-pinned (T09). MIT. |
+| `yaml` 2.9.0 | YAML parser. **First used spec 001 T10** in the AC7 contract-freeze test (`web/tests/contract/api-contract.test.ts`) — parses the frozen `api/openapi.yaml` and asserts `client_min_version`+`client_recommended_version` are required on every `/api/auth/*` response. The web tier is the openapi-typescript consumer, so the OpenAPI contract check lives here (the proto leg is a dep-free Rust test in `core/sync`). Built-in TS types, ESM-clean (verified via docs-researcher). devDep, exact-pinned (lock = ground truth). ISC. |
 | axe-core | A11y CI lint (AC11b — lands with the admin UI, T15) |
 | `@simplewebauthn/server` 13.3.1 | Admin WebAuthn (passkey) Relying-Party verification on the Cloudflare edge — WebCrypto-based, runs in the Workers runtime (MIT). Challenges held in KV (5-min TTL). Chosen over a native `webauthn-rs` sidecar (which can't run in Workers wasm). See ADR-0017. **Consumed spec 001 T09** (`web/src/lib/server/webauthn`): v13 shapes verified via docs-researcher (`requireUserVerification` defaults true; `registrationInfo.credential = {id, publicKey: Uint8Array, counter, transports}`; helpers at `@simplewebauthn/server/helpers`). Verified 2026-06-04/05 via docs-researcher; lock = ground truth. |
 
@@ -197,6 +198,12 @@
 - Kotlin: openapi-generator (kotlin) + protoc-gen-kotlin
 - TypeScript: openapi-typescript + ts-proto
 - Rust: progenitor (or hand-rolled in core)
+
+> **Contracts FROZEN spec 001 T10** (`api/openapi.yaml` + `api/boundless.proto`; AC7 enforced by
+> `web/tests/contract/api-contract.test.ts` + `core/sync/tests/proto_contract.rs`). The generator
+> toolchains above (`buf`/`protoc`, `swift-openapi-generator`, `openapi-generator`, `uniffi-bindgen`)
+> are **not yet installed** here, so the **actual codegen is deferred to T10-shell** — wired per
+> target alongside the consuming UI tasks (T11–T15). See `DEFERRED.md` → "API contracts / codegen (T10)".
 
 **Generated files live in `api/generated/<lang>/` and are NEVER edited by hand.**
 

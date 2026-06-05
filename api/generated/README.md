@@ -10,7 +10,8 @@ the full toolchain) and are kept in sync by CI:
 - Regenerate after any contract/core change: `bash scripts/generate-bindings.sh`,
   then commit the result.
 
-Per-language outputs (populated at the contract freeze, spec 001 task **T10**):
+Per-language outputs (populated in **T10-shell**, per target, alongside the consuming UI tasks
+**T11–T15**, once those toolchains exist — see `DEFERRED.md`):
 
 | Dir | Generator | Consumed by |
 |---|---|---|
@@ -18,4 +19,5 @@ Per-language outputs (populated at the contract freeze, spec 001 task **T10**):
 | `kotlin/` | openapi-generator (kotlin) + protoc-gen-kotlin | `android/core-bridge/` |
 | `typescript/` | openapi-typescript + ts-proto | `web/src/lib/api/generated/` |
 
-Scaffolded by spec 001 task **T01**; real codegen is wired in **T10**.
+Scaffolded by spec 001 task **T01**; the contracts (`api/openapi.yaml`, `api/boundless.proto`)
+were **FROZEN** in **T10**; real codegen is wired in **T10-shell** (with T11–T15).

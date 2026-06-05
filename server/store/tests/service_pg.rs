@@ -242,7 +242,7 @@ async fn service(url: &str, schema: &str, group: Uuid, clock_secs: i64) -> Svc {
         AuthConfig::new(
             key(),
             requirement(),
-            ManifestPointer::new("manifest:v1:index"),
+            ManifestPointer::new("manifest:v1:index", "manifest:v1:"),
         ),
     )
 }

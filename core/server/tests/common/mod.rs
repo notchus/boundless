@@ -78,7 +78,7 @@ pub fn service(store: MemStore, clock_secs: i64) -> TestService {
         AuthConfig::new(
             key(),
             requirement(),
-            ManifestPointer::new("manifest:v1:index"),
+            ManifestPointer::new("manifest:v1:index", "manifest:v1:"),
         ),
     )
 }

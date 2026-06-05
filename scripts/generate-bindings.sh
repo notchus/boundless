@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Boundless — (re)generate the committed API bindings and refresh the drift lock (ADR-0001).
 #
-# Real codegen (swift-openapi-generator, openapi-generator kotlin, openapi-typescript +
-# ts-proto, and the UniFFI XCFramework/AAR) is wired at the contract freeze (spec 001
-# task T10). Until then this runs in SCAFFOLD MODE: it ensures the generated tree exists
-# and (re)writes api/.bindings.lock from the current contracts/core + generated tree —
-# so the drift gate (scripts/check-binding-drift.sh) is already live.
+# Spec 001 task T10 FROZE the contracts (api/openapi.yaml, api/boundless.proto) + the AC7
+# tests. The real codegen (swift-openapi-generator, openapi-generator kotlin, openapi-typescript
+# + ts-proto, and the UniFFI XCFramework/AAR) is wired in T10-shell, per target, alongside the
+# consuming UI tasks (T11–T15) once those toolchains are available — see DEFERRED.md. Until then
+# this runs in SCAFFOLD MODE: it ensures the generated tree exists and (re)writes
+# api/.bindings.lock from the current contracts/core + generated tree — so the drift gate
+# (scripts/check-binding-drift.sh) is already live.
 #
 # Run this after any change to api/openapi.yaml, api/boundless.proto, or core/**, then
 # commit the updated api/.bindings.lock (and, from T10 on, the regenerated outputs).
@@ -17,8 +19,8 @@ cd "$(dirname "$0")/.."
 LOCK=api/.bindings.lock
 mkdir -p api/generated/swift api/generated/kotlin api/generated/typescript
 
-# ─── T10 inserts real generators here ──────────────────────────────────────────────
-echo "ℹ generate-bindings: scaffold mode (real codegen lands in spec 001 task T10)."
+# ─── T10-shell inserts real generators here (per target, with T11–T15) ──────────────
+echo "ℹ generate-bindings: scaffold mode (contracts frozen in T10; real codegen lands in T10-shell)."
 
 {
     echo "# Boundless binding-drift lock — DO NOT EDIT BY HAND."
