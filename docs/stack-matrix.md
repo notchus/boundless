@@ -111,18 +111,25 @@
 
 | Dependency | Used for |
 |---|---|
-| SvelteKit | Framework |
-| TypeScript (strict) | Type safety |
-| Tailwind 4 | Styling |
-| Radix Svelte (or melt-ui) | A11y primitives |
-| TanStack Table | Tables |
-| TanStack Query | Server state |
+| `@sveltejs/kit` 2.63.0 | Framework. **Scaffolded + first used spec 001 T15** (admin onboarding UI). devDep, exact-pinned (lock = ground truth). MIT. |
+| `svelte` 5.56.1 | Svelte 5 (runes: `$state`/`$props`/`$derived`). Pinned T15. MIT. |
+| `vite` 8.0.16 | Build/dev server (`vite dev` powers the Playwright `webServer`). Pinned T15. MIT. |
+| `@sveltejs/vite-plugin-svelte` 7.1.2 | Svelte↔Vite integration. Pinned T15. MIT. |
+| `@sveltejs/adapter-node` 5.5.4 | Build adapter for the **buildable + locally-testable** slice (always builds/previews, no `wrangler`). The Cloudflare adapter (`@sveltejs/adapter-cloudflare`) swap + `wrangler` deploy is the T15-shell (DEFERRED). Pinned T15. MIT. |
+| `svelte-check` 4.6.0 | `.svelte`-aware typecheck (`pnpm typecheck` = `svelte-kit sync && svelte-check`). Pinned T15. MIT. |
+| TypeScript (strict) | Type safety. `typescript` 6.0.3 (pinned T09). |
+| `tailwindcss` 4.3.0 + `@tailwindcss/vite` 4.3.0 | Styling. v4 integrates via the `@tailwindcss/vite` plugin (no PostCSS); single `@import "tailwindcss"` in `src/app.css`; logical-property utilities (`ps-*`/`pe-*`) for RTL; `dark:` via `prefers-color-scheme`; `focus-visible:ring-*` + `sr-only` for the a11y bar. Verified via docs-researcher; pinned T15. MIT. |
+| `@simplewebauthn/browser` 13.3.0 | Browser WebAuthn ceremony (`startRegistration`/`startAuthentication`, v13 `{ optionsJSON }` shape) — pairs with `@simplewebauthn/server` 13.3.1 (browser pkg latest in the 13.3 line is 13.3.0). **Statically imported** (SSR-safe: no top-level browser globals) so the ceremony call stays inside the user-activation window. Consumed T15. MIT. |
+| `intl-messageformat` 11.2.8 | Runtime ICU MessageFormat (FormatJS) for `{adminName}`-style catalog copy (`src/lib/i18n`); instance-cached per (locale, key); SSR-safe. RTL direction via `Intl.Locale().getTextInfo()`. Consumed T15. BSD-3-Clause. |
+| Radix Svelte / melt-ui | A11y primitives — **deferred to spec 008** (admin dashboard tables/dialogs/menus). T15's four button/status screens use semantic HTML only (a11y-bar: semantic HTML first), so no primitives lib is pulled yet. |
+| TanStack Table | Tables (spec 008) |
+| TanStack Query | Server state (spec 008) |
 | Zod | Schema validation |
 | `@playwright/test` 1.60.0 | E2E tests. **First used spec 001 T09** for the AC20 admin-WebAuthn ceremony via Chromium's CDP **virtual authenticator** (`WebAuthn.addVirtualAuthenticator`/`setUserVerified`) on a secure-context `http://localhost` page → real attestation/assertion bytes through the real verifier. Chromium-only. Browser fetched in CI via `playwright install chromium`. devDep, exact-pinned (lock = ground truth). MIT/Apache-2.0. |
 | `vitest` 4.1.8 | Unit/integration tests. **First used spec 001 T09** for the WebAuthn verification module's pure legs (AC16 invite TTL/consume, KV challenge one-time-use, options policy, multi-cred/recovery, error-code registry parity). devDep, exact-pinned. MIT. |
 | `@types/node` 25.9.1 | Node typings for the Vitest/Playwright harness + the edge module. devDep, exact-pinned (T09). MIT. |
 | `yaml` 2.9.0 | YAML parser. **First used spec 001 T10** in the AC7 contract-freeze test (`web/tests/contract/api-contract.test.ts`) — parses the frozen `api/openapi.yaml` and asserts `client_min_version`+`client_recommended_version` are required on every `/api/auth/*` response. The web tier is the openapi-typescript consumer, so the OpenAPI contract check lives here (the proto leg is a dep-free Rust test in `core/sync`). Built-in TS types, ESM-clean (verified via docs-researcher). devDep, exact-pinned (lock = ground truth). ISC. |
-| axe-core | A11y CI lint (AC11b — lands with the admin UI, T15) |
+| `@axe-core/playwright` 4.11.3 (+ peer `axe-core` 4.11.4) | A11y CI lint (AC11b). **Consumed spec 001 T15**: `AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']).analyze()` asserts zero violations on every admin onboarding route × {default, dark, RTL}. devDep, exact-pinned. MPL-2.0 / Apache-2.0. |
 | `@simplewebauthn/server` 13.3.1 | Admin WebAuthn (passkey) Relying-Party verification on the Cloudflare edge — WebCrypto-based, runs in the Workers runtime (MIT). Challenges held in KV (5-min TTL). Chosen over a native `webauthn-rs` sidecar (which can't run in Workers wasm). See ADR-0017. **Consumed spec 001 T09** (`web/src/lib/server/webauthn`): v13 shapes verified via docs-researcher (`requireUserVerification` defaults true; `registrationInfo.credential = {id, publicKey: Uint8Array, counter, transports}`; helpers at `@simplewebauthn/server/helpers`). Verified 2026-06-04/05 via docs-researcher; lock = ground truth. |
 
 **Forbidden:**

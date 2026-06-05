@@ -123,7 +123,7 @@ jobs:
         run: cargo test --locked -p boundless-server-store
 
   web:
-    name: Admin web (typecheck · vitest · webauthn e2e — spec 001 T09)
+    name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -138,13 +138,18 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
-      - name: Typecheck (strict)
+      - name: Typecheck (svelte-check, strict)
         run: pnpm typecheck
-      - name: Unit/integration tests
+      - name: Unit/integration tests (vitest)
         run: pnpm test
+      - name: Build (SvelteKit)
+        run: pnpm build
       - name: Install Chromium (virtual authenticator)
         run: pnpm exec playwright install --with-deps chromium
-      - name: WebAuthn ceremony e2e (AC20)
+      - name: e2e — WebAuthn ceremony (AC20, T09) + admin onboarding UI (AC2/AC11b/AC1(b), T15)
+        # `pnpm test:e2e` auto-starts the SvelteKit dev server (playwright webServer) for the T15
+        # admin-onboarding suite (axe + virtual-authenticator through the real routes); the T09
+        # verification-core ceremony suite serves its own page. GitHub-only.
         run: pnpm test:e2e
 
   boundlesskit:

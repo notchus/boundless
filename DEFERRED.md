@@ -60,13 +60,15 @@
   - **WHEN:** setting up the deploy workflow.
   - **Note:** Not needed for local MCP — that uses OAuth.
 
-- [ ] **Re-confirm the network allow-list (AC13/I8) as the web dep tree grows.** At T01
+- [x] **Re-confirm the network allow-list (AC13/I8) as the web dep tree grows.** At T01
       the web tier IS now scanned: pinning `@simplewebauthn/server` produced a committed
       `web/pnpm-lock.yaml`, and `scripts/check-network-allowlist.sh` scans it (currently
       clean — no trackers). When T15 builds the SvelteKit app and `pnpm install` expands
       that lock with the full dep tree (SvelteKit, Tailwind, Vitest, Playwright, axe-core,
       …), re-run/confirm the allow-list still passes and tighten patterns if needed.
-  - **WHEN:** spec 001 **T15** (SvelteKit admin web).
+  - **DONE:** 2026-06-05 (T15). The full SvelteKit + Tailwind 4 + svelte-check + @axe-core/playwright
+    + @simplewebauthn/browser + intl-messageformat tree was installed; `scripts/check-network-allowlist.sh`
+    is **clean across 5 lock files** (no trackers). The **final** AC13 sweep across all platforms is T16.
 
 - **Cloudflare API MCP is authorized READ-ONLY by design.** Infra mutations go
   through Wrangler (human/CI gate), not the agent. If a task needs MCP write
@@ -968,6 +970,102 @@
       "Rider" name (none today — Compose/web are separate platforms), consider extracting a neutral
       `BoundlessOnboardingKit` SwiftPM module. Not needed now (YAGNI).
   - **WHEN:** if/when a third Apple consumer of the onboarding kit appears.
+
+## Android toolchain + Compose UI (spec 001 T13/T14 — BLOCKED, bring-up prerequisite)
+
+> T13 (Compose Rider UI) and T14 (Compose Driver UI) — the Android mirrors of T11/T12 — are
+> **toolchain-blocked** in this environment and were **not** attempted (anti-hallucination: no
+> "this should work" code without a build/test). The user chose T15 instead. Three things must
+> exist before T13/T14 can be implemented with evidence:
+
+- [ ] **Install the Android SDK + NDK.** No SDK (`~/Library/Android` absent, `ANDROID_HOME` empty,
+      no `sdkmanager`, no Android Studio) and no NDK are present. `gradle` (sdkman) + JDK 21 are, but
+      Compose/Paparazzi need a `compileSdk` platform, and the UniFFI Kotlin AAR needs the NDK
+      (cargo-ndk cross-compile to Android ABIs). Installing is a heavy, machine-modifying, GB-scale
+      step (accepts Google licenses) — surface to the owner before doing it.
+  - **WHEN:** before T13/T14 (Compose UIs).
+- [ ] **Build the `core/ffi-kotlin` UniFFI AAR** (the Kotlin analog of T10-shell's `BoundlessKit`).
+      `core/ffi-kotlin` is still a bare T01 skeleton (`Cargo.toml` + `src/`); only the **Swift**
+      `BoundlessKit` was built at T10-shell. The Compose UIs render `core::auth` via this AAR (P4),
+      exactly as the SwiftUI UIs use `BoundlessKit`. Mirror ADR-0022 (mirror enums + `From` parity,
+      wasm core stays uniffi-free). Needs `uniffi-bindgen` (Kotlin) + cargo-ndk + the NDK.
+  - **WHEN:** with/before T13/T14.
+- [ ] **Stand up the `android/` Gradle project** (`android/` is absent): `settings.gradle(.kts)`,
+      root build, `gradle/libs.versions.toml` (Compose BOM, Material3, Paparazzi, Turbine, Hilt per
+      stack-matrix), `android/rider/app` + `android/driver/app` modules. Then T13/T14 build the Compose
+      screens + Paparazzi ×4 a11y snapshots + TalkBack/no-signup/no-toggle tests (mirroring T11/T12).
+  - **WHEN:** T13/T14.
+- [ ] **Kotlin codegen + the Android binding-drift / allow-list wiring** (OpenAPI-Kotlin client +
+      proto-Kotlin → `api/generated/kotlin/`, per the T10 codegen register) lands with the same slice;
+      re-run the network allow-list against the new `gradle.lockfile`(s).
+  - **WHEN:** T13/T14.
+
+## Admin web / SvelteKit onboarding (spec 001 T15 — out-of-scope register)
+
+> T15 shipped the **admin onboarding UI slice**: the SvelteKit app scaffold + the four onboarding
+> surfaces (invite-link landing → WebAuthn **registration ceremony** → `InviteExpired` → WebAuthn
+> **sign-in**, no password) + the i18n catalog/runtime + the §10-F session cookie, all wired to the
+> T09 verification core through its **in-memory** port fakes and proven end-to-end with Playwright
+> (Chromium CDP **virtual authenticator** → real bytes → real `@simplewebauthn/server`) + axe-core.
+> Closes **AC2, AC11b, AC1(b-web)**. Same functional-core / imperative-shell split as T07–T12.
+> 11 e2e (4 T09 + 7 T15) + 54 vitest green; `pnpm typecheck`/`build` clean; allow-list clean (5
+> locks); binding-drift unchanged (68 inputs — `web/` is not a drift input). Everything below was
+> deliberately left out (the **T15-shell**); each carries a WHEN trigger.
+
+- [ ] **The deployable Cloudflare runtime: real KV + Postgres bindings + `wrangler` deploy.** T15 runs
+      on the **interim in-memory backend** (`src/lib/server/webauthn-deps.ts` reuses the T09 in-memory
+      port fakes) and `@sveltejs/adapter-node` (locally buildable). The shell wires the real
+      **KV `ChallengeStore`** (5-min one-time challenges, ADR-0017 D3), the **Postgres**
+      `InviteStore`/`CredentialStore` via the Worker (incl. the invite-token HMAC compare routed
+      through the core's `admin_invitation_token_matches` per ADR-0017's P4 carve-out), swaps in
+      `@sveltejs/adapter-cloudflare`, and deploys via `wrangler` (NOT installed — same constraint as
+      the Rust Worker runtime, T07-shell-B). This supersedes the T09-register items "real KV
+      ChallengeStore", "real Postgres Invite/CredentialStore", and the deployable `+server.ts` routes
+      (those routes now exist against the in-memory backend; only the production adapters remain).
+  - **WHEN:** **T15-shell / T09-shell** (with T07-shell-B's Worker + Hyperdrive).
+- [ ] **Persistent server-side session store behind the §10-F cookie.** T15 sets the httpOnly + Secure
+      + SameSite=Strict admin-session cookie (proven on the wire: HttpOnly + SameSite=Strict; `secure`
+      asserted in `session.test.ts`) but the session *data* lives in an in-memory map
+      (`src/lib/server/session.ts`). The shell persists it (KV/Postgres) + adds expiry/rotation for the
+      admin session (separate + shorter-lived than member sessions, ADR-0016).
+  - **WHEN:** **T15-shell**.
+- [ ] **Dev-only `/api/test/{seed-invite,reset}` seams** are gated on `$app/environment`'s `dev` (→ 404
+      in any production build). They exist only because Playwright drives a separate process against the
+      in-memory backend. Remove them when the real KV/Postgres backend + a proper test-fixture path land.
+  - **WHEN:** **T15-shell** (with the real backend).
+- [ ] **Authenticated additive backup-key enrollment + `ac20_register_passkey_and_backup_key`.** The
+      invite-gated registration path is revoke-and-replace (recovery; D4). Enrolling an *additional* key
+      without revoking the first needs the signed-in admin session (no invite) — the authenticated
+      add-credential flow + its Playwright test. The `CredentialStore` already supports >1 active cred.
+      (Carried from the T09 register; needs the post-assertion session, now set but in-memory.)
+  - **WHEN:** **T15-shell** / admin settings UI.
+- [ ] **Invite token in the URL path — log/`Referer` hardening at the deployable route** (T09-register
+      sec-audit F1): when the real `+server.ts` invite route deploys, never emit the `{token}` segment
+      to the structured log path (route through `boundless::logging::emit()`; add an I10 scrubber fixture
+      for a URL-embedded opaque token) and set `Referrer-Policy: no-referrer` on the registration page.
+      The opaque single-use 72h-TTL token is not a contract defect, but a live token in an access log is
+      a credential-in-logs concern. (The in-memory T15 slice does no such logging.)
+  - **WHEN:** **T15-shell** (deployable invite route) + the I10 scrubber suite.
+- [ ] **AC11b live screen-reader pass + Lighthouse (manual/advisory).** The automated axe + keyboard +
+      reflow + aria-live legs are green in CI; the a11y-bar's manual NVDA/VoiceOver walkthrough +
+      Lighthouse ≥95 (advisory) remain a pre-GA checklist item.
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+- [ ] **13 catalog keys (2 spec + 11 added) — product-owner review.** T15 authored
+      `src/lib/i18n/catalog.ts` with the spec's two admin keys (`admin.onboarding.register_credential`,
+      `admin.onboarding.invite_expired`) plus 11 affordance/status/success keys the four screens require
+      (`admin.onboarding.{register_explainer,register_action,registering,registered,go_to_signin}`,
+      `admin.signin.{title,explainer,action,signing_in,failed}`, `admin.home.signed_in`) — all
+      voice-and-tone-checked, trivially editable pre-release. Mirrors the T11/T12 added-keys flag.
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
+- [ ] **Real translations + `melt-ui`.** Only the `en` catalog ships; `gsw`/RTL (`ar`/`he`)/`zz-ZZ`
+      arrive via the Weblate pipeline + signed KV manifest (ADR-0014). The pseudo-locale (`zz-ZZ`) render
+      check is **T16**. `melt-ui`/Radix primitives are deferred to **spec 008** (admin dashboard
+      tables/dialogs/menus) — T15's button/status screens need only semantic HTML.
+  - **WHEN:** **T16** (pseudo-locale) / translation pipeline / **spec 008** (primitives).
+- [ ] **Snapshot/visual baselines + CI runtime.** The new `web` CI job adds `pnpm build` + the T15 e2e
+      (axe + virtual authenticator via the auto-started `vite dev`). It is **GitHub-only / not locally
+      gated** (like the other CI jobs). No image snapshots are used (axe + structural assertions instead).
+  - **WHEN:** first CI run of the extended `web` job.
 
 ## Constitution
 

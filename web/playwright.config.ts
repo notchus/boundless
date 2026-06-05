@@ -1,15 +1,24 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// AC20 real-ceremony WebAuthn test (spec 001 T09): drives Chromium's CDP virtual
-// authenticator to produce genuine attestation/assertion bytes, fed through the real
-// @simplewebauthn/server verifier. Chromium-only (the only engine with a virtual
-// authenticator) — expressed as a single project so no per-test skip is needed.
-// No webServer: the spec serves its own secure-context page from http://localhost via
-// page.route fulfillment (localhost is a WebAuthn-eligible secure context).
+// Two e2e suites, both Chromium (the only engine with a CDP virtual authenticator):
+//   • webauthn.spec.ts (T09) — verification core with real ceremony bytes; serves its own
+//     http://localhost page via route fulfillment and needs NO app server.
+//   • admin-onboarding.spec.ts (T15) — the real SvelteKit admin onboarding UI + endpoints + axe,
+//     driven against the dev server below. The dev server (vite dev) keeps the dev-only /api/test/*
+//     seed/reset seams available; a production build would 404 them.
 export default defineConfig({
-  testDir: 'tests/e2e',
-  fullyParallel: false,
-  forbidOnly: true,
-  reporter: 'list',
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+	testDir: 'tests/e2e',
+	fullyParallel: false,
+	forbidOnly: !!process.env.CI,
+	reporter: 'list',
+	webServer: {
+		command: 'pnpm dev --port 4173 --strictPort',
+		url: 'http://localhost:4173/admin/signin',
+		reuseExistingServer: !process.env.CI,
+		stdout: 'ignore',
+		stderr: 'pipe',
+		timeout: 120_000,
+	},
+	use: { baseURL: 'http://localhost:4173' },
+	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 });

@@ -2,20 +2,36 @@
   "name": "@boundless/admin-web",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "license": "AGPL-3.0-only",
-  "description": "Boundless admin web (SvelteKit). The SvelteKit app + UI is scaffolded in spec 001 task T15. Spec 001 T09 adds the framework-agnostic admin-WebAuthn edge verification module (web/src/lib/server/webauthn) + its tests, per docs/stack-matrix.md and ADR-0017.",
+  "description": "Boundless admin web (SvelteKit). The SvelteKit app + admin onboarding UI is built in spec 001 task T15 on top of the framework-agnostic admin-WebAuthn edge verification module (web/src/lib/server/webauthn, T09), per docs/stack-matrix.md and ADR-0017.",
   "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "sync": "svelte-kit sync",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@simplewebauthn/server": "13.3.1"
+    "@simplewebauthn/browser": "13.3.0",
+    "@simplewebauthn/server": "13.3.1",
+    "intl-messageformat": "11.2.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.11.3",
     "@playwright/test": "1.60.0",
+    "@sveltejs/adapter-node": "5.5.4",
+    "@sveltejs/kit": "2.63.0",
+    "@sveltejs/vite-plugin-svelte": "7.1.2",
+    "@tailwindcss/vite": "4.3.0",
     "@types/node": "25.9.1",
+    "svelte": "5.56.1",
+    "svelte-check": "4.6.0",
+    "tailwindcss": "4.3.0",
     "typescript": "6.0.3",
+    "vite": "8.0.16",
     "vitest": "4.1.8",
     "yaml": "2.9.0"
   }

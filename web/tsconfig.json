@@ -1,21 +1,13 @@
 {
-  "// note": "Strict TypeScript for the admin-web (docs/stack-matrix.md). Spec 001 T09 only adds the framework-agnostic WebAuthn edge-verification module under src/lib/server/webauthn + tests; the full SvelteKit app config lands in T15.",
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"],
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": ["src", "tests", "vitest.config.ts", "playwright.config.ts"]
+	"// note": "Strict TypeScript for the admin-web (docs/stack-matrix.md). Extends the config SvelteKit generates (paths for $lib/$app, rootDirs, isolatedModules, verbatimModuleSyntax, moduleResolution=bundler). The generated `include` already covers src/**, tests/** and vite.config.ts — do not re-declare it here (SvelteKit owns it). These compilerOptions only ADD the strict guarantees on top.",
+	"extends": "./.svelte-kit/tsconfig.json",
+	"compilerOptions": {
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true,
+		"noFallthroughCasesInSwitch": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true
+	}
 }
