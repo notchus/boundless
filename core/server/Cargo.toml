@@ -20,8 +20,11 @@ serde = { workspace = true, features = ["derive"] }
 # proptest — code-consume / alert-dedup invariants (seeds committed, P9). uuid — test ids.
 # serde_json — assert the PII-free admin-alert payload shape (deterministic). static_assertions —
 # compile-time proof that the secret-bearing response types expose no Debug/Display/Serialize (P2,
-# sec-audit F1). All dev-only / host-only.
+# sec-audit F1). pollster — block_on the now-`async` AuthStore/DeviceStore ports in host unit tests
+# (the in-memory stub's futures are always ready, so no async runtime is needed — ADR-0020). All
+# dev-only / host-only.
 proptest.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
 static_assertions.workspace = true
+pollster.workspace = true

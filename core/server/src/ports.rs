@@ -8,8 +8,14 @@
 //! carries an atomicity note in its doc, and the orchestration relies on it (e.g. it treats a
 //! `false` from [`AuthStore::consume_onboarding_if_live`] as "lost the race → already consumed",
 //! never a second bind). The in-memory stub is trivially atomic (single-threaded); the Postgres
-//! twin must be one `UPDATE … WHERE … RETURNING` / one transaction (the true DB-level TOCTOU
-//! proof is a deferred T07-shell integration test — `DEFERRED.md`).
+//! twin is one `UPDATE … WHERE … RETURNING` / one transaction, proven at the store level
+//! (`server/store/tests/integration.rs`) and end-to-end through the orchestration
+//! (`server/store/tests/service_pg.rs`).
+//!
+//! The ports are `async` + fallible (each carries an associated [`StoreBackend::Error`]): a real
+//! backend is asynchronous and can fail on transport, so [`crate::AuthService`]'s endpoint methods
+//! are themselves `async` and return `Result<_, St::Error>`. Device-token persistence is a separate
+//! port ([`DeviceStore`]) — see its docs for why.
 
 use boundless_auth::{
     DeviceBinding, RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds,
@@ -114,80 +120,145 @@ pub struct SessionMaterial {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceKey(pub u64);
 
-/// The persistence boundary for the member-auth engine. One trait, one implementation per
-/// backend (in-memory for tests; Postgres-over-Hyperdrive in the Worker, T07-shell). See the
-/// module docs for the atomicity contract on the mutating methods.
-pub trait AuthStore {
+/// The shared error of a store backend. Declared once on this supertrait so a composed
+/// `St: AuthStore + DeviceStore` exposes a **single** `Error` and the orchestration's `?` unifies
+/// across both ports (the in-memory stub uses [`core::convert::Infallible`]; the Postgres backend a
+/// `StoreError`).
+pub trait StoreBackend {
+    /// The infrastructure error a store call can fail with — a DB/transport failure, **never** a
+    /// business outcome (those are encoded in the engine's response types). Carries no PII (P2).
+    type Error;
+}
+
+/// The persistence boundary for the member-auth engine's **session / Onboarding-Code / Recovery-
+/// Code / member-lookup** state. One implementation per backend (in-memory for tests; Postgres-
+/// over-Hyperdrive in the Worker). See the module docs for the atomicity contract on the mutating
+/// methods.
+///
+/// Methods are `async` + fallible: a real backend is asynchronous and can fail on transport, and
+/// the Worker drives these futures on the wasm event loop. Reads take `&mut self` because the
+/// Postgres twin scopes every statement inside a per-request transaction (RLS), which needs
+/// `&mut`; the in-memory twin ignores it. **Device-token persistence is a separate port**
+/// ([`DeviceStore`]).
+// We own every impl; the returned futures are intentionally NOT `Send`-bound, so the wasm `?Send`
+// Worker can drive them and the host tests use a single-threaded executor (`pollster::block_on`).
+// No code spawns these futures across threads, so the `async fn in trait` ergonomics are exactly
+// what we want here — hence the targeted allow (cf. forbidden-patterns, which bans only
+// `#[allow(dead_code)]`).
+#[allow(async_fn_in_trait)]
+pub trait AuthStore: StoreBackend {
     /// Look up a member by phone-lookup hash. The implementation must take **uniform time**
     /// whether or not a match exists (no existence/timing leak — the in-memory stub does a full
     /// constant-time scan; the Postgres twin is an indexed equality whose timing is data-
     /// independent at the application layer).
-    fn find_member_by_phone(&self, hash: &PhoneLookupHash) -> Option<MemberRecord>;
+    async fn find_member_by_phone(
+        &mut self,
+        hash: &PhoneLookupHash,
+    ) -> Result<Option<MemberRecord>, Self::Error>;
 
     /// The member's live Onboarding Code, if one is outstanding (`None` = none / consumed /
     /// superseded — the partial-unique index guarantees at most one live row).
-    fn load_live_onboarding(&self, member: MemberId) -> Option<OnboardingCodeRow>;
+    async fn load_live_onboarding(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Option<OnboardingCodeRow>, Self::Error>;
 
     /// Atomically consume the member's live Onboarding Code **iff still live**; returns `true`
     /// iff THIS call consumed it (`false` = already consumed/superseded — lost the race; the
     /// caller treats `false` as Consumed, never a second bind — carry-forward (a)). Postgres
     /// twin: `UPDATE onboarding_codes SET consumed_at=$now WHERE member_id=$1 AND consumed_at IS
     /// NULL AND superseded_at IS NULL RETURNING id`.
-    fn consume_onboarding_if_live(&mut self, member: MemberId, now: UnixSeconds) -> bool;
+    async fn consume_onboarding_if_live(
+        &mut self,
+        member: MemberId,
+        now: UnixSeconds,
+    ) -> Result<bool, Self::Error>;
 
     /// Classify a presented refresh credential within its lineage, comparing constant-time
     /// against the stored hashes (`refresh_token_matches`) — never `==` (R6).
-    fn classify_refresh(&self, presented: &RefreshToken, key: &HmacKey) -> RefreshClassification;
+    async fn classify_refresh(
+        &mut self,
+        presented: &RefreshToken,
+        key: &HmacKey,
+    ) -> Result<RefreshClassification, Self::Error>;
 
     /// Atomically rotate: supersede the family's current credential and install `new_refresh_hash`
     /// as the new current one, returning the fresh [`Session`]. Valid only after a
     /// `Current`-on-`Active` classification. Postgres twin: one txn that supersedes the presented
     /// row and inserts the new current row (the partial-unique index enforces "one current per
     /// family"; supersede-then-insert — carry-forward).
-    fn rotate_session(
+    async fn rotate_session(
         &mut self,
         family: SessionFamilyId,
         new_refresh_hash: RefreshTokenHash,
         access_expires_at: UnixSeconds,
         now: UnixSeconds,
-    ) -> Session;
+    ) -> Result<Session, Self::Error>;
 
     /// Atomically revoke the entire family (replay detected, or an admin-mediated event). A
     /// revoked family never rotates again.
-    fn revoke_family(&mut self, family: SessionFamilyId, now: UnixSeconds);
+    async fn revoke_family(
+        &mut self,
+        family: SessionFamilyId,
+        now: UnixSeconds,
+    ) -> Result<(), Self::Error>;
 
     /// Create a brand-new session family (device bind / recovery re-bind), returning its
     /// [`Session`]. The new family is `Active` with `new_refresh_hash` as its current credential.
-    fn create_session_family(
+    async fn create_session_family(
         &mut self,
         member: MemberId,
         new_refresh_hash: RefreshTokenHash,
         access_expires_at: UnixSeconds,
         now: UnixSeconds,
-    ) -> Session;
+    ) -> Result<Session, Self::Error>;
 
     /// The member's live Recovery Code, if one is outstanding (Drivers only in practice).
-    fn load_live_recovery(&self, member: MemberId) -> Option<RecoveryCodeRow>;
+    async fn load_live_recovery(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Option<RecoveryCodeRow>, Self::Error>;
 
     /// Atomically consume the live Recovery Code **and** install the fresh one (`fresh_hash`) as
     /// the member's new live code — rotated on use, ADR-0016 D3 — iff still live; `true` iff THIS
     /// call did it. Postgres twin: one txn (supersede prior + insert fresh).
-    fn consume_and_rotate_recovery(
+    async fn consume_and_rotate_recovery(
         &mut self,
         member: MemberId,
         fresh_hash: CodeHash,
         now: UnixSeconds,
-    ) -> bool;
+    ) -> Result<bool, Self::Error>;
+}
 
+/// The persistence boundary for **device-token bindings** (I4) — split out of [`AuthStore`]
+/// because the Postgres `register_device` must persist a *reversibly-encrypted* device token (push
+/// needs the plaintext back, so a one-way hash will not do), and that at-rest encryption primitive
+/// is deferred to spec 008. Keeping it a separate port lets the Postgres [`AuthStore`] ship now
+/// while its `DeviceStore` impl lands with issuance; the in-memory twin implements both.
+// Same future-ergonomics rationale as `AuthStore` above.
+#[allow(async_fn_in_trait)]
+pub trait DeviceStore: StoreBackend {
     /// All of a member's current (non-invalidated) device bindings (I4).
-    fn current_device_bindings(&self, member: MemberId) -> Vec<DeviceBinding>;
+    async fn current_device_bindings(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Vec<DeviceBinding>, Self::Error>;
 
     /// Invalidate a device token (silent — `AUTH_DEVICE_TOKEN_INVALIDATED`, never client-facing,
     /// carry-forward (e)).
-    fn invalidate_device(&mut self, binding: &DeviceBinding, now: UnixSeconds);
+    async fn invalidate_device(
+        &mut self,
+        binding: &DeviceBinding,
+        now: UnixSeconds,
+    ) -> Result<(), Self::Error>;
 
     /// Register (insert/replace) a device token under a binding.
-    fn register_device(&mut self, binding: &DeviceBinding, token: &DeviceToken, now: UnixSeconds);
+    async fn register_device(
+        &mut self,
+        binding: &DeviceBinding,
+        token: &DeviceToken,
+        now: UnixSeconds,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Where admin alerts are delivered (Cloudflare Queues in the Worker; a `Vec` in tests).

@@ -14,7 +14,7 @@ use boundless_auth::{
 use boundless_domain::{ClientVersion, DeviceToken, MemberId, OnboardingCode, PhoneNumber};
 
 use crate::alerts::{AdminAlert, AlertKind};
-use crate::ports::{AdminAlertSink, AuthStore, SecretSource, SessionMaterial};
+use crate::ports::{AdminAlertSink, AuthStore, DeviceStore, SecretSource, SessionMaterial};
 use crate::service::AuthService;
 
 /// A device-bind request. Holds tainted material (the code, the push token, the phone), so it is
@@ -64,7 +64,7 @@ impl BindResponse {
 
 impl<St, Sk, Sec, Clk> AuthService<St, Sk, Sec, Clk>
 where
-    St: AuthStore,
+    St: AuthStore + DeviceStore,
     Sk: AdminAlertSink,
     Sec: SecretSource,
     Clk: boundless_auth::Clock,
@@ -72,13 +72,16 @@ where
     /// Handle a device bind (spec C.3 / AC17 / AC4). Order: version gate (O4) → resolve member
     /// (uniform) → rate-limit window → load + evaluate the code (server-time, full gate order) →
     /// on accept, **atomic** consume then issue session + (re)bind device.
-    pub fn bind_device(&mut self, req: BindRequest) -> BindResponse {
+    ///
+    /// Requires [`DeviceStore`] (the accept path (re)binds the device); `St::Error` is the single
+    /// shared [`crate::StoreBackend::Error`] across both ports.
+    pub async fn bind_device(&mut self, req: BindRequest) -> Result<BindResponse, St::Error> {
         let now = self.clock.now();
         let verdict_v = evaluate_version(&req.reported.app_version, &self.config.requirement);
 
         // Resolve the member uniformly (the lookup hash work runs regardless of the version gate).
         let hash = self.lookup_hash(&req.phone);
-        let member = self.store.find_member_by_phone(&hash);
+        let member = self.store.find_member_by_phone(&hash).await?;
 
         // Below-min degrades before the rate-limit window is charged or the code is compared — by
         // design (the app is too old to act). A below-min request therefore never consumes an
@@ -88,12 +91,12 @@ where
             if let Some(m) = &member {
                 self.note_below_min(m.member_id, req.reported.app_version);
             }
-            return self.bind_response(BindOutcome::BelowMinVersion);
+            return Ok(self.bind_response(BindOutcome::BelowMinVersion));
         }
 
         // No member for this phone: same shape as a bad code — `Invalid` (no existence leak).
         let Some(member) = member else {
-            return self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Invalid));
+            return Ok(self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Invalid)));
         };
         let member_id = member.member_id;
 
@@ -102,8 +105,8 @@ where
 
         // No live code (never issued, or already consumed/superseded): the helper must ask the
         // admin for a fresh one — surfaced as `Consumed` (AC17).
-        let Some(row) = self.store.load_live_onboarding(member_id) else {
-            return self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Consumed));
+        let Some(row) = self.store.load_live_onboarding(member_id).await? else {
+            return Ok(self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Consumed)));
         };
 
         let challenge = OnboardingCodeChallenge {
@@ -120,16 +123,22 @@ where
         let verdict =
             evaluate_onboarding_code(&challenge, &req.code, &self.config.hmac_key, &self.clock);
 
-        match verdict {
+        Ok(match verdict {
             OnboardingCodeVerdict::Accepted => {
                 // Atomic consume: a lost race means another presentation already bound — return
                 // `Consumed`, never a second bind (carry-forward (a)).
-                if !self.store.consume_onboarding_if_live(member_id, now) {
-                    return self
-                        .bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Consumed));
+                if !self
+                    .store
+                    .consume_onboarding_if_live(member_id, now)
+                    .await?
+                {
+                    return Ok(
+                        self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::Consumed))
+                    );
                 }
-                let material =
-                    self.issue_session_and_bind(member_id, req.reported, &req.device_token, now);
+                let material = self
+                    .issue_session_and_bind(member_id, req.reported, &req.device_token, now)
+                    .await?;
                 self.bind_response(BindOutcome::Bound(material))
             }
             OnboardingCodeVerdict::RateLimited => {
@@ -143,13 +152,31 @@ where
                 self.bind_response(BindOutcome::Failed(OnboardingCodeVerdict::RateLimited))
             }
             other => self.bind_response(BindOutcome::Failed(other)),
-        }
+        })
     }
 
+    fn bind_response(&self, outcome: BindOutcome) -> BindResponse {
+        BindResponse {
+            version: self.requirement(),
+            outcome,
+        }
+    }
+}
+
+impl<St, Sk, Sec, Clk> AuthService<St, Sk, Sec, Clk>
+where
+    St: AuthStore,
+    Sk: AdminAlertSink,
+    Sec: SecretSource,
+    Clk: boundless_auth::Clock,
+{
     /// Record the onboarding notification-permission decision (AC14). On a decline, record the
     /// non-PII "notifications not enabled" admin flag (deduped per day) and return `true`; the
     /// flow always advances client-side either way (never block/scold). Returns whether the
     /// decline was flagged.
+    ///
+    /// Store-free (it touches only the hub + alert sink), so it needs only the base [`AuthStore`]
+    /// bound — recording a decision must not require a [`DeviceStore`].
     pub fn record_notification_decision(&mut self, member: MemberId, granted: bool) -> bool {
         let flag = should_flag_notifications_off(granted);
         if flag
@@ -161,12 +188,5 @@ where
                 .emit(AdminAlert::NotificationsNotEnabled { member });
         }
         flag
-    }
-
-    fn bind_response(&self, outcome: BindOutcome) -> BindResponse {
-        BindResponse {
-            version: self.requirement(),
-            outcome,
-        }
     }
 }

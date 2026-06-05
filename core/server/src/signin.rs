@@ -58,13 +58,13 @@ where
     /// Handle a sign-in (spec C.2 / AC7 / AC8). The version verdict is computed first (O4); the
     /// member lookup always runs (uniform timing); a below-min handshake collapses the outcome to
     /// `BelowMinVersion` and emits the once-per-day admin alert when the member is known.
-    pub fn sign_in(&mut self, req: SignInRequest) -> SignInResponse {
+    pub async fn sign_in(&mut self, req: SignInRequest) -> Result<SignInResponse, St::Error> {
         let verdict = evaluate_version(&req.reported.app_version, &self.config.requirement);
 
         // Always perform the lookup — no early return on below-min or on a miss — so the path is
         // timing-uniform and never branches observably on existence (carry-forward (b)).
         let hash = self.lookup_hash(&req.phone);
-        let member = self.store.find_member_by_phone(&hash);
+        let member = self.store.find_member_by_phone(&hash).await?;
         let result = SignInResult::from_lookup(member.is_some(), verdict);
 
         if result == SignInResult::BelowMinVersion {
@@ -76,10 +76,10 @@ where
             }
         }
 
-        SignInResponse {
+        Ok(SignInResponse {
             version: self.requirement(),
             manifest_pointer: self.config.manifest_pointer.clone(),
             result,
-        }
+        })
     }
 }

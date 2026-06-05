@@ -13,7 +13,7 @@ use boundless_auth::{
 use boundless_crypto::recovery_code_hash;
 use boundless_domain::{ClientVersion, DeviceToken, PhoneNumber, RecoveryCode};
 
-use crate::ports::{AdminAlertSink, AuthStore, SecretSource, SessionMaterial};
+use crate::ports::{AdminAlertSink, AuthStore, DeviceStore, SecretSource, SessionMaterial};
 use crate::service::AuthService;
 
 /// A recovery re-bind request. Holds tainted material (phone, code, push token), so not `Serialize`.
@@ -67,28 +67,36 @@ impl RecoveryResponse {
 
 impl<St, Sk, Sec, Clk> AuthService<St, Sk, Sec, Clk>
 where
-    St: AuthStore,
+    St: AuthStore + DeviceStore,
     Sk: AdminAlertSink,
     Sec: SecretSource,
     Clk: boundless_auth::Clock,
 {
     /// Handle a Driver recovery re-bind (spec edge "device replacement / recovery" / AC19).
-    pub fn recovery_rebind(&mut self, req: RecoveryRequest) -> RecoveryResponse {
+    ///
+    /// Requires [`DeviceStore`] (the accept path re-binds the new device); `St::Error` is the single
+    /// shared [`crate::StoreBackend::Error`] across both ports.
+    pub async fn recovery_rebind(
+        &mut self,
+        req: RecoveryRequest,
+    ) -> Result<RecoveryResponse, St::Error> {
         let now = self.clock.now();
         let verdict_v = evaluate_version(&req.reported.app_version, &self.config.requirement);
         let hash = self.lookup_hash(&req.phone);
-        let member = self.store.find_member_by_phone(&hash);
+        let member = self.store.find_member_by_phone(&hash).await?;
 
         if verdict_v.is_below_minimum() {
             if let Some(m) = &member {
                 self.note_below_min(m.member_id, req.reported.app_version);
             }
-            return self.recovery_response(RecoveryOutcome::BelowMinVersion);
+            return Ok(self.recovery_response(RecoveryOutcome::BelowMinVersion));
         }
 
         // No member for this phone: uniform `Invalid` (no existence leak).
         let Some(member) = member else {
-            return self.recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid));
+            return Ok(
+                self.recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid))
+            );
         };
         let role = member.recovery_role();
 
@@ -98,13 +106,15 @@ where
         // role signal (it requires already knowing the phone, and matches the `AUTH_RECOVERY_*`
         // error codes / ADR-0016 D3 "Drivers self-serve, Riders call the admin"). sec-audit F3.
         if !recovery_available_for(role) {
-            return self
-                .recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::NotAvailable));
+            return Ok(self
+                .recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::NotAvailable)));
         }
 
         // No live recovery code → `Invalid` (the Driver falls back to the Admin path).
-        let Some(row) = self.store.load_live_recovery(member.member_id) else {
-            return self.recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid));
+        let Some(row) = self.store.load_live_recovery(member.member_id).await? else {
+            return Ok(
+                self.recovery_response(RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid))
+            );
         };
 
         let challenge = RecoveryChallenge {
@@ -116,7 +126,7 @@ where
         };
         let verdict = evaluate_recovery_code(&challenge, &req.code, &self.config.hmac_key, role);
 
-        match verdict {
+        Ok(match verdict {
             RecoveryCodeVerdict::Accepted => {
                 // Mint + hash the fresh code, then atomically consume-and-rotate. A lost race
                 // means the code was already used → `Invalid` (never a double re-bind).
@@ -125,24 +135,22 @@ where
                 if !self
                     .store
                     .consume_and_rotate_recovery(member.member_id, fresh_hash, now)
+                    .await?
                 {
-                    return self.recovery_response(RecoveryOutcome::Rejected(
+                    return Ok(self.recovery_response(RecoveryOutcome::Rejected(
                         RecoveryCodeVerdict::Invalid,
-                    ));
+                    )));
                 }
-                let material = self.issue_session_and_bind(
-                    member.member_id,
-                    req.reported,
-                    &req.device_token,
-                    now,
-                );
+                let material = self
+                    .issue_session_and_bind(member.member_id, req.reported, &req.device_token, now)
+                    .await?;
                 self.recovery_response(RecoveryOutcome::Rebound {
                     material,
                     fresh_recovery_code: fresh,
                 })
             }
             other => self.recovery_response(RecoveryOutcome::Rejected(other)),
-        }
+        })
     }
 
     fn recovery_response(&self, outcome: RecoveryOutcome) -> RecoveryResponse {

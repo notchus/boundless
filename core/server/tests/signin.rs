@@ -21,7 +21,7 @@ fn ac7_signin_response_carries_min_and_recommended_version() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     let mut svc = service(store, 1_000);
 
-    let resp = svc.sign_in(signin_req("+15550000001", ios_current()));
+    let resp = svc.sign_in_ok(signin_req("+15550000001", ios_current()));
 
     assert_eq!(resp.version.min, AppVersion::new(1, 0, 0));
     assert_eq!(resp.version.recommended, AppVersion::new(1, 2, 0));
@@ -35,7 +35,7 @@ fn ac8_below_min_takes_precedence_and_alerts_once() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     let mut svc = service(store, 1_000);
 
-    let resp = svc.sign_in(signin_req("+15550000001", ios_below_min()));
+    let resp = svc.sign_in_ok(signin_req("+15550000001", ios_below_min()));
 
     assert_eq!(resp.result, SignInResult::BelowMinVersion);
     assert_eq!(resp.error_code(), Some("AUTH_BELOW_MIN_VERSION"));
@@ -48,8 +48,8 @@ fn signin_no_existence_leak_same_shape_matched_vs_unmatched() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     let mut svc = service(store, 1_000);
 
-    let matched = svc.sign_in(signin_req("+15550000001", ios_current()));
-    let unmatched = svc.sign_in(signin_req("+15559999999", ios_current()));
+    let matched = svc.sign_in_ok(signin_req("+15550000001", ios_current()));
+    let unmatched = svc.sign_in_ok(signin_req("+15559999999", ios_current()));
 
     // Identical version + manifest pointer; the responses differ ONLY in the result discriminant
     // (the legitimate signal the helper needs) — no extra field branches on existence.
@@ -67,8 +67,8 @@ fn signin_below_min_collapses_match_and_is_identical() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     let mut svc = service(store, 1_000);
 
-    let matched = svc.sign_in(signin_req("+15550000001", ios_below_min()));
-    let unmatched = svc.sign_in(signin_req("+15559999999", ios_below_min()));
+    let matched = svc.sign_in_ok(signin_req("+15550000001", ios_below_min()));
+    let unmatched = svc.sign_in_ok(signin_req("+15559999999", ios_below_min()));
 
     // Below-min collapses both to the same degradation response — match is not revealed.
     assert_eq!(matched.result, SignInResult::BelowMinVersion);

@@ -421,20 +421,29 @@
 > "Server / store (T07-shell slice A)" register below. Driver = **`tokio-postgres` over a Hyperdrive
 > Socket** (sqlx dropped, ADR-0019). The rest of T07-shell is **T07-shell-B** below.
 
-- [ ] **T07-shell-B — the deployable workers-rs Worker + the async-port bridge.** The `#[event]`/
-      Router entry point, the `GroupHub` Durable Object (persisting `GroupHubState`), and the
-      Cloudflare bindings — Queues (admin alerts), KV (manifest + per-Group `{adminName}`), Turnstile
-      (code-guess + refresh throttle), Hyperdrive → Postgres. Drives the **already-built `PgAuthStore`**
-      over a `hyperdrive.connect()` `worker::Socket` — which requires (i) resolving the
-      `tokio-postgres` **wasm32 feature flags** and (ii) the **pooler-safe `query_raw`** path (the
-      Hyperdrive pooler dislikes tokio-postgres unnamed prepared statements; native tests don't hit
-      this). Plus the **async-port bridge**: `core/server`'s `AuthStore`/`AuthService` are currently
-      **sync** and cannot block-on-async in wasm, so the ports must become `async` (touches the
-      committed, 48-test T07-core — its own slice) before `PgAuthStore` can be wired in. Plus the real
-      **CSPRNG `SecretSource`**, **access-token signing** (JWT, ~15-min TTL), **APNs/FCM** device-token
-      registration, the `RefreshResponse::server_verdict` → PII-free `emit()` logging (never returned
-      to the client), and the **per-source refresh-rejection 429** (the `GroupHubState` counter exists;
-      the network enforcement is the shell's).
+> **Async-port bridge DONE (2026-06-05, ADR-0020):** `core/server`'s store ports are now **`async` +
+> fallible** (shared `StoreBackend::Error`); the device-token methods split into a separate
+> **`DeviceStore`** port (its Postgres impl is blocked on spec-008 token encryption); **`PgAuthStore`
+> now `impl`s `AuthStore`**; and `AuthService` is proven end-to-end against real `postgres:16`
+> (`server/store/tests/service_pg.rs`). The 48 T07-core tests were adapted (host `pollster::block_on`).
+> So the remaining **T07-shell-B** below is the *deployable Worker runtime only* (+ the `DeviceStore`
+> Postgres impl, with encryption).
+
+- [ ] **T07-shell-B — the deployable workers-rs Worker (the async-port bridge is now DONE, above).**
+      The `#[event]`/ Router entry point, the `GroupHub` Durable Object (persisting `GroupHubState`),
+      and the Cloudflare bindings — Queues (admin alerts), KV (manifest + per-Group `{adminName}`),
+      Turnstile (code-guess + refresh throttle), Hyperdrive → Postgres. Drives the **already-built,
+      now-`AuthStore`-implementing `PgAuthStore`** over a `hyperdrive.connect()` `worker::Socket` —
+      which requires (i) resolving the `tokio-postgres` **wasm32 feature flags** and (ii) the
+      **pooler-safe `query_raw`** path (the Hyperdrive pooler dislikes tokio-postgres unnamed prepared
+      statements; native tests don't hit this). The async-port bridge it needed is **done** (ADR-0020),
+      so the Worker composes `PgAuthStore` (`AuthStore`) with a **`PgDeviceStore`** (`DeviceStore`) —
+      the latter needs the spec-008 device-token encryption (see the device-token deferral below); until
+      then the device half has no Postgres impl. Plus the real **CSPRNG `SecretSource`**,
+      **access-token signing** (JWT, ~15-min TTL), **APNs/FCM** device-token registration, the
+      `RefreshResponse::server_verdict` → PII-free `emit()` logging (never returned to the client), and
+      the **per-source refresh-rejection 429** (the `GroupHubState` counter exists; the network
+      enforcement is the shell's).
   - **Needs `docs-researcher`:** the workers-rs runtime (`worker`/`worker-build` versions, the
     `#[event]`/Router/DO/`hyperdrive.connect()` Socket API) + the miniflare/workerd test harness —
     then pin `worker`/`worker-build` and fill `docs/stack-matrix.md`. (`tokio-postgres`/`tokio` are
@@ -480,25 +489,33 @@
 > load/consume; refresh classify/rotate/revoke/create-family; recovery load/consume-rotate), with
 > per-request RLS tenant scoping (`set_config('app.current_group_id', $1, true)`). Methods are
 > `async + Result` (mirroring the sync `AuthStore` 1:1) and proven against real `postgres:16` —
-> **10 integration tests**, self-skipping without `DATABASE_URL`; CI job `server-store`. The
+> **13 integration tests** (incl. the 3 reviewer-added: revoked-family-marks-superseded, onboarding
+> consume-ignores-TTL, onboarding-superseded-not-live), self-skipping without `DATABASE_URL`; CI job
+> `server-store`. The
 > rotate-vs-replay TOCTOU test **caught a real bug** (a concurrent rotate's new current row escaped
 > a concurrent revoke under READ COMMITTED); fixed with a `pg_advisory_xact_lock` on the family in
 > both `rotate_session` and `revoke_family`. Driver decision = **ADR-0019** (tokio-postgres over a
 > Hyperdrive Socket; sqlx dropped). Everything below was deliberately left out.
 
-- [ ] **The async-port bridge.** `core/server`'s `AuthStore`/`AuthService` are **sync** (in-memory
-      stub shape). `PgAuthStore` is `async + Result`, so wiring it into `AuthService` requires making
-      the core ports async — touches the committed, 48-test T07-core, so it is its own slice (not a
-      silent refactor). `PgAuthStore`'s method names/args/returns already mirror `AuthStore` 1:1 to
-      make the eventual trait impl mechanical.
-  - **WHEN:** **T07-shell-B** (with the Worker runtime), or a dedicated "async ports" slice before it.
+- [x] **The async-port bridge.** **DONE 2026-06-05 (ADR-0020).** `core/server`'s store ports are now
+      **`async` + fallible** (shared `StoreBackend::Error`); `PgAuthStore` **implements `AuthStore`**;
+      `AuthService` is proven end-to-end over the real `PgAuthStore` (`server/store/tests/service_pg.rs`,
+      5 tests). The 48 T07-core tests were adapted to drive the async endpoints via host
+      `pollster::block_on`. The device-token methods were split into a separate **`DeviceStore`** port
+      so `PgAuthStore` could ship the session/code/member half without the (deferred) device encryption.
 
-- [ ] **Device-token store methods** (`current_device_bindings` / `invalidate_device` /
-      `register_device`). Left out of slice A: `register_device` must write `token_encrypted bytea`,
-      and **device-token at-rest encryption does not exist yet** (the I1-adjacent sealed-box crypto is
-      deferred to spec 008; the push registration itself to spec 007). The DeviceToken is PII (P2) —
-      storing it without encryption would violate "encrypt before writing." Implement these when the
-      encryption primitive lands.
+- [ ] **`DeviceStore` Postgres impl** (`current_device_bindings` / `invalidate_device` /
+      `register_device`). Now isolated behind the `DeviceStore` port (ADR-0020); `PgAuthStore` does
+      **not** implement it. `register_device` must write `token_encrypted bytea`, and **device-token
+      at-rest encryption does not exist yet** (the I1-adjacent sealed-box crypto is deferred to spec
+      008; the push registration itself to spec 007). The DeviceToken is PII (P2) — storing it without
+      encryption would violate "encrypt before writing." The Worker (T07-shell-B) and the orchestration
+      tests currently compose `PgAuthStore` with an **in-memory** `DeviceStore`; implement the Postgres
+      `PgDeviceStore` when the encryption primitive lands. **Guard-rail (sec-audit F3):** when it lands,
+      assert at the SQL layer that the token column is `bytea` (the `_encrypted` contract) and add a
+      `static_assertions` check that any persisted device-token wrapper exposes no `Serialize`/`Display`
+      — so the test doubles' in-memory convenience (which holds the raw `DeviceToken`) can never be
+      mistaken for the production storage shape.
   - **WHEN:** push spec **007** / issuance spec **008** (whichever brings device-token encryption).
 
 - [ ] **wasm32 feature flags + pooler-safe `query_raw`.** Slice A uses `tokio-postgres` with default

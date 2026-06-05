@@ -35,7 +35,7 @@ proptest! {
         let mut bound = 0usize;
         for _ in 0..attempts {
             if matches!(
-                svc.bind_device(bind_req("ONB-GOOD", ios_current())).outcome,
+                svc.bind_device_ok(bind_req("ONB-GOOD", ios_current())).outcome,
                 BindOutcome::Bound(_)
             ) {
                 bound += 1;

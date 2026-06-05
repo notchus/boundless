@@ -31,7 +31,7 @@ fn ac18_rotate_current_credential() {
     );
     let mut svc = service(store, 1_000);
 
-    let resp = svc.refresh(refresh_req("R-current", ios_current()));
+    let resp = svc.refresh_ok(refresh_req("R-current", ios_current()));
 
     assert!(matches!(resp.outcome, RefreshOutcome::Rotated(_)));
     assert_eq!(resp.server_verdict, Some(RefreshVerdict::Rotate));
@@ -57,7 +57,7 @@ fn auth_refresh_rotation_replay_detected() {
     let mut svc = service(store, 1_000);
 
     // Replaying the rotated-away credential kills the whole family (R6) and alerts the admin (AC15).
-    let replay = svc.refresh(refresh_req("R-old", ios_current()));
+    let replay = svc.refresh_ok(refresh_req("R-old", ios_current()));
     assert!(matches!(replay.outcome, RefreshOutcome::Invalidated));
     assert_eq!(
         replay.server_verdict,
@@ -70,7 +70,7 @@ fn auth_refresh_rotation_replay_detected() {
     assert_eq!(svc.alerts.count_kind(AlertKind::SessionInvalidated), 1);
 
     // The legitimate current credential is now rejected too — the family is dead (AC18).
-    let legit = svc.refresh(refresh_req("R-new", ios_current()));
+    let legit = svc.refresh_ok(refresh_req("R-new", ios_current()));
     assert!(matches!(legit.outcome, RefreshOutcome::Invalidated));
     assert_eq!(legit.server_verdict, Some(RefreshVerdict::Rejected));
 }
@@ -87,7 +87,7 @@ fn refresh_unknown_credential_is_rejected_no_alert_no_change() {
     );
     let mut svc = service(store, 1_000);
 
-    let resp = svc.refresh(refresh_req("R-nobody", ios_current()));
+    let resp = svc.refresh_ok(refresh_req("R-nobody", ios_current()));
 
     assert!(matches!(resp.outcome, RefreshOutcome::Invalidated));
     assert_eq!(resp.server_verdict, Some(RefreshVerdict::Rejected));
@@ -103,7 +103,7 @@ fn refresh_unknown_credential_is_rejected_no_alert_no_change() {
 fn refresh_reject_shape_identical_for_unknown_revoked_and_replay() {
     // Unknown credential.
     let mut svc1 = service(MemStore::new(), 1_000);
-    let unknown = svc1.refresh(refresh_req("R-nobody", ios_current()));
+    let unknown = svc1.refresh_ok(refresh_req("R-nobody", ios_current()));
 
     // Already-revoked family.
     let mut store2 = MemStore::new();
@@ -115,7 +115,7 @@ fn refresh_reject_shape_identical_for_unknown_revoked_and_replay() {
         FAR_FUTURE,
     );
     let mut svc2 = service(store2, 1_000);
-    let revoked = svc2.refresh(refresh_req("R-revoked", ios_current()));
+    let revoked = svc2.refresh_ok(refresh_req("R-revoked", ios_current()));
 
     // Replay (superseded credential of a live family).
     let mut store3 = MemStore::new();
@@ -127,7 +127,7 @@ fn refresh_reject_shape_identical_for_unknown_revoked_and_replay() {
         FAR_FUTURE,
     );
     let mut svc3 = service(store3, 1_000);
-    let replay = svc3.refresh(refresh_req("R-old", ios_current()));
+    let replay = svc3.refresh_ok(refresh_req("R-old", ios_current()));
 
     // All three present the SAME client-facing outcome — `Invalidated` — so the client cannot tell
     // "once-valid" from "unknown" from "revoked" (no lineage-existence leak).
@@ -148,9 +148,9 @@ fn refresh_replay_twice_same_day_alerts_once() {
     );
     let mut svc = service(store, 1_000);
 
-    let _ = svc.refresh(refresh_req("R-old", ios_current()));
-    let _ = svc.refresh(refresh_req("R-old", ios_current())); // a second replay the same day
-                                                              // The family is killed on the first; the alert is deduped to one per member per day (AC15).
+    let _ = svc.refresh_ok(refresh_req("R-old", ios_current()));
+    let _ = svc.refresh_ok(refresh_req("R-old", ios_current())); // a second replay the same day
+                                                                 // The family is killed on the first; the alert is deduped to one per member per day (AC15).
     assert_eq!(
         svc.store.family_status(fam),
         Some(SessionFamilyStatus::Revoked)
@@ -173,7 +173,7 @@ fn refresh_replay_below_min_degrades_and_leaves_family_intact() {
     );
     let mut svc = service(store, 1_000);
 
-    let resp = svc.refresh(refresh_req("R-old", ios_below_min()));
+    let resp = svc.refresh_ok(refresh_req("R-old", ios_below_min()));
     assert!(matches!(resp.outcome, RefreshOutcome::BelowMinVersion));
     assert_eq!(resp.server_verdict, None);
     assert_eq!(
@@ -195,7 +195,7 @@ fn refresh_below_min_degrades_without_touching_session() {
     );
     let mut svc = service(store, 1_000);
 
-    let resp = svc.refresh(refresh_req("R-current", ios_below_min()));
+    let resp = svc.refresh_ok(refresh_req("R-current", ios_below_min()));
 
     assert!(matches!(resp.outcome, RefreshOutcome::BelowMinVersion));
     assert_eq!(resp.server_verdict, None); // the refresh policy never ran

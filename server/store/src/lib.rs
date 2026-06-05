@@ -1,14 +1,18 @@
 //! `boundless-server-store` — the Postgres-backed data-access layer for the member-auth store
 //! (spec 001 **T07-shell slice A**).
 //!
-//! [`PgAuthStore`] implements the SQL + transaction logic behind the `core::server` `AuthStore`
-//! **port contract** (`core/server/src/ports.rs`) against a real Postgres (the T06 schema). Its
-//! methods mirror that trait's methods 1:1 — same names, args, and return shapes — but they are
-//! **`async` and fallible** (`-> Result<_, StoreError>`), because a database backend is inherently
-//! async and you cannot block-on-async in the Cloudflare Workers wasm runtime. (The in-memory
-//! `AuthStore` stub is sync/infallible because it cannot fail.) Wiring this adapter into the
-//! currently-sync `AuthService` — i.e. making the core ports `async` — is the deliberately deferred
-//! "async-port bridge" (see `DEFERRED.md` → Server / store; ADR-0019).
+//! [`PgAuthStore`] implements the `core::server` [`AuthStore`] **port** (`core/server/src/ports.rs`)
+//! against a real Postgres (the T06 schema). The port is **`async` and fallible**
+//! (`-> Result<_, StoreError>`) — a database backend is inherently async and you cannot
+//! block-on-async in the Cloudflare Workers wasm runtime — so the ports were made async (the
+//! "async-port bridge", ADR-0020) and this adapter now `impl`s them directly. The single shared
+//! error is declared once via [`StoreBackend`] (`type Error = StoreError`).
+//!
+//! **Device tokens are a separate port.** [`PgAuthStore`] does **not** implement
+//! `core::server::DeviceStore` (the device-token methods): `register_device` must persist a
+//! *reversibly-encrypted* token (push needs the plaintext back, so a one-way hash will not do),
+//! and that at-rest encryption primitive is deferred to spec 008. The in-memory stub implements
+//! both ports; this adapter ships the session/code/member half now (see `DEFERRED.md`).
 //!
 //! **Why this layer earns its keep:** the in-memory stub's "atomic" methods are *trivially* atomic
 //! (single-threaded), so it can only *model* the security-critical contracts. This adapter proves
@@ -37,7 +41,8 @@ use boundless_crypto::{
 };
 use boundless_domain::{MemberId, RefreshToken, Role, SessionFamilyId};
 use boundless_server_core::{
-    FamilyInfo, MemberRecord, OnboardingCodeRow, RecoveryCodeRow, RefreshClassification,
+    AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow, RecoveryCodeRow, RefreshClassification,
+    StoreBackend,
 };
 use tokio_postgres::{Client, Transaction};
 use uuid::Uuid;
@@ -151,10 +156,20 @@ impl PgAuthStore {
         .await?;
         Ok(tx)
     }
+}
 
+/// The single shared store error (declared once for both ports; this adapter implements only
+/// [`AuthStore`] — device tokens are deferred, see the module docs).
+impl StoreBackend for PgAuthStore {
+    type Error = StoreError;
+}
+
+/// The `core::server` [`AuthStore`] port, realized over Postgres. Every method opens a tenant-
+/// scoped transaction via the inherent [`PgAuthStore::begin`] (per-request RLS, fail-closed).
+impl AuthStore for PgAuthStore {
     /// Look up a member by phone-lookup hash (uniform indexed equality on the keyed HMAC — never
     /// the plaintext phone). `None` when no member matches in this tenant.
-    pub async fn find_member_by_phone(
+    async fn find_member_by_phone(
         &mut self,
         hash: &PhoneLookupHash,
     ) -> Result<Option<MemberRecord>> {
@@ -179,7 +194,7 @@ impl PgAuthStore {
 
     /// The member's live Onboarding Code, if any (`None` = none / consumed / superseded — the
     /// partial-unique index guarantees at most one live row).
-    pub async fn load_live_onboarding(
+    async fn load_live_onboarding(
         &mut self,
         member: MemberId,
     ) -> Result<Option<OnboardingCodeRow>> {
@@ -212,7 +227,7 @@ impl PgAuthStore {
     /// call consumed it. The partial-unique index bounds the live set to one row, so the single
     /// `UPDATE … WHERE … live` either hits 1 row (consumed here) or 0 (lost the race — the caller
     /// treats `false` as "already consumed", never a second bind; carry-forward (a)).
-    pub async fn consume_onboarding_if_live(
+    async fn consume_onboarding_if_live(
         &mut self,
         member: MemberId,
         now: UnixSeconds,
@@ -244,7 +259,7 @@ impl PgAuthStore {
     /// secret-keyed 256-bit HMAC, not the credential. Do **not** "optimize" this by loading the
     /// stored hashes into memory and `==`-ing them — that would be the non-constant-time membership
     /// oracle the hash types forbid by having no `PartialEq`.
-    pub async fn classify_refresh(
+    async fn classify_refresh(
         &mut self,
         presented: &RefreshToken,
         key: &HmacKey,
@@ -296,7 +311,7 @@ impl PgAuthStore {
     /// row; if zero (the family was already rotated by a racing request, or revoked), the txn rolls
     /// back and this returns [`StoreError::NoLiveCurrentToRotate`] — never a second valid rotation.
     /// The `sessions_one_current_per_family` partial-unique index is the backstop.
-    pub async fn rotate_session(
+    async fn rotate_session(
         &mut self,
         family: SessionFamilyId,
         new_refresh_hash: RefreshTokenHash,
@@ -351,7 +366,7 @@ impl PgAuthStore {
 
     /// Atomically revoke the entire family (replay detected, or an admin-mediated event). Stamps
     /// `revoked_at` on every still-live row of the family; a revoked family never rotates again.
-    pub async fn revoke_family(&mut self, family: SessionFamilyId, now: UnixSeconds) -> Result<()> {
+    async fn revoke_family(&mut self, family: SessionFamilyId, now: UnixSeconds) -> Result<()> {
         let fam = family.as_uuid();
         let fam_text = fam.to_string();
         let now_ts = to_pg_time(now);
@@ -375,7 +390,7 @@ impl PgAuthStore {
 
     /// Create a brand-new `Active` session family (device bind / recovery re-bind) with
     /// `new_refresh_hash` as its current credential.
-    pub async fn create_session_family(
+    async fn create_session_family(
         &mut self,
         member: MemberId,
         new_refresh_hash: RefreshTokenHash,
@@ -404,10 +419,7 @@ impl PgAuthStore {
     }
 
     /// The member's live Recovery Code, if any (Drivers only in practice).
-    pub async fn load_live_recovery(
-        &mut self,
-        member: MemberId,
-    ) -> Result<Option<RecoveryCodeRow>> {
+    async fn load_live_recovery(&mut self, member: MemberId) -> Result<Option<RecoveryCodeRow>> {
         let mid = member.as_uuid();
         let tx = self.begin().await?;
         let row = tx
@@ -432,7 +444,7 @@ impl PgAuthStore {
     /// Atomically consume the live Recovery Code **and** install the fresh one (`fresh_hash`) as the
     /// member's new live code — rotated on use (ADR-0016 D3) — in one transaction; `true` iff THIS
     /// call did it. If no live code exists (lost the race) the txn rolls back and returns `false`.
-    pub async fn consume_and_rotate_recovery(
+    async fn consume_and_rotate_recovery(
         &mut self,
         member: MemberId,
         fresh_hash: CodeHash,

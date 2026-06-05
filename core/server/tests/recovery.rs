@@ -32,7 +32,7 @@ fn ac19_driver_rebind_succeeds_invalidates_old_and_issues_fresh_code() {
     let prior = DeviceBinding::new(member_id(1), Platform::Ios, AppVersion::new(1, 1, 0));
     let mut svc = service(driver_with_recovery(), 1_000);
 
-    let resp = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_current()));
+    let resp = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_current()));
 
     // Borrow (don't move) the outcome so `error_code()` can still read `resp` afterwards.
     match &resp.outcome {
@@ -61,7 +61,7 @@ fn ac19_rider_has_no_self_serve_recovery() {
     store.add_recovery(member_id(1), "REC-GOOD");
     let mut svc = service(store, 1_000);
 
-    let resp = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_current()));
+    let resp = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_current()));
 
     assert!(matches!(
         resp.outcome,
@@ -74,11 +74,11 @@ fn ac19_rider_has_no_self_serve_recovery() {
 fn ac19_reused_recovery_code_is_rejected() {
     let mut svc = service(driver_with_recovery(), 1_000);
 
-    let first = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_current()));
+    let first = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_current()));
     assert!(matches!(first.outcome, RecoveryOutcome::Rebound { .. }));
 
     // The code was rotated on use; presenting the old one again no longer matches.
-    let second = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_current()));
+    let second = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_current()));
     assert!(matches!(
         second.outcome,
         RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid)
@@ -88,7 +88,7 @@ fn ac19_reused_recovery_code_is_rejected() {
 #[test]
 fn recovery_wrong_code_is_invalid() {
     let mut svc = service(driver_with_recovery(), 1_000);
-    let resp = svc.recovery_rebind(recovery_req("+15550000001", "REC-WRONG", ios_current()));
+    let resp = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-WRONG", ios_current()));
     assert!(matches!(
         resp.outcome,
         RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid)
@@ -103,7 +103,7 @@ fn recovery_no_live_code_is_invalid() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Driver]);
     // No `add_recovery` — the Driver has no live code.
     let mut svc = service(store, 1_000);
-    let resp = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_current()));
+    let resp = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_current()));
     assert!(matches!(
         resp.outcome,
         RecoveryOutcome::Rejected(RecoveryCodeVerdict::Invalid)
@@ -113,7 +113,7 @@ fn recovery_no_live_code_is_invalid() {
 #[test]
 fn recovery_below_min_degrades() {
     let mut svc = service(driver_with_recovery(), 1_000);
-    let resp = svc.recovery_rebind(recovery_req("+15550000001", "REC-GOOD", ios_below_min()));
+    let resp = svc.recovery_rebind_ok(recovery_req("+15550000001", "REC-GOOD", ios_below_min()));
     assert!(matches!(resp.outcome, RecoveryOutcome::BelowMinVersion));
     assert_eq!(resp.error_code(), Some("AUTH_BELOW_MIN_VERSION"));
     // The member is known, so the below-min admin alert fires once — parity with the other endpoints.

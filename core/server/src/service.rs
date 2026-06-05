@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::alerts::{AdminAlert, AlertKind};
 use crate::hub::GroupHubState;
-use crate::ports::{AdminAlertSink, AuthStore, SecretSource, SessionMaterial};
+use crate::ports::{AdminAlertSink, AuthStore, DeviceStore, SecretSource, SessionMaterial};
 
 /// The short-lived access-token lifetime (~15 minutes; ADR-0016 D2 / plan §10-D). The client
 /// silently refreshes shortly before this elapses; the session itself is indefinite (AC18).
@@ -154,61 +154,78 @@ where
     /// Mint a fresh session for `member`: a new refresh credential (stored hashed) + a fresh
     /// access token expiring at `now + access_ttl`. The refresh secret never touches the store in
     /// plaintext — only its [`refresh_token_hash`] (ADR-0016 D2 / I4).
-    pub(crate) fn mint_session(&mut self, member: MemberId, now: UnixSeconds) -> SessionMaterial {
+    pub(crate) async fn mint_session(
+        &mut self,
+        member: MemberId,
+        now: UnixSeconds,
+    ) -> Result<SessionMaterial, St::Error> {
         let refresh = self.secrets.fresh_refresh();
         let access = self.secrets.fresh_access();
         let refresh_hash = refresh_token_hash(&self.config.hmac_key, &refresh);
         let access_expires_at = now.saturating_add_secs(self.config.access_ttl_secs);
-        let session: Session =
-            self.store
-                .create_session_family(member, refresh_hash, access_expires_at, now);
-        SessionMaterial {
+        let session: Session = self
+            .store
+            .create_session_family(member, refresh_hash, access_expires_at, now)
+            .await?;
+        Ok(SessionMaterial {
             session,
             access,
             refresh,
-        }
-    }
-
-    /// (Re)bind the member's device and mint a session. Invalidates **all** the member's prior
-    /// device bindings (decision: single active device per member; F5 "invalidate all" — no
-    /// stale token survives) before registering the new one; the invalidation is silent
-    /// (`AUTH_DEVICE_TOKEN_INVALIDATED`, never client-facing). Used by both device-bind (AC4) and
-    /// recovery re-bind (AC19).
-    pub(crate) fn issue_session_and_bind(
-        &mut self,
-        member: MemberId,
-        reported: ClientVersion,
-        token: &DeviceToken,
-        now: UnixSeconds,
-    ) -> SessionMaterial {
-        let new_binding = DeviceBinding::new(member, reported.platform, reported.app_version);
-        for prior in self.store.current_device_bindings(member) {
-            if reonboarding_invalidation(&prior, &new_binding).is_some() {
-                self.store.invalidate_device(&prior, now);
-            }
-        }
-        self.store.register_device(&new_binding, token, now);
-        self.mint_session(member, now)
+        })
     }
 
     /// Rotate the family's refresh credential and mint a fresh access token (the `Rotate` arm of
     /// `/api/auth/refresh`).
-    pub(crate) fn rotate_session(
+    pub(crate) async fn rotate_session(
         &mut self,
         family: SessionFamilyId,
         now: UnixSeconds,
-    ) -> SessionMaterial {
+    ) -> Result<SessionMaterial, St::Error> {
         let refresh = self.secrets.fresh_refresh();
         let access = self.secrets.fresh_access();
         let refresh_hash = refresh_token_hash(&self.config.hmac_key, &refresh);
         let access_expires_at = now.saturating_add_secs(self.config.access_ttl_secs);
         let session = self
             .store
-            .rotate_session(family, refresh_hash, access_expires_at, now);
-        SessionMaterial {
+            .rotate_session(family, refresh_hash, access_expires_at, now)
+            .await?;
+        Ok(SessionMaterial {
             session,
             access,
             refresh,
+        })
+    }
+}
+
+impl<St, Sk, Sec, Clk> AuthService<St, Sk, Sec, Clk>
+where
+    St: AuthStore + DeviceStore,
+    Sk: AdminAlertSink,
+    Sec: SecretSource,
+    Clk: Clock,
+{
+    /// (Re)bind the member's device and mint a session. Invalidates **all** the member's prior
+    /// device bindings (decision: single active device per member; F5 "invalidate all" — no
+    /// stale token survives) before registering the new one; the invalidation is silent
+    /// (`AUTH_DEVICE_TOKEN_INVALIDATED`, never client-facing). Used by both device-bind (AC4) and
+    /// recovery re-bind (AC19).
+    ///
+    /// Requires the [`DeviceStore`] port in addition to [`AuthStore`]; everything it touches goes
+    /// through one backend, so `St::Error` is the single shared [`StoreBackend::Error`].
+    pub(crate) async fn issue_session_and_bind(
+        &mut self,
+        member: MemberId,
+        reported: ClientVersion,
+        token: &DeviceToken,
+        now: UnixSeconds,
+    ) -> Result<SessionMaterial, St::Error> {
+        let new_binding = DeviceBinding::new(member, reported.platform, reported.app_version);
+        for prior in self.store.current_device_bindings(member).await? {
+            if reonboarding_invalidation(&prior, &new_binding).is_some() {
+                self.store.invalidate_device(&prior, now).await?;
+            }
         }
+        self.store.register_device(&new_binding, token, now).await?;
+        self.mint_session(member, now).await
     }
 }

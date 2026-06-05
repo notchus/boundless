@@ -61,12 +61,13 @@ where
     /// Handle a refresh (spec D / AC18). The classification (constant-time hash compare over the
     /// lineage) is the store's; the rotation/replay **policy** is `evaluate_refresh` (P4). Replay
     /// revokes the family atomically and alerts the admin once/day (AC15).
-    pub fn refresh(&mut self, req: RefreshRequest) -> RefreshResponse {
+    pub async fn refresh(&mut self, req: RefreshRequest) -> Result<RefreshResponse, St::Error> {
         let now = self.clock.now();
         let verdict_v = evaluate_version(&req.reported.app_version, &self.config.requirement);
         let class = self
             .store
-            .classify_refresh(&req.presented, &self.config.hmac_key);
+            .classify_refresh(&req.presented, &self.config.hmac_key)
+            .await?;
 
         if verdict_v.is_below_minimum() {
             // Degrade without touching the session (the app is merely too old). Alert the
@@ -74,11 +75,11 @@ where
             if let Some(f) = &class.family {
                 self.note_below_min(f.member, req.reported.app_version);
             }
-            return RefreshResponse {
+            return Ok(RefreshResponse {
                 version: self.requirement(),
                 outcome: RefreshOutcome::BelowMinVersion,
                 server_verdict: None,
-            };
+            });
         }
 
         // An unknown credential has no family/status; treat it as revoked so the policy rejects it
@@ -97,7 +98,7 @@ where
                     .as_ref()
                     .expect("Rotate implies a classified Active family")
                     .id;
-                RefreshOutcome::Rotated(self.rotate_session(family, now))
+                RefreshOutcome::Rotated(self.rotate_session(family, now).await?)
             }
             RefreshVerdict::ReplayDetectedKillFamily => {
                 let family = class
@@ -105,7 +106,7 @@ where
                     .as_ref()
                     .expect("replay implies a classified family");
                 let (family_id, member) = (family.id, family.member);
-                self.store.revoke_family(family_id, now);
+                self.store.revoke_family(family_id, now).await?;
                 // The legitimate holder is now locked out → the admin is told (AC15), deduped.
                 self.note_session_invalidated(member);
                 RefreshOutcome::Invalidated
@@ -118,10 +119,10 @@ where
             }
         };
 
-        RefreshResponse {
+        Ok(RefreshResponse {
             version: self.requirement(),
             outcome,
             server_verdict: Some(verdict),
-        }
+        })
     }
 }

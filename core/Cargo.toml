@@ -85,3 +85,11 @@ base64 = "0.22"
 # Failing seeds persist to each crate's committed `proptest-regressions/` (the Proptest
 # Book's sanctioned "check these in" workflow — satisfies P9's reproducible-seeds rule).
 proptest = "1.11"
+
+# Minimal `block_on` for host unit tests of core/server's now-`async` AuthStore/DeviceStore
+# ports (spec 001 T07-shell-B, the async-port bridge — ADR-0020). DEV-ONLY / host-only: it
+# drives the in-memory stub's always-ready futures (no real I/O), so a full async runtime is
+# unnecessary. Zero production dependencies (clean for the network allow-list, I8). Apache-2.0
+# OR MIT, MSRV 1.69 ≤ the workspace 1.89 floor. Latest published release (0.4.0), verified
+# 2026-06-05 via docs-researcher against crates.io; lock is ground truth.
+pollster = "0.4"

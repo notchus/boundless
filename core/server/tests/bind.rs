@@ -31,7 +31,7 @@ fn rider_with_code() -> MemStore {
 #[test]
 fn ac17_valid_code_binds_and_carries_version() {
     let mut svc = service(rider_with_code(), 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
 
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
     assert_eq!(resp.error_code(), None);
@@ -44,7 +44,7 @@ fn ac17_valid_code_binds_and_carries_version() {
 #[test]
 fn ac17_wrong_code_is_invalid() {
     let mut svc = service(rider_with_code(), 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
     assert!(matches!(
         resp.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::Invalid)
@@ -58,7 +58,7 @@ fn ac17_expired_code_is_rejected_server_time() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     store.add_onboarding(member_id(1), "ONB-GOOD", 500, 5); // expires_at = 500
     let mut svc = service(store, 1_000); // server clock = 1_000 > 500 → expired
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(
         resp.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::Expired)
@@ -69,7 +69,7 @@ fn ac17_expired_code_is_rejected_server_time() {
 fn ac17_unknown_member_is_invalid_no_existence_leak() {
     let mut svc = service(rider_with_code(), 1_000);
     // A phone with no member: same `Invalid` shape as a bad code — no existence signal.
-    let resp = svc.bind_device(bind_req("+15559999999", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15559999999", "ONB-GOOD", ios_current()));
     assert!(matches!(
         resp.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::Invalid)
@@ -80,8 +80,8 @@ fn ac17_unknown_member_is_invalid_no_existence_leak() {
 fn bind_atomic_consume_no_double_bind() {
     let mut svc = service(rider_with_code(), 1_000);
 
-    let first = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
-    let second = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let first = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let second = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
 
     // Exactly one bind; the second presentation of the now-consumed code is `Consumed`, never a
     // second session/device (carry-forward (a)).
@@ -101,7 +101,7 @@ fn ac4_reonboarding_invalidates_prior_device_token_silently() {
     let prior = DeviceBinding::new(member_id(1), Platform::Ios, AppVersion::new(1, 1, 0));
     let mut svc = service(store, 1_000);
 
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
 
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
     // The prior token is invalidated, and the new one is the only active binding (AC4/I4)...
@@ -123,7 +123,7 @@ fn reonboarding_with_multiple_prior_bindings_invalidates_all() {
     let prior_ipad = DeviceBinding::new(member_id(1), Platform::IpadOs, AppVersion::new(1, 0, 0));
     let mut svc = service(store, 1_000);
 
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
 
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
     assert!(svc.store.is_invalidated(&prior_phone));
@@ -140,14 +140,14 @@ fn ac17_rate_limit_locks_and_alerts_after_max_attempts() {
 
     // Five wrong attempts (prior counts 0..4) are `Invalid`; they keep the code live.
     for _ in 0..5 {
-        let r = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+        let r = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
         assert!(matches!(
             r.outcome,
             BindOutcome::Failed(OnboardingCodeVerdict::Invalid)
         ));
     }
     // The sixth (prior count 5 ≥ max) locks, before the code is even compared.
-    let locked = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+    let locked = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
     assert!(matches!(
         locked.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::RateLimited)
@@ -159,7 +159,7 @@ fn ac17_rate_limit_locks_and_alerts_after_max_attempts() {
 #[test]
 fn bind_below_min_degrades_without_binding() {
     let mut svc = service(rider_with_code(), 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_below_min()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_below_min()));
     assert!(matches!(resp.outcome, BindOutcome::BelowMinVersion));
     assert_eq!(resp.error_code(), Some("AUTH_BELOW_MIN_VERSION"));
     assert_eq!(svc.store.active_device_count(member_id(1)), 0);
@@ -176,13 +176,13 @@ fn ac17_regenerated_code_supersedes_prior() {
     let mut svc = service(store, 1_000);
 
     // The old (superseded) code no longer binds...
-    let old = svc.bind_device(bind_req("+15550000001", "ONB-OLD", ios_current()));
+    let old = svc.bind_device_ok(bind_req("+15550000001", "ONB-OLD", ios_current()));
     assert!(matches!(
         old.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::Invalid)
     ));
     // ...the new one does.
-    let new = svc.bind_device(bind_req("+15550000001", "ONB-NEW", ios_current()));
+    let new = svc.bind_device_ok(bind_req("+15550000001", "ONB-NEW", ios_current()));
     assert!(matches!(new.outcome, BindOutcome::Bound(_)));
 }
 
@@ -191,10 +191,10 @@ fn ac17_correct_code_on_last_allowed_attempt_binds() {
     let mut svc = service(rider_with_code(), 1_000); // max_attempts = 5
                                                      // Four wrong attempts (prior counts 0..3) keep the code live.
     for _ in 0..4 {
-        let _ = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+        let _ = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
     }
     // The fifth attempt (prior count 4 < 5) with the CORRECT code still binds.
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
 }
 
@@ -203,11 +203,11 @@ fn ac17_correct_code_after_lock_is_still_rate_limited() {
     let mut svc = service(rider_with_code(), 1_000); // max_attempts = 5
                                                      // Five wrong attempts (prior counts 0..4) exhaust the window.
     for _ in 0..5 {
-        let _ = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+        let _ = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
     }
     // The sixth (prior count 5 ≥ max) is locked even though the code is CORRECT — the lock beats
     // the secret, which is never compared once locked.
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(
         resp.outcome,
         BindOutcome::Failed(OnboardingCodeVerdict::RateLimited)
@@ -220,11 +220,11 @@ fn ac17_rate_limit_resets_next_window_then_binds() {
     use boundless_server_core::CODE_ATTEMPT_WINDOW_SECS;
     let mut svc = service(rider_with_code(), 1_000); // max_attempts = 5, TTL far future
     for _ in 0..6 {
-        let _ = svc.bind_device(bind_req("+15550000001", "ONB-WRONG", ios_current()));
+        let _ = svc.bind_device_ok(bind_req("+15550000001", "ONB-WRONG", ios_current()));
     }
     // The lock is a *window*, not permanent: in the next window the correct code binds.
     svc.clock = boundless_auth::FixedClock::at_secs(1_000 + CODE_ATTEMPT_WINDOW_SECS + 1);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
 }
 
@@ -234,7 +234,7 @@ fn ac17_code_expired_exactly_at_ttl_instant() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     store.add_onboarding(member_id(1), "ONB-GOOD", 1_000, 5); // expires_at == now
     let mut svc = service(store, 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     // The TTL boundary is exclusive (`now >= expires_at` ⇒ expired).
     assert!(matches!(
         resp.outcome,
@@ -248,7 +248,7 @@ fn ac17_code_live_one_second_before_ttl_binds() {
     store.add_member(member_id(1), "+15550000001", vec![Role::Rider]);
     store.add_onboarding(member_id(1), "ONB-GOOD", 1_001, 5); // expires_at = now + 1
     let mut svc = service(store, 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
 }
 
@@ -259,7 +259,7 @@ fn rebinding_same_device_tuple_keeps_one_active_binding() {
     let mut store = rider_with_code();
     store.add_device(member_id(1), Platform::Ios, AppVersion::new(1, 2, 0)); // same tuple as ios_current
     let mut svc = service(store, 1_000);
-    let resp = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_current()));
+    let resp = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_current()));
     assert!(matches!(resp.outcome, BindOutcome::Bound(_)));
     assert_eq!(svc.store.active_device_count(member_id(1)), 1);
 }
@@ -270,8 +270,8 @@ fn bind_below_min_unknown_phone_is_identical_and_silent() {
     // fires no alert — and the response is identical to a known-phone below-min (no existence leak,
     // since the alert goes to the admin, never the client).
     let mut svc = service(rider_with_code(), 1_000);
-    let known = svc.bind_device(bind_req("+15550000001", "ONB-GOOD", ios_below_min()));
-    let unknown = svc.bind_device(bind_req("+15559999999", "ONB-GOOD", ios_below_min()));
+    let known = svc.bind_device_ok(bind_req("+15550000001", "ONB-GOOD", ios_below_min()));
+    let unknown = svc.bind_device_ok(bind_req("+15559999999", "ONB-GOOD", ios_below_min()));
     assert!(matches!(known.outcome, BindOutcome::BelowMinVersion));
     assert!(matches!(unknown.outcome, BindOutcome::BelowMinVersion));
     // Only the real member's below-min alerts; the unknown one is silent.

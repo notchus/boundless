@@ -23,10 +23,12 @@ use boundless_domain::{
     RecoveryCode, RefreshToken, Role, SessionFamilyId,
 };
 use boundless_server_core::{
-    normalize_phone, AdminAlert, AdminAlertSink, AuthConfig, AuthService, AuthStore, FamilyInfo,
-    ManifestPointer, MemberRecord, OnboardingCodeRow, RecoveryCodeRow, RefreshClassification,
-    SecretSource,
+    normalize_phone, AdminAlert, AdminAlertSink, AuthConfig, AuthService, AuthStore, BindRequest,
+    BindResponse, DeviceStore, FamilyInfo, ManifestPointer, MemberRecord, OnboardingCodeRow,
+    RecoveryCodeRow, RecoveryRequest, RecoveryResponse, RefreshClassification, RefreshRequest,
+    RefreshResponse, SecretSource, SignInRequest, SignInResponse, StoreBackend,
 };
+use std::future::Future;
 use uuid::Uuid;
 
 /// The fully-wired engine the tests drive.
@@ -78,6 +80,43 @@ pub fn service(store: MemStore, clock_secs: i64) -> TestService {
             ManifestPointer::new("manifest:v1:index"),
         ),
     )
+}
+
+/// Block the current thread until `fut` completes — the test driver for the now-`async` endpoint
+/// methods. `MemStore`'s futures are always ready (no real I/O), so `pollster`'s minimal executor
+/// is sufficient and a full async runtime is unnecessary in the host unit tests.
+pub fn block_on<F: Future>(fut: F) -> F::Output {
+    pollster::block_on(fut)
+}
+
+/// Test-only blocking wrappers over the now-`async` endpoint methods (the async-port bridge,
+/// ADR-0020). `MemStore`'s store futures are always ready, so these [`block_on`] + `unwrap` the
+/// `Result` (whose error is `Infallible` for the in-memory backend) — keeping the synchronous
+/// `#[test]` bodies readable. The `_ok` suffix marks "drive the endpoint to completion, expect Ok".
+pub trait EndpointsBlocking {
+    /// Run [`AuthService::sign_in`] to completion.
+    fn sign_in_ok(&mut self, req: SignInRequest) -> SignInResponse;
+    /// Run [`AuthService::bind_device`] to completion.
+    fn bind_device_ok(&mut self, req: BindRequest) -> BindResponse;
+    /// Run [`AuthService::refresh`] to completion.
+    fn refresh_ok(&mut self, req: RefreshRequest) -> RefreshResponse;
+    /// Run [`AuthService::recovery_rebind`] to completion.
+    fn recovery_rebind_ok(&mut self, req: RecoveryRequest) -> RecoveryResponse;
+}
+
+impl EndpointsBlocking for TestService {
+    fn sign_in_ok(&mut self, req: SignInRequest) -> SignInResponse {
+        block_on(self.sign_in(req)).unwrap()
+    }
+    fn bind_device_ok(&mut self, req: BindRequest) -> BindResponse {
+        block_on(self.bind_device(req)).unwrap()
+    }
+    fn refresh_ok(&mut self, req: RefreshRequest) -> RefreshResponse {
+        block_on(self.refresh(req)).unwrap()
+    }
+    fn recovery_rebind_ok(&mut self, req: RecoveryRequest) -> RecoveryResponse {
+        block_on(self.recovery_rebind(req)).unwrap()
+    }
 }
 
 // === AdminAlertSink ===============================================================
@@ -264,64 +303,84 @@ impl MemStore {
     }
 }
 
+impl StoreBackend for MemStore {
+    // The in-memory stub cannot fail (single-threaded, no I/O), so its store error is uninhabited;
+    // the orchestration's `?` on a `Result<_, Infallible>` is the identity (no real error path).
+    type Error = std::convert::Infallible;
+}
+
 impl AuthStore for MemStore {
-    fn find_member_by_phone(&self, hash: &PhoneLookupHash) -> Option<MemberRecord> {
-        self.members.get(hash.as_bytes()).cloned()
+    async fn find_member_by_phone(
+        &mut self,
+        hash: &PhoneLookupHash,
+    ) -> Result<Option<MemberRecord>, Self::Error> {
+        Ok(self.members.get(hash.as_bytes()).cloned())
     }
 
-    fn load_live_onboarding(&self, member: MemberId) -> Option<OnboardingCodeRow> {
-        self.onboarding.get(&member).map(|s| OnboardingCodeRow {
+    async fn load_live_onboarding(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Option<OnboardingCodeRow>, Self::Error> {
+        Ok(self.onboarding.get(&member).map(|s| OnboardingCodeRow {
             code_hash: s.code_hash.clone(),
             expires_at: s.expires_at,
             max_attempts: s.max_attempts,
-        })
+        }))
     }
 
-    fn consume_onboarding_if_live(&mut self, member: MemberId, _now: UnixSeconds) -> bool {
+    async fn consume_onboarding_if_live(
+        &mut self,
+        member: MemberId,
+        _now: UnixSeconds,
+    ) -> Result<bool, Self::Error> {
         // Atomic compare-and-remove: present ⇒ consume (true); absent ⇒ lost the race (false).
-        self.onboarding.remove(&member).is_some()
+        Ok(self.onboarding.remove(&member).is_some())
     }
 
-    fn classify_refresh(&self, presented: &RefreshToken, key: &HmacKey) -> RefreshClassification {
+    async fn classify_refresh(
+        &mut self,
+        presented: &RefreshToken,
+        key: &HmacKey,
+    ) -> Result<RefreshClassification, Self::Error> {
         for fam in &self.families {
             if refresh_token_matches(key, presented, &fam.current) {
-                return RefreshClassification {
+                return Ok(RefreshClassification {
                     presentation: RefreshPresentation::Current,
                     family: Some(FamilyInfo {
                         id: fam.id,
                         status: fam.status,
                         member: fam.member,
                     }),
-                };
+                });
             }
             if fam
                 .superseded
                 .iter()
                 .any(|h| refresh_token_matches(key, presented, h))
             {
-                return RefreshClassification {
+                return Ok(RefreshClassification {
                     presentation: RefreshPresentation::Superseded,
                     family: Some(FamilyInfo {
                         id: fam.id,
                         status: fam.status,
                         member: fam.member,
                     }),
-                };
+                });
             }
         }
-        RefreshClassification {
+        Ok(RefreshClassification {
             presentation: RefreshPresentation::Unknown,
             family: None,
-        }
+        })
     }
 
-    fn rotate_session(
+    async fn rotate_session(
         &mut self,
         family: SessionFamilyId,
         new_refresh_hash: RefreshTokenHash,
         access_expires_at: UnixSeconds,
         _now: UnixSeconds,
-    ) -> Session {
+    ) -> Result<Session, Self::Error> {
         let fam = self
             .families
             .iter_mut()
@@ -330,27 +389,32 @@ impl AuthStore for MemStore {
         let old = std::mem::replace(&mut fam.current, new_refresh_hash);
         fam.superseded.push(old);
         fam.access_expires_at = access_expires_at;
-        Session {
+        Ok(Session {
             member_id: fam.member,
             family_id: fam.id,
             access_token_expires_at: access_expires_at,
             family_status: fam.status,
-        }
+        })
     }
 
-    fn revoke_family(&mut self, family: SessionFamilyId, _now: UnixSeconds) {
+    async fn revoke_family(
+        &mut self,
+        family: SessionFamilyId,
+        _now: UnixSeconds,
+    ) -> Result<(), Self::Error> {
         if let Some(fam) = self.families.iter_mut().find(|f| f.id == family) {
             fam.status = SessionFamilyStatus::Revoked;
         }
+        Ok(())
     }
 
-    fn create_session_family(
+    async fn create_session_family(
         &mut self,
         member: MemberId,
         new_refresh_hash: RefreshTokenHash,
         access_expires_at: UnixSeconds,
         _now: UnixSeconds,
-    ) -> Session {
+    ) -> Result<Session, Self::Error> {
         let id = SessionFamilyId::from_uuid(Uuid::from_u128(self.next_family));
         self.next_family += 1;
         self.families.push(Family {
@@ -361,52 +425,74 @@ impl AuthStore for MemStore {
             superseded: Vec::new(),
             access_expires_at,
         });
-        Session {
+        Ok(Session {
             member_id: member,
             family_id: id,
             access_token_expires_at: access_expires_at,
             family_status: SessionFamilyStatus::Active,
-        }
-    }
-
-    fn load_live_recovery(&self, member: MemberId) -> Option<RecoveryCodeRow> {
-        self.recovery.get(&member).map(|h| RecoveryCodeRow {
-            code_hash: h.clone(),
         })
     }
 
-    fn consume_and_rotate_recovery(
+    async fn load_live_recovery(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Option<RecoveryCodeRow>, Self::Error> {
+        Ok(self.recovery.get(&member).map(|h| RecoveryCodeRow {
+            code_hash: h.clone(),
+        }))
+    }
+
+    async fn consume_and_rotate_recovery(
         &mut self,
         member: MemberId,
         fresh_hash: CodeHash,
         _now: UnixSeconds,
-    ) -> bool {
+    ) -> Result<bool, Self::Error> {
         // Atomic consume-and-rotate: present ⇒ replace with the fresh code (true); absent ⇒ false.
-        if let std::collections::hash_map::Entry::Occupied(mut e) = self.recovery.entry(member) {
-            e.insert(fresh_hash);
-            true
-        } else {
-            false
-        }
+        Ok(
+            if let std::collections::hash_map::Entry::Occupied(mut e) = self.recovery.entry(member)
+            {
+                e.insert(fresh_hash);
+                true
+            } else {
+                false
+            },
+        )
     }
+}
 
-    fn current_device_bindings(&self, member: MemberId) -> Vec<DeviceBinding> {
-        self.devices
+impl DeviceStore for MemStore {
+    async fn current_device_bindings(
+        &mut self,
+        member: MemberId,
+    ) -> Result<Vec<DeviceBinding>, Self::Error> {
+        Ok(self
+            .devices
             .iter()
             .filter(|d| d.binding.member_id == member && !d.invalidated)
             .map(|d| d.binding)
-            .collect()
+            .collect())
     }
 
-    fn invalidate_device(&mut self, binding: &DeviceBinding, _now: UnixSeconds) {
+    async fn invalidate_device(
+        &mut self,
+        binding: &DeviceBinding,
+        _now: UnixSeconds,
+    ) -> Result<(), Self::Error> {
         for d in &mut self.devices {
             if &d.binding == binding {
                 d.invalidated = true;
             }
         }
+        Ok(())
     }
 
-    fn register_device(&mut self, binding: &DeviceBinding, token: &DeviceToken, _now: UnixSeconds) {
+    async fn register_device(
+        &mut self,
+        binding: &DeviceBinding,
+        token: &DeviceToken,
+        _now: UnixSeconds,
+    ) -> Result<(), Self::Error> {
         // Upsert on the `(member, platform, app_version)` tuple (the Postgres twin's composite
         // PK, I4): replace any existing entry for this exact binding rather than duplicating
         // (sec-audit M1 — the in-memory stub now honors the "insert/replace" port contract).
@@ -416,5 +502,6 @@ impl AuthStore for MemStore {
             token: token.clone(),
             invalidated: false,
         });
+        Ok(())
     }
 }

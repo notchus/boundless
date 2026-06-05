@@ -51,8 +51,8 @@ pub use bind::{BindOutcome, BindRequest, BindResponse};
 pub use hub::{GroupHubState, CODE_ATTEMPT_WINDOW_SECS};
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{
-    AdminAlertSink, AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow, RecoveryCodeRow,
-    RefreshClassification, SecretSource, SessionMaterial, SourceKey,
+    AdminAlertSink, AuthStore, DeviceStore, FamilyInfo, MemberRecord, OnboardingCodeRow,
+    RecoveryCodeRow, RefreshClassification, SecretSource, SessionMaterial, SourceKey, StoreBackend,
 };
 pub use recovery::{RecoveryOutcome, RecoveryRequest, RecoveryResponse};
 pub use refresh::{RefreshOutcome, RefreshRequest, RefreshResponse};

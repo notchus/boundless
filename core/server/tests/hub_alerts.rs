@@ -13,7 +13,7 @@ use common::*;
 const DAY: i64 = 24 * 60 * 60;
 
 fn signin_below_min(svc: &mut TestService, member_phone: &str) -> SignInResult {
-    svc.sign_in(SignInRequest {
+    svc.sign_in_ok(SignInRequest {
         phone: boundless_server_core::normalize_phone(member_phone).expect("valid E.164"),
         reported: ios_below_min(),
     })

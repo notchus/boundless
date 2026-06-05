@@ -1,237 +1,23 @@
-//! Real-Postgres integration tests for [`PgAuthStore`] (spec 001 T07-shell slice A).
+//! Real-Postgres integration tests for [`PgAuthStore`] at the **store level** (spec 001 T07-shell
+//! slice A).
 //!
 //! These prove against a live database the contracts the in-memory `AuthStore` stub could only
 //! *model*: single-consume under concurrency, atomic supersede-then-insert, rotate-vs-replay
-//! TOCTOU, family-kill persistence, and RLS tenant isolation (the T05/T06 carry-forwards).
+//! TOCTOU, family-kill persistence, and RLS tenant isolation (the T05/T06 carry-forwards). The
+//! orchestration-level proof (these methods driven through `AuthService`) is `service_pg.rs`.
 //!
-//! **Self-skipping:** every test returns early (printing a notice) unless `DATABASE_URL` (or
-//! `BOUNDLESS_TEST_PG`) points at a Postgres a *superuser* can reach — exactly like
-//! `scripts/test-migrations.sh`. CI provides a `postgres:16` service (`.github/workflows/ci.yml`
-//! → `server-store`). Locally: `docker run -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16`
-//! then `DATABASE_URL=postgres://postgres:postgres@localhost:55432/boundless_test cargo test
-//! -p boundless-server-store`.
-//!
-//! **Isolation:** each test owns a uniquely-named schema (dropped + recreated + migrated fresh),
-//! so the suite is parallel-safe and re-runnable. The adapter connects as a **non-superuser**
-//! role (`SET ROLE boundless_app`), so RLS actually applies.
+//! Harness (connect / role / schema / seeding / assertions + `url_or_skip!`) lives in `common`.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+mod common;
 
 use boundless_auth::{RefreshPresentation, SessionFamilyStatus, UnixSeconds};
-use boundless_crypto::{
-    onboarding_code_hash, phone_lookup_hash, recovery_code_hash, refresh_token_hash, CodeHash,
-    HmacKey, RefreshTokenHash,
-};
-use boundless_domain::{MemberId, OnboardingCode, RecoveryCode, RefreshToken};
-use boundless_server_core::normalize_phone;
-use boundless_server_store::{PgAuthStore, StoreError};
-use tokio_postgres::{Client, NoTls};
+use boundless_crypto::PhoneLookupHash;
+use boundless_domain::{MemberId, RefreshToken};
+use boundless_server_core::AuthStore;
+use boundless_server_store::StoreError;
 use uuid::Uuid;
 
-// ===== harness =====================================================================
-
-/// The connection target for the integration suite, or `None` to skip.
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL")
-        .ok()
-        .or_else(|| std::env::var("BOUNDLESS_TEST_PG").ok())
-}
-
-/// Print the skip notice and signal the test to return early.
-macro_rules! url_or_skip {
-    () => {
-        match db_url() {
-            Some(u) => u,
-            None => {
-                eprintln!(
-                    "ℹ skipping boundless-server-store integration tests \
-                     (set DATABASE_URL=postgres://postgres:postgres@localhost:55432/boundless_test)"
-                );
-                return;
-            }
-        }
-    };
-}
-
-/// The fixed per-instance HMAC secret (production reads this from Secrets Store).
-fn key() -> HmacKey {
-    HmacKey::from_bytes([0x42; 32])
-}
-
-fn phone_hash(raw: &str) -> Vec<u8> {
-    phone_lookup_hash(&key(), &normalize_phone(raw).expect("valid E.164"))
-        .as_bytes()
-        .to_vec()
-}
-fn onb_hash(raw: &str) -> Vec<u8> {
-    onboarding_code_hash(&key(), &OnboardingCode::new(raw))
-        .as_bytes()
-        .to_vec()
-}
-fn rec_hash_bytes(raw: &str) -> Vec<u8> {
-    recovery_code_hash(&key(), &RecoveryCode::new(raw))
-        .as_bytes()
-        .to_vec()
-}
-fn rec_hash(raw: &str) -> CodeHash {
-    recovery_code_hash(&key(), &RecoveryCode::new(raw))
-}
-fn refresh_hash(raw: &str) -> RefreshTokenHash {
-    refresh_token_hash(&key(), &RefreshToken::new(raw))
-}
-fn pg_time(secs: i64) -> SystemTime {
-    UNIX_EPOCH + Duration::from_secs(secs as u64)
-}
-
-/// Connect and detach the connection driver task (lives until the client drops).
-async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
-        .await
-        .expect("connect to test Postgres");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    client
-}
-
-/// Ensure the non-superuser app role exists (idempotent; safe under parallel tests).
-async fn ensure_role(c: &Client) {
-    c.batch_execute(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'boundless_app') THEN \
-             CREATE ROLE boundless_app NOLOGIN NOSUPERUSER NOBYPASSRLS; \
-           END IF; \
-         EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
-    )
-    .await
-    .expect("ensure boundless_app role");
-}
-
-/// Drop + recreate `schema`, apply migrations 0001-0008 into it, grant the app role.
-/// Returns a superuser client whose `search_path` is the fresh schema (for seeding + assertions).
-async fn setup(url: &str, schema: &str) -> Client {
-    let su = connect(url).await;
-    ensure_role(&su).await;
-    su.batch_execute(&format!(
-        "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}; SET search_path = {schema};"
-    ))
-    .await
-    .expect("fresh schema");
-
-    let mig_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../migrations");
-    let mut files: Vec<_> = std::fs::read_dir(mig_dir)
-        .expect("read migrations dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(".up.sql"))
-        })
-        .collect();
-    files.sort();
-    assert_eq!(files.len(), 8, "expected 8 up migrations");
-    for f in &files {
-        let sql = std::fs::read_to_string(f).expect("read migration");
-        su.batch_execute(&sql)
-            .await
-            .unwrap_or_else(|e| panic!("apply {}: {e}", f.display()));
-    }
-    su.batch_execute(&format!(
-        "GRANT USAGE ON SCHEMA {schema} TO boundless_app; \
-         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO boundless_app;"
-    ))
-    .await
-    .expect("grant app role");
-    su
-}
-
-/// A fresh adapter connection scoped to `schema` + `group`, connected as the non-superuser role.
-async fn app_store(url: &str, schema: &str, group: Uuid) -> PgAuthStore {
-    let c = connect(url).await;
-    c.batch_execute(&format!(
-        "SET search_path = {schema}; SET ROLE boundless_app;"
-    ))
-    .await
-    .expect("app session");
-    PgAuthStore::new(c, group)
-}
-
-// --- seeding (run as superuser → bypasses RLS) ---
-
-async fn seed_group(c: &Client, g: Uuid) {
-    c.execute(
-        "INSERT INTO groups (id, name) VALUES ($1, 'Test Group')",
-        &[&g],
-    )
-    .await
-    .expect("seed group");
-}
-async fn seed_member(c: &Client, g: Uuid, m: Uuid, roles: &[&str], phone: Option<Vec<u8>>) {
-    let roles: Vec<String> = roles.iter().map(|s| s.to_string()).collect();
-    c.execute(
-        "INSERT INTO members (id, group_id, roles, phone_lookup_hash) \
-         VALUES ($1, $2, $3::text[]::member_role[], $4)",
-        &[&m, &g, &roles, &phone],
-    )
-    .await
-    .expect("seed member");
-}
-async fn seed_onboarding(c: &Client, g: Uuid, m: Uuid, code_hash: Vec<u8>, expires: i64, max: i32) {
-    c.execute(
-        "INSERT INTO onboarding_codes (id, group_id, member_id, code_hash, expires_at, max_attempts) \
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)",
-        &[&g, &m, &code_hash, &pg_time(expires), &max],
-    )
-    .await
-    .expect("seed onboarding code");
-}
-async fn seed_recovery(c: &Client, g: Uuid, m: Uuid, code_hash: Vec<u8>) {
-    c.execute(
-        "INSERT INTO recovery_codes (id, group_id, member_id, code_hash) \
-         VALUES (gen_random_uuid(), $1, $2, $3)",
-        &[&g, &m, &code_hash],
-    )
-    .await
-    .expect("seed recovery code");
-}
-
-// --- assertion helpers (superuser, bypasses RLS → sees the whole schema) ---
-
-async fn count(c: &Client, sql: &str, p: Uuid) -> i64 {
-    c.query_one(sql, &[&p]).await.expect("count").get(0)
-}
-async fn live_sessions(c: &Client, family: Uuid) -> i64 {
-    count(
-        c,
-        "SELECT count(*) FROM sessions WHERE family_id=$1 AND rotated_at IS NULL AND revoked_at IS NULL",
-        family,
-    )
-    .await
-}
-async fn revoked_rows(c: &Client, family: Uuid) -> i64 {
-    count(
-        c,
-        "SELECT count(*) FROM sessions WHERE family_id=$1 AND revoked_at IS NOT NULL",
-        family,
-    )
-    .await
-}
-async fn live_recovery(c: &Client, member: Uuid) -> i64 {
-    count(
-        c,
-        "SELECT count(*) FROM recovery_codes WHERE member_id=$1 AND consumed_at IS NULL AND superseded_at IS NULL",
-        member,
-    )
-    .await
-}
-
-const G: u128 = 1;
-fn mid(n: u128) -> MemberId {
-    MemberId::from_uuid(Uuid::from_u128(n))
-}
-
-// ===== tests =======================================================================
+use common::*;
 
 #[tokio::test]
 async fn rls_isolates_reads_by_tenant() {
@@ -246,12 +32,8 @@ async fn rls_isolates_reads_by_tenant() {
 
     // Scoped to tenant A: A's member is visible by phone; B's member is NOT (RLS isolates reads).
     let mut store_a = app_store(&url, "s_isolate", ga).await;
-    let phash_a = boundless_crypto::PhoneLookupHash::from_bytes(
-        phone_hash("+15550000001").try_into().unwrap(),
-    );
-    let phash_b = boundless_crypto::PhoneLookupHash::from_bytes(
-        phone_hash("+15550000002").try_into().unwrap(),
-    );
+    let phash_a = PhoneLookupHash::from_bytes(phone_hash("+15550000001").try_into().unwrap());
+    let phash_b = PhoneLookupHash::from_bytes(phone_hash("+15550000002").try_into().unwrap());
     let found_a = store_a.find_member_by_phone(&phash_a).await.unwrap();
     assert_eq!(found_a.map(|r| r.member_id), Some(MemberId::from_uuid(ma)));
     assert!(
@@ -275,10 +57,7 @@ async fn rls_unset_tenant_denies_fail_closed() {
     // A connection AS the app role that NEVER sets app.current_group_id sees zero rows — the
     // fail-closed resolver (T06 R1). We bypass the adapter (which always sets the GUC) to prove the
     // schema denies by default.
-    let c = connect(&url).await;
-    c.batch_execute("SET search_path = s_failclosed; SET ROLE boundless_app;")
-        .await
-        .unwrap();
+    let c = app_client(&url, "s_failclosed").await;
     let n: i64 = c
         .query_one("SELECT count(*) FROM members", &[])
         .await
@@ -304,7 +83,7 @@ async fn find_member_returns_roles_and_none() {
 
     let mut store = app_store(&url, "s_roles", g).await;
     let found = store
-        .find_member_by_phone(&boundless_crypto::PhoneLookupHash::from_bytes(
+        .find_member_by_phone(&PhoneLookupHash::from_bytes(
             phone_hash("+15550000040").try_into().unwrap(),
         ))
         .await
@@ -316,7 +95,7 @@ async fn find_member_returns_roles_and_none() {
 
     // An unknown phone yields None (not an error, no existence leak at this layer).
     let none = store
-        .find_member_by_phone(&boundless_crypto::PhoneLookupHash::from_bytes(
+        .find_member_by_phone(&PhoneLookupHash::from_bytes(
             phone_hash("+15559999999").try_into().unwrap(),
         ))
         .await
