@@ -28,13 +28,21 @@
 //! - [`AdminAlert`] — PII-free admin alerts/flags (O4/AC8/AC14/AC15).
 //! - [`normalize_phone`] — canonical E.164 for the lookup hash (single-source for issuance, P4).
 //!
-//! ## Deliberately **not** here (→ `DEFERRED.md` → Server / core (T07) and T07-shell)
+//! ## Production port impls (T07-shell)
 //!
-//! The deployable workers-rs runtime (`#[event]`/Router/`GroupHub` DO/Queues/KV/Turnstile) and
-//! the Postgres-over-Hyperdrive [`AuthStore`] impl (with `SET LOCAL` RLS, atomic
-//! `UPDATE … RETURNING`), the real CSPRNG [`SecretSource`], access-token signing, APNs/FCM device
-//! registration, and the live integration tests are the **T07-shell** infra task. I5 admin-PII
-//! audit + `audit_log` belong with admin issuance (spec 008 — this layer exposes no admin phone read).
+//! - The Postgres [`AuthStore`] (`PgAuthStore`, `server/store`) is built + proven against real
+//!   Postgres (ADR-0019/0020).
+//! - The production [`SecretSource`] is [`RngSecretSource`] (this crate): opaque-random tokens from
+//!   an **injected** CSPRNG, so the core stays randomness-free + `wasm32`-safe (ADR-0021).
+//!
+//! ## Deliberately **not** here (→ `DEFERRED.md` → T07-shell-B)
+//!
+//! The deployable workers-rs runtime (`#[event]`/Router/`GroupHub` DO/Queues/KV/Turnstile/Hyperdrive
+//! Socket), the access-token **store column + per-request verify lookup** (the opaque bearer's
+//! verification path + its DO-fold/write-through-on-revoke guard-rail, ADR-0021), APNs/FCM device
+//! registration + the `PgDeviceStore` (needs spec-008 token encryption), and the live Worker
+//! integration tests are the **T07-shell-B** infra task. I5 admin-PII audit + `audit_log` belong with
+//! admin issuance (spec 008 — this layer exposes no admin phone read).
 
 mod alerts;
 mod bind;
@@ -43,6 +51,7 @@ mod phone;
 mod ports;
 mod recovery;
 mod refresh;
+mod secrets;
 mod service;
 mod signin;
 
@@ -56,5 +65,6 @@ pub use ports::{
 };
 pub use recovery::{RecoveryOutcome, RecoveryRequest, RecoveryResponse};
 pub use refresh::{RefreshOutcome, RefreshRequest, RefreshResponse};
+pub use secrets::RngSecretSource;
 pub use service::{AuthConfig, AuthService, ManifestPointer, ACCESS_TTL_SECS};
 pub use signin::{SignInRequest, SignInResponse};

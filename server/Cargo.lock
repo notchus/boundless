@@ -78,6 +78,7 @@ dependencies = [
  "boundless-auth",
  "boundless-crypto",
  "boundless-domain",
+ "rand_core 0.9.5",
  "serde",
 ]
 
@@ -131,7 +132,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures 0.3.0",
- "rand_core",
+ "rand_core 0.10.1",
  "zeroize",
 ]
 
@@ -327,7 +328,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi",
- "rand_core",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
  "wasm-bindgen",
@@ -637,8 +638,14 @@ checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
  "getrandom",
- "rand_core",
+ "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 
 [[package]]
 name = "rand_core"

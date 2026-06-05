@@ -58,6 +58,10 @@ pub enum StoreError {
     NoLiveCurrentToRotate,
     /// A stored `bytea`/`uuid` column had an unexpected shape (schema drift / corruption).
     MalformedColumn(&'static str),
+    /// The runtime DB role has privilege that **bypasses RLS** (superuser or `BYPASSRLS`), so the
+    /// per-Group tenant isolation would not actually apply. [`ensure_least_privilege`] returns this
+    /// and the Worker must refuse to start. The payload names the condition (no PII).
+    PrivilegeTooHigh(&'static str),
 }
 
 impl std::fmt::Display for StoreError {
@@ -71,6 +75,12 @@ impl std::fmt::Display for StoreError {
                 )
             }
             StoreError::MalformedColumn(c) => write!(f, "malformed column: {c}"),
+            StoreError::PrivilegeTooHigh(what) => {
+                write!(
+                    f,
+                    "runtime DB role bypasses RLS ({what}) — refusing to start"
+                )
+            }
         }
     }
 }
@@ -122,6 +132,44 @@ fn hash_array(bytes: Vec<u8>, col: &'static str) -> Result<[u8; HASH_LEN]> {
     bytes
         .try_into()
         .map_err(|_| StoreError::MalformedColumn(col))
+}
+
+/// Refuse to proceed if the connected role can **bypass row-level security** — the single
+/// highest-impact way the privacy model fails in production (T06 carry-forward; sec-audit W2).
+///
+/// Every `PgAuthStore` method scopes tenant access with RLS (`app.current_group_id`). But
+/// `FORCE ROW LEVEL SECURITY` is itself bypassed by a **superuser** or any role with the
+/// **`BYPASSRLS`** attribute — and Neon's default `postgres` role typically *is* a superuser. If the
+/// Worker connected as such a role, RLS would silently not apply and one tenant could read/write
+/// another's PII. This is invisible to ordinary tests (which drop privilege via `SET ROLE`), so it
+/// must be asserted at boot: the Worker (T07-shell-B) calls this immediately after connecting,
+/// before constructing any [`PgAuthStore`], and **fails closed** on `Err`.
+///
+/// `is_superuser` reflects the *effective* role (so it is correct after `SET ROLE`); `rolbypassrls`
+/// is the connected role's own attribute. The check is a single read-only query and runs unscoped
+/// (it is a role-attribute probe, not tenant data), so it needs no transaction.
+///
+/// **Scope:** this catches the two *role-attribute* RLS bypasses (superuser, `BYPASSRLS`). The third
+/// Postgres bypass — a table's **owner** is exempt unless the table has `FORCE ROW LEVEL SECURITY` —
+/// is covered separately by T06: every PII table is created `... ENABLE ROW LEVEL SECURITY` **and**
+/// `... FORCE ROW LEVEL SECURITY`, asserted by `server/tests/migrations.rs`. So this guard +
+/// FORCE-RLS-on-every-table together close all three; do not read "least privilege" as also
+/// asserting non-ownership.
+pub async fn ensure_least_privilege(client: &Client) -> Result<()> {
+    let row = client
+        .query_one(
+            "SELECT current_setting('is_superuser')::bool AS is_super, \
+             COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user), false) AS bypass_rls",
+            &[],
+        )
+        .await?;
+    if row.get::<_, bool>("is_super") {
+        return Err(StoreError::PrivilegeTooHigh("current_user is a superuser"));
+    }
+    if row.get::<_, bool>("bypass_rls") {
+        return Err(StoreError::PrivilegeTooHigh("current_user has BYPASSRLS"));
+    }
+    Ok(())
 }
 
 /// A Postgres-backed implementation of the `core::server` `AuthStore` contract.

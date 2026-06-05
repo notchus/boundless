@@ -197,6 +197,18 @@
       real RNG — code/nonce generation) or install a custom *erroring* backend until then, to
       keep "no ambient randomness" literally enforced. See ADR-0018.
   - **WHEN:** **T07** (server), when server-side randomness is first genuinely needed.
+  - **CI gate to add (sec-audit F6, T07-shell-B slice 2).** The "no ambient randomness in `core`"
+    invariant is currently enforced only by a *manual* `cargo build --target wasm32-unknown-unknown
+    -p boundless-server-core`/`-p boundless-crypto`. Two `rand_core` majors now coexist in the lock
+    (`0.9.5` — the slice-2 pin, traits-only/feature-empty on the non-dev path — and `0.10.1`, pulled
+    by dryoc's `rand`). The separation is clean *today* (`cargo tree -p boundless-server-core
+    -e no-dev -i getrandom@0.3.4` prints nothing), but nothing *gates* it: a future `cargo update` or
+    a dep that flips `rand_core/os_rng` could pull `getrandom 0.3.4` onto the production wasm path and
+    silently break the invariant. **Add a CI step** that (a) builds `boundless-server-core` +
+    `boundless-crypto` for `wasm32-unknown-unknown`, and (b) asserts the only non-dev `getrandom` edge
+    is the known dryoc-`0.4.2` (`wasm_js`-shimmed) one. Not added here (GH-Actions-only; not locally
+    verifiable — same constraint as the other CI items).
+  - **WHEN:** next CI-hardening pass / **T07-shell-B**.
 
 - [ ] **`core/crypto/tests/invariants.rs` enumerating *every* privacy invariant (P9 goal).**
       T03 covers **I3** (+ the AC10 manifest tiers). I1/I2/etc. get their named tests when
@@ -429,6 +441,21 @@
 > So the remaining **T07-shell-B** below is the *deployable Worker runtime only* (+ the `DeviceStore`
 > Postgres impl, with encryption).
 
+> **T07-shell-B slice 2 DONE (2026-06-05) — the host/real-PG-testable port impls + the access-token
+> decision:** (1) **ADR-0021** resolves the plan §10-D OPEN access-token wire format → **opaque-random
+> 32-byte bearer** verified by a constant-time keyed-HMAC store lookup (not EdDSA-JWT — it honors the
+> time-independent, family-status-gated revocation model with **zero new key-mgmt infra**; decided via a
+> 4-reader/4-judge analysis, 3–1). (2) **W2 boot guard** `boundless_server_store::ensure_least_privilege`
+> (sec-audit's highest-impact item) — refuses if `current_user` is superuser/`BYPASSRLS`; proven both
+> legs vs real `postgres:16`. (3) **Access-token at-rest hash primitive** `core::crypto::access_token_hash`
+> /`access_token_matches` + `AccessTokenHash` (new domain tag `boundless:access-token:v1`; no
+> `Debug`/`Display`/`Serialize`/`PartialEq`). (4) **Production `SecretSource`** `RngSecretSource<R: RngCore
+> + CryptoRng>` in `core/server` — opaque tokens from an **injected** CSPRNG (core stays randomness-free +
+> wasm32-safe; seeded `ChaCha20Rng` in tests). Pins: `rand_core` 0.9.5 (traits-only, no getrandom) prod,
+> `rand_chacha` 0.9.0 dev — both already in the lock, **no new crate versions**. All host/real-PG tested;
+> no Worker toolchain needed. The remaining T07-shell-B (Worker runtime + the access-token store
+> column/verify lookup + `PgDeviceStore`) stays below.
+
 - [ ] **T07-shell-B — the deployable workers-rs Worker (the async-port bridge is now DONE, above).**
       The `#[event]`/ Router entry point, the `GroupHub` Durable Object (persisting `GroupHubState`),
       and the Cloudflare bindings — Queues (admin alerts), KV (manifest + per-Group `{adminName}`),
@@ -439,11 +466,25 @@
       statements; native tests don't hit this). The async-port bridge it needed is **done** (ADR-0020),
       so the Worker composes `PgAuthStore` (`AuthStore`) with a **`PgDeviceStore`** (`DeviceStore`) —
       the latter needs the spec-008 device-token encryption (see the device-token deferral below); until
-      then the device half has no Postgres impl. Plus the real **CSPRNG `SecretSource`**,
-      **access-token signing** (JWT, ~15-min TTL), **APNs/FCM** device-token registration, the
-      `RefreshResponse::server_verdict` → PII-free `emit()` logging (never returned to the client), and
-      the **per-source refresh-rejection 429** (the `GroupHubState` counter exists; the network
-      enforcement is the shell's).
+      then the device half has no Postgres impl. The production **CSPRNG `SecretSource`** is **DONE**
+      (`RngSecretSource`, slice 2) — the Worker only **injects** a getrandom-backed RNG into it.
+      **APNs/FCM** device-token registration, the `RefreshResponse::server_verdict` → PII-free `emit()`
+      logging (never returned to the client), and the **per-source refresh-rejection 429** (the
+      `GroupHubState` counter exists; the network enforcement is the shell's).
+      - **Access-token verify path (ADR-0021; the mint side is DONE in slice 2):** the access token is an
+        **opaque-random bearer** (no JWT, no signing key). It is minted by `RngSecretSource` and its
+        at-rest hash primitive (`access_token_hash`/`_matches`) ships in slice 2; the Worker must add the
+        **`access_token_hash bytea` column + the per-request verify lookup** (a migration + a `PgAuthStore`
+        method) that re-reads the family's mutable status each request. **Guard-rail (ADR-0021):** this
+        lookup must NOT be a naive standalone Neon round trip — fold it into the request's existing
+        group-scoped RLS txn, or serve `token-hash → family_status` from `GroupHub` DO in-memory state, and
+        **on any revoke the DO/Worker cache must write-through/evict** (authoritative-on-revoke, not TTL),
+        or it recreates the stale window the opaque format exists to avoid. (The Worker authenticates
+        *before* the DO RPC, so "fold into the DO" = fold auth into that RPC, not a separate pre-call.)
+      - **W2 boot-guard call site (the guard fn is DONE in slice 2):** the Worker must call
+        `ensure_least_privilege(&client)` immediately after `hyperdrive.connect()`, before constructing any
+        `PgAuthStore`, and **fail closed** on `Err` (+ a CI smoke test). The reusable function + both-legs
+        real-PG test already exist; only the boot-time *invocation* + infra role provisioning remain.
   - **Needs `docs-researcher`:** the workers-rs runtime (`worker`/`worker-build` versions, the
     `#[event]`/Router/DO/`hyperdrive.connect()` Socket API) + the miniflare/workerd test harness —
     then pin `worker`/`worker-build` and fill `docs/stack-matrix.md`. (`tokio-postgres`/`tokio` are
@@ -532,16 +573,17 @@
       when wall-clock formatting/parsing is required — integer epoch math suffices today).
   - **WHEN:** **T07-shell-B**.
 
-- [ ] **Connection lifecycle + non-superuser role provisioning (sec-audit W2 — highest-impact).**
-      `PgAuthStore::new(client, group)` takes an established client; connecting
-      (`hyperdrive.connect()` → Socket, spawn the driver) and provisioning the **non-superuser /
-      non-`BYPASSRLS`** runtime DB role (T06 R3; the tests connect as `boundless_app`) are the
-      Worker's / infra's. **If the Worker's Neon/Hyperdrive credential is a superuser or has
-      `BYPASSRLS` (the Neon default `postgres` role often is), RLS is fully bypassed → cross-tenant
-      PII read/write** — the single highest-impact way the privacy model fails in production, and
-      invisible to slice A's tests (they drop privilege via `SET ROLE`). T07-shell-B must add a
-      **boot-time assertion** that refuses to start (and a CI smoke test) if
-      `current_setting('is_superuser')` is `on` or `rolbypassrls` is true for `current_user`.
+- [~] **Connection lifecycle + non-superuser role provisioning (sec-audit W2 — highest-impact).**
+      **Boot-guard SHIPPED (slice 2, 2026-06-05):** `boundless_server_store::ensure_least_privilege(&client)`
+      returns `Err(StoreError::PrivilegeTooHigh)` if `current_setting('is_superuser')` is `on` or
+      `rolbypassrls` is true for `current_user`; both legs are proven vs real `postgres:16`
+      (`server/store/tests/least_privilege.rs` — superuser rejected, `boundless_app` accepted). **Remaining
+      → T07-shell-B:** the Worker must (a) actually **call** it immediately after `hyperdrive.connect()`,
+      before constructing any `PgAuthStore`, and **fail closed** (+ a CI smoke test); and (b) the infra must
+      provision the **non-superuser / non-`BYPASSRLS`** runtime DB role. **If the Worker's Neon/Hyperdrive
+      credential is a superuser or has `BYPASSRLS` (the Neon default `postgres` role often is), RLS is fully
+      bypassed → cross-tenant PII read/write** — the single highest-impact way the privacy model fails in
+      production; the guard now exists to catch it, but is inert until the Worker invokes it.
   - **WHEN:** **T07-shell-B** / infra (DB role).
 
 - [ ] **Route `StoreError` through the scrubbed log path (sec-audit W4).** `StoreError::Db` wraps a

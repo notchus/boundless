@@ -8,7 +8,7 @@
 //! `expose_secret()` is called **only here** (the sanctioned crypto boundary) — the
 //! plaintext phone/code is hashed and immediately dropped; only the keyed hash is returned.
 
-use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
+use boundless_domain::{AccessToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -27,6 +27,7 @@ const DOMAIN_PHONE_LOOKUP: &[u8] = b"boundless:phone-lookup:v1";
 const DOMAIN_ONBOARDING_CODE: &[u8] = b"boundless:onboarding-code:v1";
 const DOMAIN_RECOVERY_CODE: &[u8] = b"boundless:recovery-code:v1";
 const DOMAIN_REFRESH_TOKEN: &[u8] = b"boundless:refresh-token:v1";
+const DOMAIN_ACCESS_TOKEN: &[u8] = b"boundless:access-token:v1";
 
 /// A per-instance HMAC secret (from Cloudflare Secrets Store in production).
 ///
@@ -101,6 +102,30 @@ impl RefreshTokenHash {
     }
 
     /// The raw hash bytes, for storage as a `refresh_token_hash bytea` column.
+    pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
+        &self.0
+    }
+}
+
+/// The HMAC-SHA256 of an access token, keyed for at-rest storage (ADR-0021).
+///
+/// The access token is a short-lived (~15 min) **opaque-random bearer**; the server verifies a
+/// presented token by re-deriving this keyed hash and looking it up against the sessions store
+/// (so the family's mutable status is re-read every request — instant revocation). Same discipline
+/// as [`RefreshTokenHash`]: no `Debug`/`Display`/`Serialize`, and **no `PartialEq`** — compare only
+/// via the constant-time [`access_token_matches`], never `==` (a non-constant-time bearer-membership
+/// oracle, R2/R6). A distinct domain tag keeps an access-token hash from ever verifying a refresh
+/// credential (or vice-versa), even if the underlying bytes coincide.
+#[derive(Clone)]
+pub struct AccessTokenHash([u8; HASH_LEN]);
+
+impl AccessTokenHash {
+    /// Rebuild from stored bytes (e.g. an `access_token_hash bytea` column read).
+    pub fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw hash bytes, for storage as an `access_token_hash bytea` column.
     pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
         &self.0
     }
@@ -215,6 +240,27 @@ pub fn refresh_token_matches(
     )
 }
 
+/// Derive the at-rest hash of an access token (ADR-0021). The plaintext is touched only to hash
+/// it; only the keyed hash is stored, so the sessions store holds no usable bearer.
+pub fn access_token_hash(key: &HmacKey, token: &AccessToken) -> AccessTokenHash {
+    AccessTokenHash(keyed_hash(
+        key,
+        DOMAIN_ACCESS_TOKEN,
+        token.expose_secret().as_bytes(),
+    ))
+}
+
+/// Constant-time test that `token` matches a stored access-token hash (R2/R6: no timing oracle on
+/// a bearer). The server uses this to verify a presented access token against the sessions store.
+pub fn access_token_matches(key: &HmacKey, token: &AccessToken, stored: &AccessTokenHash) -> bool {
+    keyed_verify(
+        key,
+        DOMAIN_ACCESS_TOKEN,
+        token.expose_secret().as_bytes(),
+        &stored.0,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +275,7 @@ mod tests {
             DOMAIN_ONBOARDING_CODE,
             DOMAIN_RECOVERY_CODE,
             DOMAIN_REFRESH_TOKEN,
+            DOMAIN_ACCESS_TOKEN,
         ] {
             assert!(
                 !tag.contains(&0x00),

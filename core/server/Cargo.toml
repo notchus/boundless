@@ -15,8 +15,14 @@ boundless-domain.workspace = true
 boundless-auth.workspace = true
 boundless-crypto.workspace = true
 serde = { workspace = true, features = ["derive"] }
+# rand_core TRAITS ONLY (default-features off → no getrandom): the RngCore + CryptoRng contract the
+# production `RngSecretSource<R>` is generic over. The RNG is INJECTED (no ambient randomness in the
+# core; stays wasm32-safe) — same discipline as the injected Clock. ADR-0021. The Worker supplies a
+# getrandom-backed CSPRNG; tests supply a seeded one.
+rand_core.workspace = true
 
 [dev-dependencies]
+# rand_chacha — seeded `ChaCha20Rng` (CryptoRng) so the `RngSecretSource` tests are reproducible.
 # proptest — code-consume / alert-dedup invariants (seeds committed, P9). uuid — test ids.
 # serde_json — assert the PII-free admin-alert payload shape (deterministic). static_assertions —
 # compile-time proof that the secret-bearing response types expose no Debug/Display/Serialize (P2,
@@ -28,3 +34,4 @@ uuid.workspace = true
 serde_json.workspace = true
 static_assertions.workspace = true
 pollster.workspace = true
+rand_chacha.workspace = true

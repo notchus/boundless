@@ -72,7 +72,7 @@ Numbered SQL under `server/migrations/`. Conventions: PII columns `*_encrypted b
 Endpoint sketches (shapes finalized at implementation; field names not final):
 - `POST /api/auth/signin` — `{ phone_lookup_hash }` → `{ member_match, client_min_version, client_recommended_version, manifest_pointer }`. No existence leak (voice-and-tone).
 - `POST /api/auth/bind-device` — `{ onboarding_code, platform, app_version, … }` → session + `DeviceToken` (AC4, AC17). Server-validated; no offline completion.
-- `POST /api/auth/refresh` — refresh-token rotation; silent; carries `client_min_version` (AC18, AC7). **Wire format open (§10-D).**
+- `POST /api/auth/refresh` — refresh-token rotation; silent; carries `client_min_version` (AC18, AC7). **Access token = opaque-random bearer (ADR-0021).**
 - `POST /api/auth/recovery/rebind` — Driver: `{ phone_lookup_hash, recovery_code, … }` → re-bind, old token invalidated, fresh code issued (AC19).
 - `POST /api/dev/admins` — developer-only, hardware-key-backed; unauth'd **and** admin-auth'd both rejected (AC1, I11).
 - `GET /api/admin/auth/invite/{token}` + `POST /api/admin/auth/register` — WebAuthn registration; consumes invite token (AC16, AC20).
@@ -198,7 +198,7 @@ All §10 items from the initial plan are now resolved.
 
 **D — concrete values → DECIDED (defaults; confirm at implementation):**
 - Onboarding Code: single-use, **TTL 72h**, **rate-limit 5 attempts / 15 min** per member (then lock + admin alert), server-time validated.
-- Access token **~15 min**; refresh token opaque 256-bit, stored HMAC-hashed, **rotated every refresh** with a family/lineage id for replay detection, **indefinite** lifetime (ADR-0016 D2).
+- Access token **~15 min**, **opaque-random 32-byte bearer** verified by a constant-time keyed-HMAC store lookup — **wire format DECIDED → ADR-0021** (not EdDSA-JWT; honors the time-independent, family-status-gated revocation model with zero new key-mgmt infra). Refresh token opaque 256-bit, stored HMAC-hashed, **rotated every refresh** with a family/lineage id for replay detection, **indefinite** lifetime (ADR-0016 D2).
 - Admin invite token **72h**, single-use (AC16). Recovery Code single-use, **no expiry** (driver-held), rotated on use.
 
 **E — admin-alert storage → DECIDED.** The per-member-per-day rate-limit counter lives in the **`GroupHub` DO** (ephemeral, fast); the alert event is emitted via **Queues**. No dedicated Postgres table — migration `0009_admin_alerts.sql` is **dropped** from §3 (audit entries use `audit_log`).

@@ -5,7 +5,10 @@
 //!   code-at-rest hash, with a constant-time verify (I3 / AC3). Via RustCrypto `hmac` + `sha2`
 //!   (dryoc has no SHA-256 — see ADR-0018). **T07** adds the refresh-credential at-rest hash
 //!   ([`refresh_token_hash`] / [`refresh_token_matches`], domain-separated) backing the
-//!   session-lineage classification (ADR-0016 D2).
+//!   session-lineage classification (ADR-0016 D2), and the access-token at-rest hash
+//!   ([`access_token_hash`] / [`access_token_matches`]) backing the opaque-bearer store lookup
+//!   (ADR-0021). Each artifact carries a distinct domain tag, so a hash for one role never
+//!   verifies in another.
 //! - **Manifest verification** ([`manifest`]) — Ed25519 detached-signature verification and
 //!   the ADR-0014 tiered fallback (verify-fail → cached → bundled) + lower-version-ignore
 //!   (AC10 / O2). Via `dryoc` (libsodium), the sole signature implementation across the system.
@@ -22,9 +25,10 @@ mod hashing;
 mod manifest;
 
 pub use hashing::{
-    onboarding_code_hash, onboarding_code_matches, phone_lookup_hash, phone_lookup_matches,
-    recovery_code_hash, recovery_code_matches, refresh_token_hash, refresh_token_matches, CodeHash,
-    HmacKey, PhoneLookupHash, RefreshTokenHash, HASH_LEN, HMAC_KEY_LEN,
+    access_token_hash, access_token_matches, onboarding_code_hash, onboarding_code_matches,
+    phone_lookup_hash, phone_lookup_matches, recovery_code_hash, recovery_code_matches,
+    refresh_token_hash, refresh_token_matches, AccessTokenHash, CodeHash, HmacKey, PhoneLookupHash,
+    RefreshTokenHash, HASH_LEN, HMAC_KEY_LEN,
 };
 pub use manifest::{
     canonical_manifest_bytes, decide_manifest, verify_manifest_signature, FetchedManifest,

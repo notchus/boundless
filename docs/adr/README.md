@@ -41,6 +41,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0018](./0018-keyed-hash-hmac-sha256.md) — Keyed-hash algorithm: HMAC-SHA256 via RustCrypto `hmac`+`sha2` (dryoc has no SHA-256); I3 kept verbatim; dryoc stays the sole Ed25519 signature impl; getrandom `wasm_js` backend on wasm32
 - [ADR-0019](./0019-worker-postgres-driver.md) — Worker → Postgres via `tokio-postgres` over a Hyperdrive Socket (not `sqlx`, which can't run in Workers wasm); the native `boundless-server-store` adapter + real-Postgres tests land first, the wasm wiring + async-port bridge are T07-shell-B
 - [ADR-0020](./0020-async-auth-ports-device-split.md) — The async-port bridge: `core::server`'s store ports become `async` + fallible (shared `StoreBackend::Error`), device-token methods split into a separate `DeviceStore` port (its Postgres impl is blocked on spec-008 token encryption), `PgAuthStore` now implements `AuthStore`, and `AuthService` is proven end-to-end against real Postgres
+- [ADR-0021](./0021-access-token-wire-format.md) — Access-token wire format = opaque-random 32-byte bearer verified by a constant-time keyed-HMAC store lookup (not EdDSA-JWT); resolves the plan §10-D open item; honors the time-independent, family-status-gated revocation model with zero new key-management infra
 
 ## Suggested early ADRs to author (stubs)
 

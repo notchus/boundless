@@ -110,6 +110,8 @@ dependencies = [
  "boundless-domain",
  "pollster",
  "proptest",
+ "rand_chacha",
+ "rand_core 0.9.5",
  "serde",
  "serde_json",
  "static_assertions",

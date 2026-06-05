@@ -14,13 +14,13 @@ use std::path::PathBuf;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boundless_crypto::{
-    canonical_manifest_bytes, decide_manifest, onboarding_code_hash, onboarding_code_matches,
-    phone_lookup_hash, phone_lookup_matches, recovery_code_hash, recovery_code_matches,
-    refresh_token_hash, refresh_token_matches, CodeHash, FetchedManifest, HmacKey, ManifestCache,
-    ManifestDecision, ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature,
-    VerifyingKey,
+    access_token_hash, access_token_matches, canonical_manifest_bytes, decide_manifest,
+    onboarding_code_hash, onboarding_code_matches, phone_lookup_hash, phone_lookup_matches,
+    recovery_code_hash, recovery_code_matches, refresh_token_hash, refresh_token_matches,
+    AccessTokenHash, CodeHash, FetchedManifest, HmacKey, ManifestCache, ManifestDecision,
+    ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature, VerifyingKey,
 };
-use boundless_domain::{OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
+use boundless_domain::{AccessToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
 use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
 use serde_json::Value;
 
@@ -140,6 +140,47 @@ fn refresh_token_hashes_at_rest_and_verifies_constant_time() {
         &token,
         &hash
     ));
+}
+
+#[test]
+fn access_token_hashes_at_rest_and_verifies_constant_time() {
+    // ADR-0021: the access token is an opaque-random bearer; the server verifies a presented token
+    // by re-deriving this keyed hash and looking it up (constant-time, R2/R6 — no oracle on a
+    // bearer). Deterministic for a stable lookup; bound to the per-instance secret.
+    let key = test_key();
+    let token = AccessToken::new("access-1111-2222-3333");
+    let hash = access_token_hash(&key, &token);
+
+    assert!(access_token_matches(&key, &token, &hash));
+    assert!(!access_token_matches(
+        &key,
+        &AccessToken::new("access-1111-2222-WRONG"),
+        &hash
+    ));
+    // Deterministic (re-derivable for the store lookup)...
+    assert_eq!(access_token_hash(&key, &token).as_bytes(), hash.as_bytes());
+    // ...and bound to the per-instance secret.
+    assert!(!access_token_matches(
+        &HmacKey::from_bytes([0x43; 32]),
+        &token,
+        &hash
+    ));
+}
+
+#[test]
+fn access_token_domain_separated_from_refresh_and_codes() {
+    // An access token and a refresh credential (or a code) that happen to share the same string
+    // must hash differently — distinct domain tags prevent any cross-artifact reuse (e.g. a stolen
+    // refresh credential presented as an access bearer must not verify, and vice-versa).
+    let key = test_key();
+    let shared = "SAME-STRING-1234";
+    let as_access = access_token_hash(&key, &AccessToken::new(shared));
+    let as_refresh = refresh_token_hash(&key, &RefreshToken::new(shared));
+    let as_onboarding = onboarding_code_hash(&key, &OnboardingCode::new(shared));
+    let as_recovery = recovery_code_hash(&key, &RecoveryCode::new(shared));
+    assert_ne!(as_access.as_bytes(), as_refresh.as_bytes());
+    assert_ne!(as_access.as_bytes(), as_onboarding.as_bytes());
+    assert_ne!(as_access.as_bytes(), as_recovery.as_bytes());
 }
 
 #[test]
@@ -477,6 +518,7 @@ mod no_formatter {
     assert_not_impl_any!(PhoneLookupHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(CodeHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(RefreshTokenHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
+    assert_not_impl_any!(AccessTokenHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
 
     // The hashes must NOT be `==`-comparable: a derived `PartialEq` on `[u8; 32]` short-circuits
     // and would be a non-constant-time membership oracle (R2). Callers must use the constant-time
@@ -484,4 +526,5 @@ mod no_formatter {
     assert_not_impl_any!(PhoneLookupHash: core::cmp::PartialEq);
     assert_not_impl_any!(CodeHash: core::cmp::PartialEq);
     assert_not_impl_any!(RefreshTokenHash: core::cmp::PartialEq);
+    assert_not_impl_any!(AccessTokenHash: core::cmp::PartialEq);
 }

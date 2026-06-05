@@ -273,7 +273,8 @@ pub trait AdminAlertSink {
 pub trait SecretSource {
     /// A fresh refresh credential (256-bit opaque, in production).
     fn fresh_refresh(&mut self) -> RefreshToken;
-    /// A fresh short-lived access token (signed, in production).
+    /// A fresh short-lived access token (**256-bit opaque-random bearer**, in production — *not*
+    /// signed; verified by a constant-time keyed-HMAC store lookup, ADR-0021).
     fn fresh_access(&mut self) -> AccessToken;
     /// A fresh Driver Recovery Code (rotated on use, ADR-0016 D3).
     fn fresh_recovery_code(&mut self) -> RecoveryCode;

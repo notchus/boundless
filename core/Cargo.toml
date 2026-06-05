@@ -93,3 +93,16 @@ proptest = "1.11"
 # OR MIT, MSRV 1.69 ≤ the workspace 1.89 floor. Latest published release (0.4.0), verified
 # 2026-06-05 via docs-researcher against crates.io; lock is ground truth.
 pollster = "0.4"
+
+# CSPRNG abstraction for the production SecretSource (spec 001 T07-shell-B, ADR-0021).
+# rand_core — TRAITS ONLY (`default-features = false`, so NO `os_rng`/`getrandom` is pulled): the
+# `RngCore`/`CryptoRng`/`SeedableRng` contracts that `core/server`'s `RngSecretSource<R>` is generic
+# over. The RNG instance is INJECTED (the Worker supplies a getrandom-backed CSPRNG; tests a seeded
+# one), so no ambient randomness enters the core and it stays wasm32-safe — same discipline as the
+# injected `Clock`. rand_chacha (DEV-ONLY) — `ChaCha20Rng` (CryptoRng + SeedableRng) for reproducible,
+# seeded host tests. Both are pure-Rust, MIT OR Apache-2.0, already resolved in Cargo.lock
+# (rand_core 0.9.5 / rand_chacha 0.9.0, transitively present), so this adds NO new crate versions.
+# The rand_core 0.9 `RngCore` API (not the 0.10 `Rng` rename) is deliberate — it is what is in the
+# lock and pairs with rand_chacha 0.9. Verified against the vendored source 2026-06-05; lock = truth.
+rand_core = { version = "0.9", default-features = false }
+rand_chacha = "0.9"
