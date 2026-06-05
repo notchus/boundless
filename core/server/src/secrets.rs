@@ -14,7 +14,7 @@
 //! never parsed, so base64-vs-hex is immaterial). Verification is a constant-time keyed-HMAC store
 //! lookup (`boundless_crypto::access_token_hash` / `refresh_token_hash`), not parsing.
 
-use boundless_domain::{AccessToken, RecoveryCode, RefreshToken};
+use boundless_domain::{AccessToken, AdminInvitationToken, RecoveryCode, RefreshToken};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::ports::SecretSource;
@@ -63,6 +63,13 @@ impl<R: RngCore + CryptoRng> SecretSource for RngSecretSource<R> {
         // (256-bit, single-use, rotated on use, hashed at rest via `recovery_code_hash`) is settled;
         // only the *display* format is spec-008's to refine. Tracked in DEFERRED.md.
         RecoveryCode::new(self.fresh_opaque())
+    }
+
+    fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
+        // 256-bit opaque registration capability (ADR-0015 / AC16): the recipient never parses it
+        // (it is echoed in the registration URL and hashed at rest), so hex is fine — same draw as
+        // the tokens. Single-use + server-TTL are enforced by the store/orchestration, not here.
+        AdminInvitationToken::new(self.fresh_opaque())
     }
 }
 

@@ -16,17 +16,18 @@ use boundless_auth::{
 };
 use boundless_crypto::{
     onboarding_code_hash, phone_lookup_hash, recovery_code_hash, refresh_token_hash,
-    refresh_token_matches, CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash, HASH_LEN,
+    refresh_token_matches, AdminInvitationTokenHash, CodeHash, HmacKey, PhoneLookupHash,
+    RefreshTokenHash, HASH_LEN,
 };
 use boundless_domain::{
-    AccessToken, AppVersion, ClientVersion, DeviceToken, MemberId, OnboardingCode, Platform,
-    RecoveryCode, RefreshToken, Role, SessionFamilyId,
+    AccessToken, AdminInvitationToken, AppVersion, ClientVersion, DeviceToken, MemberId,
+    OnboardingCode, Platform, RecoveryCode, RefreshToken, Role, SessionFamilyId,
 };
 use boundless_server_core::{
-    normalize_phone, AdminAlert, AdminAlertSink, AuthConfig, AuthService, AuthStore, BindRequest,
-    BindResponse, DeviceStore, FamilyInfo, ManifestPointer, MemberRecord, OnboardingCodeRow,
-    RecoveryCodeRow, RecoveryRequest, RecoveryResponse, RefreshClassification, RefreshRequest,
-    RefreshResponse, SecretSource, SignInRequest, SignInResponse, StoreBackend,
+    normalize_phone, AdminAlert, AdminAlertSink, AdminProvisioningStore, AuthConfig, AuthService,
+    AuthStore, BindRequest, BindResponse, DeviceStore, FamilyInfo, ManifestPointer, MemberRecord,
+    OnboardingCodeRow, RecoveryCodeRow, RecoveryRequest, RecoveryResponse, RefreshClassification,
+    RefreshRequest, RefreshResponse, SecretSource, SignInRequest, SignInResponse, StoreBackend,
 };
 use std::future::Future;
 use uuid::Uuid;
@@ -162,6 +163,10 @@ impl SecretSource for SeqSecrets {
         self.n += 1;
         RecoveryCode::new(format!("recovery-{}", self.n))
     }
+    fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
+        self.n += 1;
+        AdminInvitationToken::new(format!("admin-invite-{}", self.n))
+    }
 }
 
 // === AuthStore (in-memory) =======================================================
@@ -187,6 +192,16 @@ struct DeviceEntry {
     invalidated: bool,
 }
 
+/// An in-memory Admin registration invitation — models an `admin_invitations` row: at most one
+/// **live** (non-`consumed`) per admin, superseded (consumed) on re-issue. Single-threaded ⇒ the
+/// supersede-then-insert is trivially atomic (it models the Postgres contract).
+struct InviteRow {
+    admin_id: MemberId,
+    token_hash: AdminInvitationTokenHash,
+    expires_at: UnixSeconds,
+    consumed: bool,
+}
+
 /// An in-memory [`AuthStore`]. Single-threaded, so its `*_if_live` / rotate methods are trivially
 /// atomic — they model the contract the Postgres twin must honor.
 #[derive(Default)]
@@ -197,6 +212,9 @@ pub struct MemStore {
     families: Vec<Family>,
     devices: Vec<DeviceEntry>,
     next_family: u128,
+    admins: Vec<MemberId>,
+    invitations: Vec<InviteRow>,
+    next_admin: u128,
 }
 
 impl MemStore {
@@ -204,6 +222,7 @@ impl MemStore {
     pub fn new() -> Self {
         Self {
             next_family: 1_000,
+            next_admin: 9_000,
             ..Self::default()
         }
     }
@@ -300,6 +319,46 @@ impl MemStore {
         self.devices
             .iter()
             .any(|d| &d.binding == binding && d.invalidated)
+    }
+
+    /// Whether a pending Admin with this id was provisioned.
+    pub fn admin_exists(&self, admin: MemberId) -> bool {
+        self.admins.contains(&admin)
+    }
+
+    /// The number of a member's **live** (non-consumed) Admin invitations — the one-live invariant
+    /// (AC16): exactly 1 after a create or a re-issue, 0 for an unknown admin.
+    pub fn live_invitations(&self, admin: MemberId) -> usize {
+        self.invitations
+            .iter()
+            .filter(|i| i.admin_id == admin && !i.consumed)
+            .count()
+    }
+
+    /// Total invitation rows ever minted for an admin (live + superseded) — to prove a re-issue
+    /// adds a row and supersedes (rather than mutating in place).
+    pub fn total_invitations(&self, admin: MemberId) -> usize {
+        self.invitations
+            .iter()
+            .filter(|i| i.admin_id == admin)
+            .count()
+    }
+
+    /// The at-rest hash of the admin's live invitation, if any (the type has no `PartialEq`, so a
+    /// test verifies a minted token against it with the constant-time `*_matches`).
+    pub fn live_invitation_hash(&self, admin: MemberId) -> Option<AdminInvitationTokenHash> {
+        self.invitations
+            .iter()
+            .find(|i| i.admin_id == admin && !i.consumed)
+            .map(|i| i.token_hash.clone())
+    }
+
+    /// The server-time expiry of the admin's live invitation, if any (AC16 TTL).
+    pub fn live_invitation_expiry(&self, admin: MemberId) -> Option<UnixSeconds> {
+        self.invitations
+            .iter()
+            .find(|i| i.admin_id == admin && !i.consumed)
+            .map(|i| i.expires_at)
     }
 }
 
@@ -503,5 +562,50 @@ impl DeviceStore for MemStore {
             invalidated: false,
         });
         Ok(())
+    }
+}
+
+impl AdminProvisioningStore for MemStore {
+    async fn create_pending_admin_with_invitation(
+        &mut self,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+    ) -> Result<MemberId, Self::Error> {
+        let admin = MemberId::from_uuid(Uuid::from_u128(self.next_admin));
+        self.next_admin += 1;
+        self.admins.push(admin);
+        self.invitations.push(InviteRow {
+            admin_id: admin,
+            token_hash,
+            expires_at,
+            consumed: false,
+        });
+        Ok(admin)
+    }
+
+    async fn reissue_admin_invitation(
+        &mut self,
+        admin_id: MemberId,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+        _now: UnixSeconds,
+    ) -> Result<bool, Self::Error> {
+        if !self.admins.contains(&admin_id) {
+            return Ok(false); // unknown admin → no-op, never a stray invitation
+        }
+        // Atomic supersede-then-insert: consume the prior live invite(s), then add the fresh one,
+        // so at most one stays live (the Postgres partial-unique index, modeled).
+        for inv in &mut self.invitations {
+            if inv.admin_id == admin_id && !inv.consumed {
+                inv.consumed = true;
+            }
+        }
+        self.invitations.push(InviteRow {
+            admin_id,
+            token_hash,
+            expires_at,
+            consumed: false,
+        });
+        Ok(true)
     }
 }

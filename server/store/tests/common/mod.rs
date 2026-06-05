@@ -242,6 +242,64 @@ pub async fn live_recovery(c: &Client, member: Uuid) -> i64 {
     .await
 }
 
+// --- T08: admin-invitation helpers (superuser, bypasses RLS) ---
+
+/// Count an admin's **live** (un-consumed) invitations — the one-live invariant (AC16).
+pub async fn live_invitations(c: &Client, admin: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM admin_invitations WHERE admin_id=$1 AND consumed_at IS NULL",
+        admin,
+    )
+    .await
+}
+
+/// Count all of an admin's invitations (live + superseded) — to prove a re-issue adds a row.
+pub async fn total_invitations(c: &Client, admin: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM admin_invitations WHERE admin_id=$1",
+        admin,
+    )
+    .await
+}
+
+/// Whether a row is a **pending Admin**: holds the `admin` role and has **no phone** (Admins
+/// authenticate via WebAuthn, not phone — spec §B / migration 0002).
+pub async fn pending_admin_exists(c: &Client, admin: Uuid) -> bool {
+    c.query_opt(
+        "SELECT 1 FROM members \
+         WHERE id=$1 AND roles @> ARRAY['admin']::member_role[] AND phone_lookup_hash IS NULL",
+        &[&admin],
+    )
+    .await
+    .expect("query pending admin")
+    .is_some()
+}
+
+/// The `token_hash` bytes of an admin's live invitation, if any (for a constant-time verify).
+pub async fn live_invitation_hash(c: &Client, admin: Uuid) -> Option<Vec<u8>> {
+    c.query_opt(
+        "SELECT token_hash FROM admin_invitations WHERE admin_id=$1 AND consumed_at IS NULL",
+        &[&admin],
+    )
+    .await
+    .expect("query live invitation hash")
+    .map(|r| r.get::<_, Vec<u8>>("token_hash"))
+}
+
+/// The `expires_at` of an admin's live invitation as whole epoch seconds, if any (AC16 server TTL).
+pub async fn live_invitation_expiry_secs(c: &Client, admin: Uuid) -> Option<i64> {
+    c.query_opt(
+        "SELECT EXTRACT(EPOCH FROM expires_at)::bigint AS s \
+         FROM admin_invitations WHERE admin_id=$1 AND consumed_at IS NULL",
+        &[&admin],
+    )
+    .await
+    .expect("query live invitation expiry")
+    .map(|r| r.get::<_, i64>("s"))
+}
+
 pub const G: u128 = 1;
 pub fn mid(n: u128) -> MemberId {
     MemberId::from_uuid(Uuid::from_u128(n))

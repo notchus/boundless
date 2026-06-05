@@ -14,13 +14,17 @@ use std::path::PathBuf;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boundless_crypto::{
-    access_token_hash, access_token_matches, canonical_manifest_bytes, decide_manifest,
+    access_token_hash, access_token_matches, admin_invitation_token_hash,
+    admin_invitation_token_matches, canonical_manifest_bytes, decide_manifest,
     onboarding_code_hash, onboarding_code_matches, phone_lookup_hash, phone_lookup_matches,
     recovery_code_hash, recovery_code_matches, refresh_token_hash, refresh_token_matches,
-    AccessTokenHash, CodeHash, FetchedManifest, HmacKey, ManifestCache, ManifestDecision,
-    ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature, VerifyingKey,
+    AccessTokenHash, AdminInvitationTokenHash, CodeHash, FetchedManifest, HmacKey, ManifestCache,
+    ManifestDecision, ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature,
+    VerifyingKey,
 };
-use boundless_domain::{AccessToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
+use boundless_domain::{
+    AccessToken, AdminInvitationToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken,
+};
 use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
 use serde_json::Value;
 
@@ -181,6 +185,52 @@ fn access_token_domain_separated_from_refresh_and_codes() {
     assert_ne!(as_access.as_bytes(), as_refresh.as_bytes());
     assert_ne!(as_access.as_bytes(), as_onboarding.as_bytes());
     assert_ne!(as_access.as_bytes(), as_recovery.as_bytes());
+}
+
+#[test]
+fn admin_invitation_token_hashes_at_rest_and_verifies_constant_time() {
+    // AC16 / ADR-0015: the Admin registration invitation is single-use; only its keyed hash is
+    // stored (never the token). Verification (T09, consume-on-register) is constant-time (R9/R2 —
+    // no oracle on a registration capability). Deterministic; bound to the per-instance secret.
+    let key = test_key();
+    let token = AdminInvitationToken::new("invite-aaaa-bbbb-cccc");
+    let hash = admin_invitation_token_hash(&key, &token);
+
+    assert!(admin_invitation_token_matches(&key, &token, &hash));
+    assert!(!admin_invitation_token_matches(
+        &key,
+        &AdminInvitationToken::new("invite-aaaa-bbbb-WRONG"),
+        &hash
+    ));
+    // Deterministic (re-derivable for the consume lookup)...
+    assert_eq!(
+        admin_invitation_token_hash(&key, &token).as_bytes(),
+        hash.as_bytes()
+    );
+    // ...and bound to the per-instance secret.
+    assert!(!admin_invitation_token_matches(
+        &HmacKey::from_bytes([0x43; 32]),
+        &token,
+        &hash
+    ));
+}
+
+#[test]
+fn admin_invitation_domain_separated_from_other_artifacts() {
+    // An Admin invitation token that happens to share a string with another secret must hash
+    // differently — a distinct domain tag prevents any cross-artifact reuse (e.g. a leaked access
+    // bearer or refresh credential presented as a registration invitation must not verify).
+    let key = test_key();
+    let shared = "SAME-STRING-1234";
+    let as_invite = admin_invitation_token_hash(&key, &AdminInvitationToken::new(shared));
+    let as_access = access_token_hash(&key, &AccessToken::new(shared));
+    let as_refresh = refresh_token_hash(&key, &RefreshToken::new(shared));
+    let as_onboarding = onboarding_code_hash(&key, &OnboardingCode::new(shared));
+    let as_recovery = recovery_code_hash(&key, &RecoveryCode::new(shared));
+    assert_ne!(as_invite.as_bytes(), as_access.as_bytes());
+    assert_ne!(as_invite.as_bytes(), as_refresh.as_bytes());
+    assert_ne!(as_invite.as_bytes(), as_onboarding.as_bytes());
+    assert_ne!(as_invite.as_bytes(), as_recovery.as_bytes());
 }
 
 #[test]
@@ -519,6 +569,11 @@ mod no_formatter {
     assert_not_impl_any!(CodeHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(RefreshTokenHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
     assert_not_impl_any!(AccessTokenHash: core::fmt::Debug, core::fmt::Display, serde::Serialize);
+    assert_not_impl_any!(
+        AdminInvitationTokenHash: core::fmt::Debug,
+        core::fmt::Display,
+        serde::Serialize
+    );
 
     // The hashes must NOT be `==`-comparable: a derived `PartialEq` on `[u8; 32]` short-circuits
     // and would be a non-constant-time membership oracle (R2). Callers must use the constant-time
@@ -527,4 +582,5 @@ mod no_formatter {
     assert_not_impl_any!(CodeHash: core::cmp::PartialEq);
     assert_not_impl_any!(RefreshTokenHash: core::cmp::PartialEq);
     assert_not_impl_any!(AccessTokenHash: core::cmp::PartialEq);
+    assert_not_impl_any!(AdminInvitationTokenHash: core::cmp::PartialEq);
 }

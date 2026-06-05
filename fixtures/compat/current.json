@@ -1,0 +1,10 @@
+{
+  "request": "POST /api/auth/signin",
+  "client_version": {
+    "platform": "ios",
+    "app_version": "1.2.0"
+  },
+  "body": {
+    "phone_lookup_hash": "b3BhcXVlLWhtYWMtc2hhMjU2LWxvb2t1cC1oYXNoLWN1cg=="
+  }
+}

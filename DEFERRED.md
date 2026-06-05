@@ -380,14 +380,21 @@
       Hyperdrive/Worker role must be a plain role. (sec-audit R3)
   - **WHEN:** **T07** / infra (DB role provisioning).
 
-- [ ] **Atomic supersede-then-insert for the four partial-unique indexes.** The schema *enforces*
+- [~] **Atomic supersede-then-insert for the four partial-unique indexes.** The schema *enforces*
       "at most one live row" via partial unique indexes on `onboarding_codes`/`recovery_codes`
       (one live code per member), `sessions` (one current credential per family), and
       `admin_invitations` (one live invite per admin). A regenerate/rotate that inserts the new row
-      before superseding the prior in the **same transaction** will hit a unique violation — T07/T08
-      must order it supersede-then-insert atomically (the DB twin of T04's "atomic consume-on-accept"
+      before superseding the prior in the **same transaction** will hit a unique violation — must be
+      ordered supersede-then-insert atomically (the DB twin of T04's "atomic consume-on-accept"
       carry-forward). (reviewer / sec-audit R5-adjacent)
-  - **WHEN:** **T07** (code/session rotation) and **T08** (admin invite re-issue).
+  - **Sessions/recovery DONE (T07-shell slice A, 2026-06-05):** `rotate_session` /
+    `consume_and_rotate_recovery` in `PgAuthStore` (proven vs real `postgres:16`).
+  - **`admin_invitations` DONE (T08, 2026-06-05):** `PgAuthStore::reissue_admin_invitation`
+    supersedes-then-inserts under an admin-scoped `pg_advisory_xact_lock` (so concurrent re-issues
+    serialize rather than racing the one-live index); proven by
+    `server/store/tests/admin_invitations.rs::concurrent_reissue_keeps_exactly_one_live`.
+  - **Onboarding-code regenerate (issuance):** the *consume*-on-bind is atomic (T07-core); the
+    *regenerate*-invalidates-prior write is issuance-side. **WHEN:** **spec 008** (admin issuance).
 
 - [ ] **`audit_log` table + admin-PII-read audit (I5).** This slice provides only `created_by`
       (write-side actor). The `audit_log` table and the `#[require_audit]` read-path obligation must
@@ -408,10 +415,14 @@
       persistence, the per-Group encryption key, and the KEK (Secrets Store) land with issuance.
   - **WHEN:** **spec 008** (admin issuance) — adds the `i1_addresses_encrypted` enforcement.
 
-- [ ] **Actual row writes** (group/member issuance, sign-in lookup, device-bind, refresh rotation,
+- [~] **Actual row writes** (group/member issuance, sign-in lookup, device-bind, refresh rotation,
       recovery re-bind, admin invite mint/consume) — the schema defines the columns; the writes are
       the endpoint slices.
-  - **WHEN:** **T07** (member auth) / **T08** (dev admin-create + invite) / **spec 008** (issuance).
+  - **Session/code/member-read writes DONE:** T07-shell slice A (`PgAuthStore`).
+  - **Admin invite MINT + pending-admin write DONE (T08, 2026-06-05):** `PgAuthStore`
+    `create_pending_admin_with_invitation` (member role=`admin`, no phone, + invitation) and
+    `reissue_admin_invitation`. The invite **consume** (on first WebAuthn registration) is **T09**.
+  - **WHEN (remaining):** **spec 008** (group/member *issuance* + phone writes) / **T09** (invite consume).
 
 ---
 
@@ -595,6 +606,64 @@
       error raw — and the I10 scrubber suite should gain a fixture with a synthetic unique-violation
       `DETAIL` carrying a `\x…` hex blob, asserting the emitter drops it.
   - **WHEN:** **T07-shell-B** (logging wiring) + the I10 scrubber suite.
+
+---
+
+## Server / admin-provisioning (spec 001 T08 — out-of-scope register)
+
+> T08 shipped the **core + Postgres-store legs** of developer Admin creation + invitation mint
+> (AC1(a) authz decision, AC16 mint/TTL, AC9 N-2 compat) — all host/real-`postgres:16` testable, **no
+> `wrangler`/`worker-build`/Email-Workers toolchain needed**. The deployable Worker endpoint + the
+> Developer hardware-key WebAuthn verification + Email Workers delivery + the invite *consume* are the
+> deferred shell. Everything below was deliberately left out; each carries a WHEN trigger.
+
+- [ ] **The deployable `/api/dev/admins` Worker endpoint + the HTTP-level AC1(a) integration test.**
+      T08-core ships the authorization *decision* (`authorize_developer` → un-forgeable
+      `DeveloperAuthority`, which `create_admin` requires by type) and the mint orchestration; the
+      `#[event]`/Router route that classifies the request into a `DevCaller`, calls `authorize_developer`,
+      then `create_admin`, is the shell. The AC1(a) **integration** test (real unauth + admin-auth HTTP
+      requests to `/api/dev/admins` are both rejected) lands with that route — the core test
+      (`ac1_admin_creation_rejects_unauth_and_admin`) proves the decision; the HTTP proof needs the Worker.
+  - **WHEN:** **T08-shell** (the deployable Worker; alongside T07-shell-B — needs the same
+    workers-rs/Hyperdrive wiring + `docs-researcher` for workers-rs + Email Workers).
+
+- [ ] **Developer hardware-key WebAuthn verification (constructs the `DeveloperAuthority`).** I11
+      requires Developer auth to be a hardware-key-backed WebAuthn credential. T08-core models the
+      *capability* (`DeveloperAuthority`) but does **not** verify the hardware key — `authorize_developer`
+      trusts a `DevCaller::Developer` the Worker must establish. The actual dev-WebAuthn registration +
+      assertion verification (likely `@simplewebauthn` on the edge, like admin WebAuthn T09/ADR-0017, but
+      a **separate developer credential store**) is unbuilt. Until it exists, no caller can legitimately
+      become `DevCaller::Developer`.
+  - **WHEN:** **T08-shell** / a dev-auth task (relate to ADR-0017's WebAuthn pattern).
+
+- [ ] **Email Workers delivery + the email-body-no-PII/credential wire assertion (R9 / ADR-0015).**
+      T08-core returns the `AdminInvitation` (opaque token + opaque admin id + expiry; PII-free **by
+      construction** — the tainted token makes the struct un-serializable). Building the registration URL,
+      sending it via **Email Workers**, and the test asserting the email body carries **only** the opaque
+      token (no PII, no credential material — ADR-0015's 6 constraints) are the shell's.
+  - **WHEN:** **T08-shell** (Email Workers binding).
+
+- [ ] **Invite consume on first WebAuthn registration (single-use, AC16 consume leg) → T09.** T08 ships
+      only the **mint** + the constant-time at-rest hash (`admin_invitation_token_matches`); the
+      *validation* (TTL + single-use + `consumed_at` stamp on successful WebAuthn registration, routing a
+      reused/expired link to `InviteExpired` — `ADMIN_INVITE_EXPIRED`/`ADMIN_INVITE_CONSUMED`) is the
+      SvelteKit-edge consume path. Note the P4 tension: hashing the presented token with the per-instance
+      HMAC to compare against `token_hash` would put a crypto step in edge-TS — resolve under ADR-0017's
+      documented WebAuthn P4 carve-out (or expose a Worker/core verify endpoint the edge calls).
+  - **WHEN:** **T09** (admin WebAuthn registration, edge TS).
+
+- [ ] **`created_by` = the Developer's identity (write-side audit, I5).** T08 writes `created_by = NULL`
+      (system) on the pending-admin member + invitation rows, because the Developer is not authenticated
+      in this slice (the dev-WebAuthn verification that would establish the actor is deferred). Populate
+      `created_by` with the verified Developer id once dev-auth lands, so the audit trail names who minted
+      each Admin.
+  - **WHEN:** **T08-shell** (with the dev-WebAuthn verification).
+
+- [ ] **`fresh_admin_invitation` human-facing format (if any).** Like the Recovery Code, the invite
+      token is currently a 256-bit opaque hex draw. ADR-0015 only requires it be opaque + no-PII (it rides
+      in a URL, not typed by a human), so hex is fine — but if a human-typable form is ever wanted, that is
+      a UX decision. No change expected.
+  - **WHEN:** revisit only if the registration UX (T15) wants a typable token.
 
 ---
 

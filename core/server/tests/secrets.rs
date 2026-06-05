@@ -5,9 +5,10 @@
 //! the verify side (the deferred store lookup) end-to-end at the unit level.
 
 use boundless_crypto::{
-    access_token_hash, access_token_matches, refresh_token_hash, refresh_token_matches, HmacKey,
+    access_token_hash, access_token_matches, admin_invitation_token_hash,
+    admin_invitation_token_matches, refresh_token_hash, refresh_token_matches, HmacKey,
 };
-use boundless_domain::{AccessToken, RefreshToken};
+use boundless_domain::{AccessToken, AdminInvitationToken, RefreshToken};
 use boundless_server_core::{RngSecretSource, SecretSource};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -113,6 +114,32 @@ fn minted_refresh_token_verifies_against_its_at_rest_hash() {
     assert!(!refresh_token_matches(
         &key(),
         &RefreshToken::new("not-the-minted-token"),
+        &stored
+    ));
+}
+
+#[test]
+fn minted_admin_invitation_is_opaque_and_verifies_against_its_at_rest_hash() {
+    // T08 / AC16: a minted Admin invitation is a 256-bit opaque token (the recipient never parses
+    // it) that hashes to a value its own constant-time matcher accepts — exactly what the deferred
+    // consume-on-register path (T09) relies on.
+    let mut s = seeded(8);
+    let token = s.fresh_admin_invitation();
+    assert_eq!(
+        token.expose_secret().len(),
+        64,
+        "256-bit token = 64 hex chars"
+    );
+    assert!(token
+        .expose_secret()
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+
+    let stored = admin_invitation_token_hash(&key(), &token);
+    assert!(admin_invitation_token_matches(&key(), &token, &stored));
+    assert!(!admin_invitation_token_matches(
+        &key(),
+        &AdminInvitationToken::new("not-the-minted-token"),
         &stored
     ));
 }

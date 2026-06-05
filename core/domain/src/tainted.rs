@@ -86,6 +86,17 @@ tainted_secret!(
     RefreshToken
 );
 
+tainted_secret!(
+    /// The developer-minted, single-use, short-TTL **Admin registration** capability
+    /// delivered out of band via Email Workers (ADR-0015; spec 001 §A, AC16). It carries
+    /// **no PII** and is **not** credential material — it only initiates a WebAuthn
+    /// registration against an already-provisioned pending Admin. Still a secret (whoever
+    /// holds it can register), so it is tainted: no `Debug`/`Display`/`Serialize`, hashed at
+    /// rest via `core::crypto::admin_invitation_token_hash`, and reachable only via
+    /// `expose_secret` at the wire boundary (the registration URL the Worker builds).
+    AdminInvitationToken
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +110,7 @@ mod tests {
     assert_not_impl_any!(RecoveryCode: core::fmt::Debug, core::fmt::Display);
     assert_not_impl_any!(AccessToken: core::fmt::Debug, core::fmt::Display);
     assert_not_impl_any!(RefreshToken: core::fmt::Debug, core::fmt::Display);
+    assert_not_impl_any!(AdminInvitationToken: core::fmt::Debug, core::fmt::Display);
 
     // Defense in depth: they must not be serde-serializable either (I3 — plaintext never
     // crosses the wire implicitly).
@@ -108,6 +120,7 @@ mod tests {
     assert_not_impl_any!(RecoveryCode: serde::Serialize, serde::de::DeserializeOwned);
     assert_not_impl_any!(AccessToken: serde::Serialize, serde::de::DeserializeOwned);
     assert_not_impl_any!(RefreshToken: serde::Serialize, serde::de::DeserializeOwned);
+    assert_not_impl_any!(AdminInvitationToken: serde::Serialize, serde::de::DeserializeOwned);
 
     #[test]
     fn redacted_summary_never_leaks_and_expose_secret_round_trips() {
@@ -138,5 +151,6 @@ mod tests {
         check!(RecoveryCode);
         check!(AccessToken);
         check!(RefreshToken);
+        check!(AdminInvitationToken);
     }
 }

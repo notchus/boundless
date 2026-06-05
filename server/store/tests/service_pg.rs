@@ -20,8 +20,8 @@ use boundless_auth::{
 };
 use boundless_crypto::{CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash};
 use boundless_domain::{
-    AccessToken, AppVersion, ClientVersion, DeviceToken, MemberId, OnboardingCode, Platform,
-    RecoveryCode, RefreshToken, SessionFamilyId,
+    AccessToken, AdminInvitationToken, AppVersion, ClientVersion, DeviceToken, MemberId,
+    OnboardingCode, Platform, RecoveryCode, RefreshToken, SessionFamilyId,
 };
 use boundless_server_core::{
     normalize_phone, AdminAlert, AdminAlertSink, AlertKind, AuthConfig, AuthService, AuthStore,
@@ -69,6 +69,10 @@ impl SecretSource for SeqSecrets {
     fn fresh_recovery_code(&mut self) -> RecoveryCode {
         self.n += 1;
         RecoveryCode::new(format!("recovery-{}", self.n))
+    }
+    fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
+        self.n += 1;
+        AdminInvitationToken::new(format!("admin-invite-{}", self.n))
     }
 }
 

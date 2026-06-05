@@ -6,9 +6,9 @@
 //! - **Value types** — [`MemberId`], [`SessionFamilyId`], [`Role`], [`Platform`],
 //!   [`AppVersion`], [`ClientVersion`]. Plain, serializable, safe to log.
 //! - **Tainted secret newtypes** — [`PhoneNumber`], [`DeviceToken`], [`OnboardingCode`],
-//!   [`RecoveryCode`], [`AccessToken`], [`RefreshToken`]. Each has **no `Debug`/`Display`/
-//!   `Serialize`**, only `redacted_summary()` (**P2**); the raw value is reachable only via
-//!   the intentionally-alarming `expose_secret`.
+//!   [`RecoveryCode`], [`AccessToken`], [`RefreshToken`], [`AdminInvitationToken`]. Each has
+//!   **no `Debug`/`Display`/`Serialize`**, only `redacted_summary()` (**P2**); the raw value
+//!   is reachable only via the intentionally-alarming `expose_secret`.
 //!
 //! These are generated to Swift/Kotlin via UniFFI (wired in T10); clients hold no
 //! hand-rolled duplicates. The crate is **pure**: no I/O, no ambient time/randomness, and
@@ -26,6 +26,7 @@ pub use ids::{MemberId, SessionFamilyId};
 pub use platform::Platform;
 pub use role::Role;
 pub use tainted::{
-    AccessToken, DeviceToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken,
+    AccessToken, AdminInvitationToken, DeviceToken, OnboardingCode, PhoneNumber, RecoveryCode,
+    RefreshToken,
 };
 pub use version::{AppVersion, AppVersionParseError, ClientVersion};

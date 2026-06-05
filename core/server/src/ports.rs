@@ -20,9 +20,12 @@
 use boundless_auth::{
     DeviceBinding, RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds,
 };
-use boundless_crypto::{CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash};
+use boundless_crypto::{
+    AdminInvitationTokenHash, CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash,
+};
 use boundless_domain::{
-    AccessToken, DeviceToken, MemberId, RecoveryCode, RefreshToken, Role, SessionFamilyId,
+    AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken, Role,
+    SessionFamilyId,
 };
 
 use crate::alerts::AdminAlert;
@@ -278,4 +281,45 @@ pub trait SecretSource {
     fn fresh_access(&mut self) -> AccessToken;
     /// A fresh Driver Recovery Code (rotated on use, ADR-0016 D3).
     fn fresh_recovery_code(&mut self) -> RecoveryCode;
+    /// A fresh Admin registration-invitation token (single-use, opaque, no PII — ADR-0015 / AC16).
+    fn fresh_admin_invitation(&mut self) -> AdminInvitationToken;
+}
+
+/// The persistence boundary for **developer-driven Admin provisioning** (I11 / ADR-0015; AC16) —
+/// kept separate from [`AuthStore`] because it is the developer (`/api/dev/*`) surface, not the
+/// member-auth one, and an installation that never provisions an Admin through the core need not
+/// carry it. The invitation row stores **only** an at-rest hash + opaque ids (no PII, no plaintext
+/// token), so the Postgres impl ships now (it needs no field-level encryption — unlike
+/// [`DeviceStore`]). The in-memory test double implements all three store ports.
+///
+/// **Atomicity is a port contract** (mirroring [`AuthStore`]): `reissue_admin_invitation` must
+/// supersede the prior live invitation **then** insert the new one in one transaction, so the
+/// "one live invitation per admin" partial-unique index is never violated (the
+/// supersede-then-insert ordering — DEFERRED "T08 admin invite re-issue").
+// Same future-ergonomics rationale as `AuthStore` above (intentionally non-`Send` AFIT).
+#[allow(async_fn_in_trait)]
+pub trait AdminProvisioningStore: StoreBackend {
+    /// Provision a brand-new **pending Admin** member (role `Admin`, **no phone** — Admins
+    /// authenticate via WebAuthn) **and** mint its first registration invitation, in one
+    /// transaction, returning the new admin's [`MemberId`]. The token itself never reaches the
+    /// store — only its `token_hash` and the server-time `expires_at` (default `now + 72h`). The
+    /// member id is minted by the backend (DB `gen_random_uuid()`), so no ambient randomness enters
+    /// the core.
+    async fn create_pending_admin_with_invitation(
+        &mut self,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+    ) -> Result<MemberId, Self::Error>;
+
+    /// Re-invite an existing pending Admin (lost-key recovery, ADR-0015): atomically supersede the
+    /// admin's prior **live** invitation (stamp it consumed at `now`, freeing the one-live index)
+    /// **then** insert the fresh one. Returns `true` iff the admin existed (so an unknown id is a
+    /// no-op, never a stray invitation). Atomic supersede-then-insert (see the trait docs).
+    async fn reissue_admin_invitation(
+        &mut self,
+        admin_id: MemberId,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+        now: UnixSeconds,
+    ) -> Result<bool, Self::Error>;
 }

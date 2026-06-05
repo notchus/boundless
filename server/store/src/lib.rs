@@ -37,12 +37,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use boundless_auth::{RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds};
 use boundless_crypto::{
-    refresh_token_hash, CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash, HASH_LEN,
+    refresh_token_hash, AdminInvitationTokenHash, CodeHash, HmacKey, PhoneLookupHash,
+    RefreshTokenHash, HASH_LEN,
 };
 use boundless_domain::{MemberId, RefreshToken, Role, SessionFamilyId};
 use boundless_server_core::{
-    AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow, RecoveryCodeRow, RefreshClassification,
-    StoreBackend,
+    AdminProvisioningStore, AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow,
+    RecoveryCodeRow, RefreshClassification, StoreBackend,
 };
 use tokio_postgres::{Client, Transaction};
 use uuid::Uuid;
@@ -518,6 +519,106 @@ impl AuthStore for PgAuthStore {
             "INSERT INTO recovery_codes (id, group_id, member_id, code_hash) \
              VALUES (gen_random_uuid(), $1, $2, $3)",
             &[&group, &mid, &fresh],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+}
+
+/// The `core::server` [`AdminProvisioningStore`] port, realized over Postgres (T08 — developer
+/// Admin creation + invitation mint). Invitations store only an at-rest hash + opaque ids (no PII,
+/// no plaintext token), so this ships without the field-level encryption the device-token port
+/// awaits. Both methods run in a single tenant-scoped transaction via [`PgAuthStore::begin`].
+impl AdminProvisioningStore for PgAuthStore {
+    /// Provision a pending Admin (role `admin`, **no phone** — Admins authenticate via WebAuthn)
+    /// and mint its first registration invitation in one transaction, returning the DB-minted
+    /// [`MemberId`] (`gen_random_uuid()` → no ambient randomness in the core). The token never
+    /// reaches Postgres — only its `token_hash` and the server-time `expires_at`.
+    async fn create_pending_admin_with_invitation(
+        &mut self,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+    ) -> Result<MemberId> {
+        let group = self.group_id;
+        let exp = to_pg_time(expires_at);
+        let hash = token_hash.as_bytes().to_vec();
+        let tx = self.begin().await?;
+        // The pending Admin member. RLS `WITH CHECK` requires group_id = current_group_id() (set by
+        // `begin`), so this can only write into this tenant.
+        let row = tx
+            .query_one(
+                "INSERT INTO members (id, group_id, roles) \
+                 VALUES (gen_random_uuid(), $1, ARRAY['admin']::member_role[]) RETURNING id",
+                &[&group],
+            )
+            .await?;
+        let admin_id: Uuid = row.get("id");
+        // The invitation. The composite FK (admin_id, group_id) → members(id, group_id) is satisfied
+        // by the row just inserted in this same transaction.
+        tx.execute(
+            "INSERT INTO admin_invitations (id, group_id, admin_id, token_hash, expires_at) \
+             VALUES (gen_random_uuid(), $1, $2, $3, $4)",
+            &[&group, &admin_id, &hash, &exp],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(MemberId::from_uuid(admin_id))
+    }
+
+    /// Re-invite an existing pending Admin: **supersede then insert** in one transaction. The prior
+    /// live invitation is stamped `consumed_at = now` (freeing the `admin_invitations_one_live_per_
+    /// admin` partial-unique index) **before** the fresh row is inserted, so the one-live invariant
+    /// holds and the index never raises a unique violation (the DEFERRED "T08 admin invite re-issue"
+    /// ordering). Returns `false` (rolled back, nothing minted) when no pending Admin matches.
+    async fn reissue_admin_invitation(
+        &mut self,
+        admin_id: MemberId,
+        token_hash: AdminInvitationTokenHash,
+        expires_at: UnixSeconds,
+        now: UnixSeconds,
+    ) -> Result<bool> {
+        let aid = admin_id.as_uuid();
+        let aid_text = aid.to_string();
+        let group = self.group_id;
+        let exp = to_pg_time(expires_at);
+        let now_ts = to_pg_time(now);
+        let hash = token_hash.as_bytes().to_vec();
+        let tx = self.begin().await?;
+        // Serialize concurrent re-issues of the SAME admin (same pattern as `rotate_session`): the
+        // one-live partial-unique index already makes two live invitations impossible, but without
+        // this an unlucky concurrent re-issue would *error* with a unique violation instead of
+        // cleanly superseding. The admin-scoped advisory xact lock makes the second re-issue see the
+        // first's committed live row, so it supersedes it and succeeds. Released at commit/rollback.
+        tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            &[&aid_text],
+        )
+        .await?;
+        // The admin must exist *in this tenant* and hold the Admin role (a non-admin id is a no-op,
+        // never a stray invitation). RLS scopes the visibility to this group.
+        let exists = tx
+            .query_opt(
+                "SELECT 1 FROM members WHERE id = $1 AND roles @> ARRAY['admin']::member_role[]",
+                &[&aid],
+            )
+            .await?
+            .is_some();
+        if !exists {
+            return Ok(false); // tx drops → rollback
+        }
+        // Supersede the prior live invitation(s) FIRST (frees the one-live partial index)...
+        tx.execute(
+            "UPDATE admin_invitations SET consumed_at = $2 \
+             WHERE admin_id = $1 AND consumed_at IS NULL",
+            &[&aid, &now_ts],
+        )
+        .await?;
+        // ...THEN insert the fresh one.
+        tx.execute(
+            "INSERT INTO admin_invitations (id, group_id, admin_id, token_hash, expires_at) \
+             VALUES (gen_random_uuid(), $1, $2, $3, $4)",
+            &[&group, &aid, &hash, &exp],
         )
         .await?;
         tx.commit().await?;

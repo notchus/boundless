@@ -23,3 +23,20 @@ repository = "https://github.com/notchus/boundless"
 [dependencies]
 # workers-rs (`worker`), Hyperdrive/KV/Queues bindings, and the path dependency on
 # ../core/server are added when endpoints land (T07-shell-B/T08).
+
+[dev-dependencies]
+# T08 — the N-2 compatibility replay harness (AC9, `tests/compat/`). It replays the frozen
+# request fixtures in `fixtures/compat/**` through the core version policy (`boundless-auth`'s
+# evaluate_version / minimum_supported), proving the server accepts the current minor and the two
+# previous supported minors and degrades only below the floor (O1/O4). Path deps on the core crates
+# (same convention as the `store` member); serde_json parses the fixtures. No new external crate
+# versions (lock = ground truth).
+boundless-auth = { path = "../core/auth" }
+boundless-domain = { path = "../core/domain" }
+serde_json = "1"
+
+# The compat harness lives in a directory (per AC9 / the task), so it is declared explicitly rather
+# than auto-discovered (cargo only auto-discovers `tests/*.rs`, not `tests/<dir>/`).
+[[test]]
+name = "compat"
+path = "tests/compat/replay.rs"

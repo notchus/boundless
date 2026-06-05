@@ -24,6 +24,11 @@
 //!   invalidation), [`AuthService::record_notification_decision`] (AC14),
 //!   [`AuthService::refresh`] (AC18 rotate / replay-kill, uniform reject), and
 //!   [`AuthService::recovery_rebind`] (AC19), plus [`AuthService::note_session_invalidated`] (AC15).
+//! - **T08:** [`AuthService::create_admin`] / [`AuthService::reissue_admin_invite`] — developer-only
+//!   Admin provisioning + invitation mint ([`authorize_developer`] / [`DeveloperAuthority`] gate
+//!   AC1; [`AdminProvisioningStore`] persists; AC16). The deployable `/api/dev/admins` route, the
+//!   Developer WebAuthn verification, Email Workers delivery, and the invite consume (T09) are the
+//!   deferred shell (→ `DEFERRED.md`).
 //! - [`GroupHubState`] — the DO's rate-limit windows + per-member-per-day alert dedup (§10-E).
 //! - [`AdminAlert`] — PII-free admin alerts/flags (O4/AC8/AC14/AC15).
 //! - [`normalize_phone`] — canonical E.164 for the lookup hash (single-source for issuance, P4).
@@ -44,6 +49,7 @@
 //! integration tests are the **T07-shell-B** infra task. I5 admin-PII audit + `audit_log` belong with
 //! admin issuance (spec 008 — this layer exposes no admin phone read).
 
+mod admin;
 mod alerts;
 mod bind;
 mod hub;
@@ -55,13 +61,18 @@ mod secrets;
 mod service;
 mod signin;
 
+pub use admin::{
+    authorize_developer, AdminInvitation, DevAdminCreateForbidden, DevCaller, DeveloperAuthority,
+    INVITE_TTL_SECS,
+};
 pub use alerts::{AdminAlert, AlertKind};
 pub use bind::{BindOutcome, BindRequest, BindResponse};
 pub use hub::{GroupHubState, CODE_ATTEMPT_WINDOW_SECS};
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{
-    AdminAlertSink, AuthStore, DeviceStore, FamilyInfo, MemberRecord, OnboardingCodeRow,
-    RecoveryCodeRow, RefreshClassification, SecretSource, SessionMaterial, SourceKey, StoreBackend,
+    AdminAlertSink, AdminProvisioningStore, AuthStore, DeviceStore, FamilyInfo, MemberRecord,
+    OnboardingCodeRow, RecoveryCodeRow, RefreshClassification, SecretSource, SessionMaterial,
+    SourceKey, StoreBackend,
 };
 pub use recovery::{RecoveryOutcome, RecoveryRequest, RecoveryResponse};
 pub use refresh::{RefreshOutcome, RefreshRequest, RefreshResponse};

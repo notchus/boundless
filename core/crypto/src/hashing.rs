@@ -8,7 +8,9 @@
 //! `expose_secret()` is called **only here** (the sanctioned crypto boundary) — the
 //! plaintext phone/code is hashed and immediately dropped; only the keyed hash is returned.
 
-use boundless_domain::{AccessToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken};
+use boundless_domain::{
+    AccessToken, AdminInvitationToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken,
+};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -28,6 +30,7 @@ const DOMAIN_ONBOARDING_CODE: &[u8] = b"boundless:onboarding-code:v1";
 const DOMAIN_RECOVERY_CODE: &[u8] = b"boundless:recovery-code:v1";
 const DOMAIN_REFRESH_TOKEN: &[u8] = b"boundless:refresh-token:v1";
 const DOMAIN_ACCESS_TOKEN: &[u8] = b"boundless:access-token:v1";
+const DOMAIN_ADMIN_INVITATION: &[u8] = b"boundless:admin-invitation:v1";
 
 /// A per-instance HMAC secret (from Cloudflare Secrets Store in production).
 ///
@@ -126,6 +129,30 @@ impl AccessTokenHash {
     }
 
     /// The raw hash bytes, for storage as an `access_token_hash bytea` column.
+    pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
+        &self.0
+    }
+}
+
+/// The HMAC-SHA256 of an Admin registration-invitation token, keyed for at-rest storage
+/// (ADR-0015 / spec 001 AC16).
+///
+/// The invitation is developer-minted, single-use, and short-TTL; only this keyed hash is
+/// persisted (`admin_invitations.token_hash bytea`), never the token itself, so an intercepted
+/// database holds no usable registration capability. Same discipline as [`AccessTokenHash`]: no
+/// `Debug`/`Display`/`Serialize`, and **no `PartialEq`** — compare only via the constant-time
+/// [`admin_invitation_token_matches`], never `==` (a non-constant-time capability oracle, R9/R2).
+/// A distinct domain tag keeps an invitation hash from ever verifying any other artifact.
+#[derive(Clone)]
+pub struct AdminInvitationTokenHash([u8; HASH_LEN]);
+
+impl AdminInvitationTokenHash {
+    /// Rebuild from stored bytes (e.g. a `token_hash bytea` column read).
+    pub fn from_bytes(bytes: [u8; HASH_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw hash bytes, for storage as a `token_hash bytea` column.
     pub fn as_bytes(&self) -> &[u8; HASH_LEN] {
         &self.0
     }
@@ -261,6 +288,36 @@ pub fn access_token_matches(key: &HmacKey, token: &AccessToken, stored: &AccessT
     )
 }
 
+/// Derive the at-rest hash of an Admin registration-invitation token (ADR-0015 / AC16). The
+/// plaintext is touched only to hash it; only the keyed hash is stored, so the
+/// `admin_invitations` row holds no usable registration capability.
+pub fn admin_invitation_token_hash(
+    key: &HmacKey,
+    token: &AdminInvitationToken,
+) -> AdminInvitationTokenHash {
+    AdminInvitationTokenHash(keyed_hash(
+        key,
+        DOMAIN_ADMIN_INVITATION,
+        token.expose_secret().as_bytes(),
+    ))
+}
+
+/// Constant-time test that `token` matches a stored Admin-invitation hash (R9/R2: no timing
+/// oracle on a single-use registration capability). The verification path consumes the
+/// invitation on first successful WebAuthn registration (T09).
+pub fn admin_invitation_token_matches(
+    key: &HmacKey,
+    token: &AdminInvitationToken,
+    stored: &AdminInvitationTokenHash,
+) -> bool {
+    keyed_verify(
+        key,
+        DOMAIN_ADMIN_INVITATION,
+        token.expose_secret().as_bytes(),
+        &stored.0,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +333,7 @@ mod tests {
             DOMAIN_RECOVERY_CODE,
             DOMAIN_REFRESH_TOKEN,
             DOMAIN_ACCESS_TOKEN,
+            DOMAIN_ADMIN_INVITATION,
         ] {
             assert!(
                 !tag.contains(&0x00),

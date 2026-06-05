@@ -9,7 +9,7 @@ all required suites — is a parity gap CI flags.
 |---|---|---|
 | `auth/` | `signin_ok`, `phone_not_on_file`, `device_bind_ok`, `device_bind_invalid_expired`, `below_min_version`, `needs_reauth_help`, `driver_recovery_ok`, `admin_webauthn_register`, `admin_invite_expired` | spec 001 **T02** |
 | `manifest/` | `verify_ok`, `verify_fail_with_cache`, `verify_fail_no_cache`, `lower_version_ignored` | spec 001 **T02** |
-| `compat/` | `n_minus_1`, `n_minus_2` request fixtures (O1) | spec 001 **T02** / replayed **T08** |
+| `compat/` | `current`, `n_minus_1`, `n_minus_2` request fixtures (O1 N-2 window) | spec 001 **T02** (`n_minus_*`) + **T08** (`current`); replayed by `ac9_auth_endpoints_nminus2` (T08) |
 | `onboarding/` | `log_lines.jsonl` for the log-scrubber replay (P2/I10) | spec 001 **T16** |
 
 Scaffolded by spec 001 task **T01**; fixtures land in **T02** (and **T16** for the
