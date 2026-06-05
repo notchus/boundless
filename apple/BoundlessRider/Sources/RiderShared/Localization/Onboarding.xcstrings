@@ -1,0 +1,306 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "admin.onboarding.invite_expired" : {
+      "comment" : "Admin web; single-use/TTL path (InviteExpired terminal state). Authored here for catalog completeness (AC12); rendered by the SvelteKit admin UI (spec 001 T15), not by the Rider app.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This invitation has expired. Ask the developer for a new one."
+          }
+        }
+      }
+    },
+    "admin.onboarding.register_credential" : {
+      "comment" : "Admin web; WebAuthn registration (passkey / security key), desktop. Authored here for catalog completeness (AC12); rendered by the SvelteKit admin UI (spec 001 T15), not by the Rider app.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set up your security key or passkey."
+          }
+        }
+      }
+    },
+    "auth.below_min_version" : {
+      "comment" : "O4 / NeedsReauthHelp calm screen. %1$@ is the admin's personal name — repeat the name, never a pronoun (admins may be any gender; target locales inflect by grammatical gender). No 'Update Now' control.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device needs %1$@'s help. %1$@ has been told."
+          }
+        }
+      }
+    },
+    "auth.below_min_version_generic" : {
+      "comment" : "Name-less fallback when no manifest/admin name is available (offline first launch). Declarative, no apology. Aligns with docs/update-strategy.md.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device needs your group's help. They've been told."
+          }
+        }
+      }
+    },
+    "auth.signin_again" : {
+      "comment" : "Driver interactive re-auth entry (a Driver whose session expired reaches PhoneEntry). Riders never see this — a lone Rider sees auth.below_min_version instead (AC15). Rendered by the Driver app (spec 001 T12).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let's sign in again. Your phone number works."
+          }
+        }
+      }
+    },
+    "onboarding.action.continue" : {
+      "comment" : "Primary advance affordance — the single large control per step (a11y notes; one large affordance per the Rider persona). UI label: sentence case, no trailing period. Affordance copy for the T11 screens (the spec enumerates body copy; the a11y design mandates a control per step).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "onboarding.action.try_again" : {
+      "comment" : "Retry affordance from the PhoneNotOnFile / BindingFailed recovery screens. Warm, no scolding (mirrors the spec's 'Try again or call …' copy). UI label: no trailing period.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
+    "onboarding.autoupdate.enabled" : {
+      "comment" : "The screen AC5 asserts ('auto-update enabled'). Declarative, no celebration of plumbing. Announced to VoiceOver as a completed state, not a button.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic updates are on."
+          }
+        }
+      }
+    },
+    "onboarding.autoupdate.step" : {
+      "comment" : "The O3 auto-update step, performed in person during setup. The only place updates ever appear to a Rider household.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn on automatic updates."
+          }
+        }
+      }
+    },
+    "onboarding.binding.code_invalid" : {
+      "comment" : "Warm recovery; the BindingFailed helper-path copy. %1$@ is the admin's personal name.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That code didn't work. Ask %1$@ for a new one."
+          }
+        }
+      }
+    },
+    "onboarding.binding.code_invalid_generic" : {
+      "comment" : "Name-less fallback for code_invalid when no manifest/admin name is cached (first-launch manifest race / verify failure). Mirrors auth.below_min_version_generic's 'your group' register. UI sentence.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That code didn't work. Your group can give you a new one."
+          }
+        }
+      }
+    },
+    "onboarding.binding.code_prompt" : {
+      "comment" : "'Onboarding Code' is a registered glossary noun (ADR-0016 D1). %1$@ is the admin's personal name.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter the Onboarding Code from %1$@."
+          }
+        }
+      }
+    },
+    "onboarding.binding.code_prompt_generic" : {
+      "comment" : "Name-less fallback for code_prompt when no manifest/admin name is cached (first-launch manifest race / verify failure). Drops the 'from {admin}' clause; 'Onboarding Code' is a glossary noun (ADR-0016 D1). UI sentence.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter your Onboarding Code."
+          }
+        }
+      }
+    },
+    "onboarding.helper.intro" : {
+      "comment" : "Helper-facing intro shown at first launch; warm, not childish. Invites, doesn't instruct — fits a helper sitting beside the rider.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let's set up this phone together."
+          }
+        }
+      }
+    },
+    "onboarding.permissions.allow" : {
+      "comment" : "Primary affordance on the Permissions screen — describes the outcome (the Doorbell Notification). UI label: no trailing period. Affordance copy for T11.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn on notifications"
+          }
+        }
+      }
+    },
+    "onboarding.permissions.decline" : {
+      "comment" : "Secondary affordance on the Permissions screen — calm, non-committal; onboarding never blocks or scolds on a declined permission (AC14). UI label: no trailing period. Affordance copy for T11.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        }
+      }
+    },
+    "onboarding.permissions.notifications_declined" : {
+      "comment" : "Shown only on decline; calm, no scolding (AC14). %1$@ is the admin's personal name.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We'll let %1$@ know notifications aren't on yet."
+          }
+        }
+      }
+    },
+    "onboarding.permissions.notifications_declined_generic" : {
+      "comment" : "Name-less fallback for notifications_declined when no manifest/admin name is cached. Mirrors auth.below_min_version_generic's 'your group' register; calm, no scolding (AC14). UI sentence.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We'll let your group know notifications aren't on yet."
+          }
+        }
+      }
+    },
+    "onboarding.permissions.notifications_why" : {
+      "comment" : "Explains the value of notifications in human terms (the Doorbell Notification).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This lets you know when your driver is at the door."
+          }
+        }
+      }
+    },
+    "onboarding.signin.phone_not_on_file" : {
+      "comment" : "Voice-and-tone exemplar; no existence leak; also reused for the PhoneNotOnFile return banner. %1$@ is the admin's personal name.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That number doesn't match what's on file. Try again or call %1$@."
+          }
+        }
+      }
+    },
+    "onboarding.signin.phone_not_on_file_generic" : {
+      "comment" : "Name-less fallback for phone_not_on_file when no manifest/admin name is cached. Mirrors auth.below_min_version_generic's 'your group' register; no existence leak. UI sentence.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That number doesn't match what's on file. Try again, or your group can help."
+          }
+        }
+      }
+    },
+    "onboarding.signin.phone_prompt" : {
+      "comment" : "First-person, anti-administrative. The helper enters the member's phone number on file.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What's the phone number on file?"
+          }
+        }
+      }
+    },
+    "settings.help" : {
+      "comment" : "Rider Settings row — a warm path to a person (call the admin), not self-service. UI label: no trailing period.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get help"
+          }
+        }
+      }
+    },
+    "settings.notifications" : {
+      "comment" : "Rider Settings row — points to the OS notification settings. Boundless deliberately surfaces NO automatic-updates toggle here (O3 / AC6); auto-update lives in OS settings. UI label: no trailing period.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notifications"
+          }
+        }
+      }
+    },
+    "settings.title" : {
+      "comment" : "Rider Settings screen title.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

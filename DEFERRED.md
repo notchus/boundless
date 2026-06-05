@@ -833,6 +833,70 @@
       tests check the *contract document*, not a live server — which doesn't exist yet).
   - **WHEN:** with the Worker runtime (**T07-shell-B**) / the deploy-hardening pass.
 
+## Apple / Rider UI (spec 001 T11 — out-of-scope register)
+
+> T11 shipped the **Rider onboarding UI slice**: `apple/BoundlessRider` (`RiderShared` lib + tests,
+> no `.xcodeproj`) — every onboarding screen rendered from the `core::auth` state machine via
+> `BoundlessKit` (P4), the String Catalog, Rider Settings, and the full named test suite (68 ×4
+> a11y snapshot baselines + 27 logic tests, green on the iPhone 17 Pro sim). Same functional-core /
+> imperative-shell split as T07–T10. Everything below was deliberately left out; each carries a WHEN.
+
+- [ ] **The deployable iOS app shell (`.xcodeproj` app bundle).** A pure SwiftPM package cannot
+      produce a runnable iOS `.app` (App lifecycle, `Info.plist`, entitlements, bundle id
+      `app.boundless.rider`, launch screen). The shippable app target — the composition root that
+      instantiates `OnboardingViewModel` with the *real* conformers and hosts `OnboardingRouter` —
+      is deferred. The AC tests are all view/model-level and need no app bundle.
+  - **WHEN:** when preparing the first iOS build (ties to the Apple licensing/entitlement items above).
+
+- [ ] **The OpenAPI Swift HTTP client (the real `OnboardingNetworking`).** `swift-openapi-generator`
+      (pre-pinned via docs-researcher: generator **1.12.2** / runtime **1.6.0** / urlsession **1.4.0**
+      — confirm at use) → the `/api/auth/{signin,bind-device}` client that feeds real
+      `SignInResult`/`BindResult` into the view model. Deferred because the deployable Worker it calls
+      does **not exist yet** (T07-shell-B) — building it now is untestable "this should work" code. The
+      `OnboardingNetworking` protocol + a stub already isolate it; the real impl drops in untouched.
+  - **WHEN:** **T07-shell-B** lands (a live Worker to integration-test against) / first iOS build.
+
+- [ ] **Keychain refresh-token storage (plan §10-F) + APNs registration + signed-manifest fetch/verify.**
+      The real `ManifestProviding` (KV manifest fetch + libsodium verify + cache, ADR-0014, providing
+      `{adminName}`), the real `NotificationPermissionRequesting` (`UNUserNotificationCenter`; Critical
+      Alerts once the entitlement lands — DEFERRED), the APNs device-token registration, and the
+      **Keychain** refresh-credential store (never `UserDefaults`/`@AppStorage`, forbidden-patterns).
+      All behind injected protocols today; conformers are the shell.
+  - **WHEN:** the iOS app shell / push spec **007** / **T07-shell-B**.
+
+- [ ] **Recorded VoiceOver walkthrough + Accessibility Inspector pass (manual).** The automated AC11
+      leg asserts the model-level reading order (labels/headings/order, "auto-update enabled" as a
+      state not a button). swift-snapshot-testing has no a11y-tree strategy, so the **recorded**
+      VoiceOver/Switch-Control walkthrough + Xcode Accessibility Inspector run remain a manual
+      checklist item (plan §7 "hard-to-test"). Optional automation: add CashApp **AccessibilitySnapshot**
+      for an a11y-hierarchy image+text snapshot (a new dep — weigh against the model-level assertion).
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+
+- [ ] **Snapshot-baseline CI-runtime pin.** The 68 baselines were recorded locally on the iPhone 17
+      Pro sim / iOS 26.5, pinned to the `iPhone13` device config with `perceptualPrecision 0.98`. If the
+      `macos-15` runner's simulator runtime renders fonts/AA differently enough to exceed the tolerance,
+      the baselines need a one-time CI re-record (a well-known snapshot-testing operational reality). The
+      `boundlessrider` job is **GitHub-only / not locally verifiable** (like `boundlesskit`).
+  - **WHEN:** first CI run of the `boundlessrider` job (re-record from the runner if it diverges).
+
+- [ ] **Added copy beyond the spec's 14 screen-copy keys — product-owner review.** T11 added 11
+      catalog keys (catalog total 25), all voice-and-tone-compliant and trivially editable pre-release:
+      (a) **7 affordance/settings** keys, because P8 forbids hardcoded strings and the a11y design
+      mandates "a single large control per step" — `onboarding.action.{continue,try_again}`,
+      `onboarding.permissions.{allow,decline}` ("Turn on notifications" / "Not now"), Rider Settings
+      rows `settings.{title,notifications,help}`; (b) **4 name-less fallback** keys (review-driven fix,
+      mirroring the spec's own `auth.below_min_version_generic`) so the four name-bearing screens render
+      a generic sentence — not an empty `%1$@` slot — when no manifest/admin name is cached:
+      `onboarding.signin.phone_not_on_file_generic`, `onboarding.binding.{code_prompt,code_invalid}_generic`,
+      `onboarding.permissions.notifications_declined_generic`.
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
+
+- [ ] **`auth.signin_again` (Driver re-auth) + the two `admin.onboarding.*` keys** are authored in the
+      Rider catalog for completeness (AC12) but rendered elsewhere: `auth.signin_again` by the Driver
+      app (**T12**), `admin.onboarding.*` by the SvelteKit admin UI (**T15**). They have no Rider-side
+      L10n accessor by design.
+  - **WHEN:** **T12** (Driver) / **T15** (admin web).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

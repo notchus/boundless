@@ -161,3 +161,20 @@ jobs:
         # xcodebuild test on a simulator (auto-detected iPhone). Proves the Rust core
         # crosses Rust → UniFFI → Swift and runs on-device. GitHub-only (needs macOS+Xcode).
         run: bash scripts/test-boundlesskit.sh
+
+  boundlessrider:
+    name: BoundlessRider (Rider onboarding UI · iOS-sim snapshot + a11y tests — spec 001 T11)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml) + iOS targets
+        run: |
+          rustup show
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Build BoundlessKit, then run the Rider UI snapshot + a11y tests
+        # Builds the BoundlessKit XCFramework, then xcodebuild test on a simulator: the four a11y
+        # snapshot variants per screen + the no-signup / no-toggle / VoiceOver-order / AC5/AC8/AC14/
+        # AC15 logic tests. GitHub-only (needs macOS + Xcode). Snapshot baselines were recorded on a
+        # pinned device config (iPhone13) with tolerant perceptualPrecision; if a runner's simulator
+        # runtime diverges, baselines may need a one-time re-record (DEFERRED.md → Apple / T11).
+        run: bash scripts/test-boundlessrider.sh

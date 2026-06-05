@@ -13,7 +13,7 @@ locks="$(
         find . -name 'Cargo.lock' -not -path '*/target/*'
         find . -name 'pnpm-lock.yaml' -not -path '*/node_modules/*'
         find . -name 'package-lock.json' -not -path '*/node_modules/*'
-        find . -name 'Package.resolved' -not -path '*/.build/*'
+        find . -name 'Package.resolved' -not -path '*/.build/*' -not -path '*/.build-xcode/*' -not -path '*/DerivedData/*'
         find . -name 'gradle.lockfile'
     } 2>/dev/null | LC_ALL=C sort -u
 )"
