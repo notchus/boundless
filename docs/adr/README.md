@@ -42,6 +42,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0019](./0019-worker-postgres-driver.md) — Worker → Postgres via `tokio-postgres` over a Hyperdrive Socket (not `sqlx`, which can't run in Workers wasm); the native `boundless-server-store` adapter + real-Postgres tests land first, the wasm wiring + async-port bridge are T07-shell-B
 - [ADR-0020](./0020-async-auth-ports-device-split.md) — The async-port bridge: `core::server`'s store ports become `async` + fallible (shared `StoreBackend::Error`), device-token methods split into a separate `DeviceStore` port (its Postgres impl is blocked on spec-008 token encryption), `PgAuthStore` now implements `AuthStore`, and `AuthService` is proven end-to-end against real Postgres
 - [ADR-0021](./0021-access-token-wire-format.md) — Access-token wire format = opaque-random 32-byte bearer verified by a constant-time keyed-HMAC store lookup (not EdDSA-JWT); resolves the plan §10-D open item; honors the time-independent, family-status-gated revocation model with zero new key-management infra
+- [ADR-0022](./0022-uniffi-binding-mirror-types.md) — UniFFI binding crates (`core/ffi-swift`, later `core/ffi-kotlin`) mirror the core's enums with `#[derive(uniffi::Enum)]` + exhaustive `From` conversions instead of annotating the core, because the core must stay `uniffi`-free to keep compiling to `wasm32`; the exhaustive `match` is a compile-checked parity guard (not a hand-rolled duplicate, P4)
 
 ## Suggested early ADRs to author (stubs)
 

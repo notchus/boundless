@@ -757,12 +757,45 @@
 > violate "evidence > intuition". The freeze is the substantive gate; codegen is downstream mechanics
 > reproducible from the frozen contract. Everything below is the T10-shell.
 
+> **BoundlessKit / T10-shell (Swift leg) — DONE 2026-06-05.** The UniFFI binding from the Rust core
+> to Swift is built and verified end-to-end on the iOS simulator (the prerequisite that unblocks T11
+> at the FFI level). The earlier "toolchain not installed" reading was wrong for Apple: Xcode 26.5 is
+> installed but not `xcode-select`'d (sudo unavailable), so the build uses
+> `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. Shipped:
+> - `core/ffi-swift` — `uniffi` 0.31.1; mirror enums (`OnboardingState`/`OnboardingEvent`/`LaunchDecision`/
+>   `SignInResult`/`BindResult`/`Role`) + exhaustive `From` conversions + `#[uniffi::export]` free fns
+>   (`launch`/`on_event`/`is_terminal`/`allows_offline_overlay`/`reauth_state_for`/
+>   `should_flag_notifications_off`); `crate-type=["lib","staticlib","cdylib"]`; the `uniffi-bindgen`
+>   CLI is a `[[bin]]` behind a host-only `bindgen` feature. 5 host round-trip/transition tests. The
+>   wasm core stays uniffi-free (ADR-0022); `cargo build --target wasm32 -p {domain,crypto,auth,server-core}`
+>   still clean; ffi-swift is deliberately NOT wasm-buildable and never on the wasm path.
+> - `scripts/build-boundlesskit.sh` (cargo iOS device+sim `.a` + host cdylib → `uniffi-bindgen --library`
+>   → `module.modulemap` rename → `xcodebuild -create-xcframework`) + `scripts/test-boundlesskit.sh`
+>   (auto-detects an available iPhone sim) → `apple/BoundlessKit/` SwiftPM package + a 5-assert smoke
+>   test that **passes on the iPhone 17 simulator** (Rust→UniFFI→Swift on-device).
+> - The XCFramework binary + the generated Swift wrapper are **git-ignored build artifacts**
+>   (reproducible from `core/ffi-swift`, which the binding-drift gate already tracks via `core/**`) —
+>   distinct from the committed `api/generated/**` wire bindings. **Reversible** if toolchain-free
+>   consumption is later wanted (commit the xcframework + extend the drift gate to the uniffi output).
+> - New CI job `boundlesskit` (`macos-15`: rustup iOS targets → `scripts/test-boundlesskit.sh`).
+>   **GitHub-only — not locally verifiable** (like `server-migrations`/`web`); the simulator
+>   destination is auto-detected so it survives the runner's Xcode/sim version.
+> - ADR-0022 records the mirror-types decision; `docs/stack-matrix.md` filled (`uniffi` 0.31.1; Apple
+>   `BoundlessKit` row). **Still deferred:** the OpenAPI Swift HTTP client (swift-openapi-generator,
+>   → T11); `core/ffi-kotlin` AAR (→ T13/T14); proto-Swift (→ realtime spec); committing the
+>   xcframework + drift-gating the uniffi Swift (optional hardening). T11 (the Rider SwiftUI screens,
+>   String Catalog, ×4 snapshot variants, VoiceOver, no-signup/no-toggle inspection tests) is NOT
+>   started — it is the next slice, now FFI-unblocked.
+
 - [ ] **Real per-target codegen + the `generate-bindings.sh` "real generators" block.** Wire each
       generator into `scripts/generate-bindings.sh` (replacing the scaffold-mode hash-only step) and
       commit the produced `api/generated/<lang>/` trees + the refreshed drift lock:
-      - **Swift:** `swift-openapi-generator` + `protoc-gen-swift` → `api/generated/swift/` + the UniFFI
-        **`BoundlessKit` XCFramework** (`uniffi-bindgen`). **WHEN: with/before T11–T12** (SwiftUI UIs;
-        needs Xcode/SwiftPM-plugin + `uniffi-bindgen`).
+      - **Swift:** ~~the UniFFI **`BoundlessKit` XCFramework**~~ **DONE 2026-06-05** (see the
+        "BoundlessKit / T10-shell (Swift leg)" register below). Still deferred: the **OpenAPI Swift
+        HTTP client** (`swift-openapi-generator` + `protoc-gen-swift` → `api/generated/swift/`) — the
+        network layer the Rider UI drives. **WHEN: with T11** (needs the SwiftPM build-tool plugin;
+        versions pre-pinned via docs-researcher — swift-openapi-generator 1.12.2 / runtime 1.6.0 /
+        urlsession 1.4.0 — confirm at use).
       - **Kotlin:** `openapi-generator` (kotlin) + `protoc-gen-kotlin` → `api/generated/kotlin/` + the
         UniFFI **`core-bridge` AAR**. **WHEN: with/before T13–T14** (Compose UIs; needs Android
         Studio/Gradle + `openapi-generator` + `uniffi-bindgen`).
@@ -778,7 +811,12 @@
       XCFramework/AAR are generated: `AppVersion` record-vs-string mapping, `MemberId` UniFFI
       custom-type mapping, and the tainted-type formatter-free binding surface (no `Debug`/`Display`
       leaking across the FFI — P2/I3). Flagged by `platform-parity` at T02; actionable at codegen.
-  - **WHEN:** the Swift/Kotlin codegen above (T11–T14).
+  - **Status (T10-shell Swift, 2026-06-05):** the BoundlessKit surface **deliberately excludes**
+    `AppVersion`, `MemberId`, and **all** tainted/PII types (only the state-machine enums + `Role` +
+    `bool` cross — see ADR-0022 scope), so none of these mappings were needed yet. They become
+    actionable when a UI task first needs one of those types across the FFI.
+  - **WHEN:** the Swift/Kotlin codegen above (T11–T14) — whenever `AppVersion`/`MemberId`/a tainted
+    type is first exported.
 
 - [ ] **Strict fixture↔OpenAPI conformance test (host-only hardening).** The T10 AC7 tests check the
       *version-handshake* invariant on every `/api/auth/*` response, and the core↔wire `ManifestPointer`

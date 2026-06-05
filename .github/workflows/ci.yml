@@ -146,3 +146,18 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: WebAuthn ceremony e2e (AC20)
         run: pnpm test:e2e
+
+  boundlesskit:
+    name: BoundlessKit (UniFFI XCFramework · iOS-sim smoke test — spec 001 T10-shell)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml) + iOS targets
+        run: |
+          rustup show
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Build the XCFramework and run the on-simulator smoke test
+        # Drives core/ffi-swift → uniffi-bindgen → xcodebuild -create-xcframework →
+        # xcodebuild test on a simulator (auto-detected iPhone). Proves the Rust core
+        # crosses Rust → UniFFI → Swift and runs on-device. GitHub-only (needs macOS+Xcode).
+        run: bash scripts/test-boundlesskit.sh

@@ -31,7 +31,7 @@
 | Crate | Version | Used for |
 |---|---|---|
 | `serde` + `serde_json` | 1.0.228 / 1.0.150 | Domain type (de)serialization. `serde` with `derive` (pulls transitive `serde_core` 1.0.228); `serde_json` is **test-only** (golden-fixture round-trip). MIT OR Apache-2.0, wasm32-safe. Pinned 2026-06-04 (spec 001 T02; lock = ground truth). |
-| `uniffi` | TODO (latest stable) | Swift/Kotlin binding generation |
+| `uniffi` | 0.31.1 | Swift/Kotlin binding generation. **Apple/Android tooling ONLY — never on the wasm path:** activated solely by `core/ffi-swift` (spec 001 T10-shell, Swift leg → BoundlessKit; `core/ffi-kotlin` later). The wasm-safe core crates stay uniffi-free; `core/ffi-swift` mirrors their enums with `#[derive(uniffi::Enum)]` + exhaustive `From` conversions (a compile-checked parity guard, **not** a hand-rolled duplicate — ADR-0022). Lib `crate-type = ["lib","staticlib","cdylib"]`; the `uniffi-bindgen` CLI is a `[[bin]]` behind a `bindgen` feature (`uniffi/cli`, host-only — never compiled into the iOS `.a`). MPL-2.0. Latest stable, verified 2026-06-05 via docs-researcher against crates.io (lock = ground truth). Pinned spec 001 T10-shell. |
 | `wasm-bindgen` | TODO | wasm target for admin web (limited) |
 | `tokio` | TODO | Async runtime (server side only) |
 | `proptest` | 1.11.0 | Property-based tests. **Dev-only** (host test runner — never compiled into the wasm32 client/server target, so no `getrandom`/wasm caveat). First used in `core/auth` (spec 001 T04) for the code/version invariants (`prop_onboarding_code_single_use_ttl_ratelimit`, `prop_n_minus_2_version_window`); also the future matching property tests. Failing seeds persist to each crate's committed `proptest-regressions/` (P9 reproducible seeds). MIT OR Apache-2.0; MSRV 1.85 (≤ the workspace 1.89 floor). Latest published release, verified 2026-06-04 via docs-researcher (lock = ground truth). Pinned spec 001 T04. |
@@ -61,8 +61,8 @@
 
 | Dependency | Source | Used for |
 |---|---|---|
-| BoundlessCore | UniFFI-generated XCFramework | Domain types and operations |
-| swift-snapshot-testing | swiftpackageindex | Snapshot tests for views |
+| BoundlessKit | UniFFI-generated XCFramework (uniffi 0.31.1) | The Rust core's onboarding state machine across the FFI. Built from `core/ffi-swift` by `scripts/build-boundlesskit.sh` → `apple/BoundlessKit/`; the xcframework + generated Swift are **build artifacts** (git-ignored, reproducible — not the committed `api/generated/**` wire bindings). Spec 001 T10-shell (Swift leg). |
+| swift-snapshot-testing | swiftpackageindex | Snapshot tests for views. **Version pin lands with T11** (the Rider UI screens) — verified available at **1.19.2** (docs-researcher, 2026-06-05), but not yet a dependency of `apple/BoundlessKit` (its T10-shell smoke test is a plain XCTest). |
 | swift-collections | Apple | Specialized collections |
 | swift-async-algorithms | Apple | Async streams |
 | (no Combine for app state) | — | Use `Observation` framework instead |

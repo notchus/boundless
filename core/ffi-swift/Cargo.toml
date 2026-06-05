@@ -6,6 +6,30 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# UniFFI binding crate → the `BoundlessKit` XCFramework (spec 001 T10-shell, Swift leg).
+#   - "staticlib" → the per-arch `libboundless_ffi_swift.a` linked into the XCFramework
+#     (aarch64-apple-ios + aarch64-apple-ios-sim).
+#   - "cdylib"    → the host `.dylib` whose embedded UniFFI metadata `uniffi-bindgen`
+#     reads in "library mode" to emit the Swift bindings.
+#   - "lib"       → so the crate's own `#[cfg(test)]` round-trip tests build/run on host.
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
 [dependencies]
-# UniFFI scaffolding (and the `crate-type = ["staticlib", "cdylib"]` lib target) is
-# added at the contract freeze in T10.
+# Apple/Android-only tooling — never on the wasm path. Mirror types here keep the core
+# crates uniffi-free (ADR-0022).
+uniffi = { workspace = true }
+boundless-domain = { workspace = true }
+boundless-auth = { workspace = true }
+
+[features]
+# Enables the `uniffi-bindgen` CLI binary (HOST-ONLY). Deliberately NOT enabled for the iOS
+# device/simulator staticlib build (`cargo build --lib`), so clap & friends never compile
+# into the shipped `.a`. The build script turns it on only for the host bindgen run.
+bindgen = ["uniffi/cli"]
+
+# The uniffi-bindgen entry point (library mode). Gated behind `bindgen` so it is built only
+# on the host when generating Swift — see scripts/build-boundlesskit.sh.
+[[bin]]
+name = "uniffi-bindgen"
+required-features = ["bindgen"]

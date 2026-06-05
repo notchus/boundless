@@ -35,6 +35,14 @@ Package.resolved.bak
 *.dSYM/
 **/*.xcframework/build/
 
+# BoundlessKit (spec 001 T10-shell) — BUILD ARTIFACTS, reproducible from core/ffi-swift via
+# scripts/build-boundlesskit.sh. Distinct from the committed api/generated/** wire bindings
+# below: the XCFramework is BINARY, and the UniFFI Swift wrapper is a deterministic function
+# of core/ffi-swift (which is itself tracked by the binding-drift gate). Treated like target/.
+apple/BoundlessKit/Artifacts/
+apple/BoundlessKit/Sources/BoundlessKit/
+apple/**/.build-xcode/
+
 # ─── Android / Kotlin / Gradle ─────────────────────────────────────────────
 .gradle/
 **/build/
