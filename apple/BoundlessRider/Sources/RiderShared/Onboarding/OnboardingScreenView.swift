@@ -74,6 +74,20 @@ public struct OnboardingScreenView: View {
             }
             .labelStyle(.titleAndIcon)
             .accessibilityElement(children: .combine)
+        case let .code(text):
+            // A prominent value to read and keep (the Recovery Code). Monospaced + selectable so it
+            // is legible and copyable; high-contrast bordered container; scales with Dynamic Type
+            // (`.title` text style, never a hardcoded size). Static text — not a control (a11y bar).
+            Text(verbatim: text)
+                .font(.title.monospaced())
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(Spacing.medium)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator))
         }
     }
 

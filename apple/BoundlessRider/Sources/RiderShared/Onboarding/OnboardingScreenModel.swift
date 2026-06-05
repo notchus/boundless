@@ -12,6 +12,10 @@ public enum BodyElement: Equatable, Sendable {
     /// A completed-state announcement (e.g. "Automatic updates are on.") — static text with a
     /// checkmark, announced as a state, NOT a button (a11y notes; AC5).
     case confirmation(String)
+    /// A prominent value the user must read and keep — rendered large, monospaced and selectable
+    /// (e.g. the Driver's one-time **Recovery Code**, spec 001 T12 / AC19). The string is *data*
+    /// (it comes from the server, not the catalog), so it is passed verbatim and never localized.
+    case code(String)
 }
 
 /// A tappable affordance — the single large control(s) per step (a11y notes). Holds a closure,
@@ -75,6 +79,7 @@ public struct OnboardingScreenModel {
             case let .paragraph(text): return A11yDescriptor(label: text, traits: [.staticText])
             case let .banner(text): return A11yDescriptor(label: text, traits: [.staticText])
             case let .confirmation(text): return A11yDescriptor(label: text, traits: [.staticText])
+            case let .code(text): return A11yDescriptor(label: text, traits: [.staticText])
             }
         }
         if let field {

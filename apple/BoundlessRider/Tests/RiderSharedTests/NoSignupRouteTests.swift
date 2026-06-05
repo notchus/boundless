@@ -45,7 +45,7 @@ final class NoSignupRouteTests: XCTestCase {
     private func textContent(of model: OnboardingScreenModel) -> [String] {
         model.elements.map { element in
             switch element {
-            case let .heading(t), let .paragraph(t), let .banner(t), let .confirmation(t): return t
+            case let .heading(t), let .paragraph(t), let .banner(t), let .confirmation(t), let .code(t): return t
             }
         }
     }

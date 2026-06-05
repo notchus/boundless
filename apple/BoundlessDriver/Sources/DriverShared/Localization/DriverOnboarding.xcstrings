@@ -1,0 +1,54 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "onboarding.driver.intro" : {
+      "comment" : "Driver self-onboarding intro (FreshInstall). The Driver runs setup themselves, so this is self-directed — distinct from the Rider's helper-facing 'onboarding.helper.intro' ('…together'). Warm, invites, not childish.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let's get you set up."
+          }
+        }
+      }
+    },
+    "onboarding.recovery.explanation" : {
+      "comment" : "Body copy on the Recovery Code capture screen (Driver onboarding; ADR-0016 D3 / AC19). Explains the value in human terms; no scolding. 'Recovery Code' is a registered glossary noun.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You'll need this to set up Boundless on a new phone. Keep it somewhere safe."
+          }
+        }
+      }
+    },
+    "onboarding.recovery.saved" : {
+      "comment" : "Confirm action on the Recovery Code capture screen — first-person, action-oriented (voice-and-tone). No trailing period (UI label convention).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I've saved it"
+          }
+        }
+      }
+    },
+    "onboarding.recovery.title" : {
+      "comment" : "Heading on the Driver's one-time Recovery Code capture screen (ADR-0016 D3 / AC19). 'Recovery Code' is a registered glossary noun. Captured once at onboarding for self-serve device replacement.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save your Recovery Code."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -891,11 +891,83 @@
       `onboarding.permissions.notifications_declined_generic`.
   - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
 
-- [ ] **`auth.signin_again` (Driver re-auth) + the two `admin.onboarding.*` keys** are authored in the
-      Rider catalog for completeness (AC12) but rendered elsewhere: `auth.signin_again` by the Driver
-      app (**T12**), `admin.onboarding.*` by the SvelteKit admin UI (**T15**). They have no Rider-side
-      L10n accessor by design.
-  - **WHEN:** **T12** (Driver) / **T15** (admin web).
+- [~] **`auth.signin_again` (Driver re-auth) + the two `admin.onboarding.*` keys** are authored in the
+      Rider catalog for completeness (AC12) but rendered elsewhere. **`auth.signin_again` DONE (T12,
+      2026-06-05):** the `L10n.signInAgain` accessor was added (the seam T11 left) and the Driver
+      re-auth `PhoneEntry` renders it (`apple/BoundlessDriver`). The two `admin.onboarding.*` keys still
+      have no L10n accessor by design — rendered by the SvelteKit admin UI.
+  - **WHEN (remaining):** **T15** (admin web).
+
+## Apple / Driver UI (spec 001 T12 — out-of-scope register)
+
+> T12 shipped the **Driver onboarding UI slice**: `apple/BoundlessDriver` (`DriverShared` lib + tests,
+> no `.xcodeproj`) — the Driver self-onboarding flow rendered from `core::auth` via `BoundlessKit`,
+> **reusing the `RiderShared` kit** (screen model/renderer, `L10n`, `OnboardingViewModel`, the injected
+> protocols, the role-neutral screen factories) and adding only the Driver deltas: the self-onboard
+> intro, the **Recovery Code one-time capture** screen (ADR-0016 D3 / AC19 capture leg), and the
+> interactive re-auth `PhoneEntry` (`auth.signin_again`, AC15 Driver branch). 21 tests green on the
+> iPhone 17 Pro sim (76 ×4 a11y snapshot baselines + logic). Two minimal, non-breaking extensions to the
+> shared `RiderShared` kit: the `L10n.signInAgain` accessor (the seam T11 left) and a new
+> `BodyElement.code` element (prominent monospaced/selectable — for the Recovery Code); T11's 68
+> baselines re-verified green. Same functional-core / imperative-shell split as T07–T11. Everything
+> below was deliberately left out; each carries a WHEN trigger.
+
+- [ ] **The deployable `.xcodeproj` Driver app bundle.** A pure SwiftPM package cannot produce a
+      runnable iOS `.app` (App lifecycle, `Info.plist`, entitlements, bundle id **`app.boundless.driver`**
+      — see the Apple section's "Register the Driver app Bundle ID" item, now triggered). The shippable
+      app target that instantiates `DriverOnboardingViewModel` with the real conformers and hosts
+      `DriverOnboardingRouter` is deferred. The AC tests are all view/model-level and need no app bundle.
+  - **WHEN:** when preparing the first Driver iOS build (ties to the Apple licensing/entitlement items).
+
+- [ ] **The real `RecoveryCodeProviding` + the OpenAPI Swift client (incl. `/api/auth/recovery/rebind`).**
+      T12 ships the `RecoveryCodeProviding` protocol + a stub; the real impl reads `fresh_recovery_code`
+      off the `/api/auth/bind-device` (and rebind) response. Deferred because the deployable Worker those
+      calls target does **not exist yet** (T07-shell-B). Drops in behind the protocol untouched.
+  - **WHEN:** **T07-shell-B** lands (a live Worker) / first Driver iOS build.
+
+- [ ] **The self-serve re-bind ENTRY UI** (phone + Recovery Code on a *new* device → re-bind, old token
+      invalidated, fresh code issued). The onboarding **state machine has no recovery-rebind state** to
+      render, so building a UI for it now would be UI not driven by the core (against P4). The AC19
+      server/logic legs are **done** (T04 `evaluate_recovery_code`, T05/T07 rebind + fresh-code +
+      old-token invalidation); T12 closed AC19's **capture** leg. The re-bind entry needs either a new
+      core state or a separate flow — surface when that flow is specced.
+  - **WHEN:** a recovery-rebind flow spec (or when the Driver app shell adds a "new phone" entry point).
+
+- [ ] **Keychain refresh-token storage (§10-F) + APNs registration + signed-manifest fetch/verify.**
+      The Driver reuses the same injected `ManifestProviding` / `NotificationPermissionRequesting`
+      boundaries as the Rider; the real conformers (KV manifest fetch + libsodium verify + cache;
+      `UNUserNotificationCenter`; the Keychain refresh store) are the shell. Same as the T11-shell items.
+  - **WHEN:** the Driver iOS app shell / push spec **007** / **T07-shell-B**.
+
+- [ ] **Recorded VoiceOver walkthrough + Recovery-Code spell-out a11y (manual / polish).** The automated
+      AC11 leg asserts the model-level reading order (incl. the code as static text). A **recorded**
+      VoiceOver/Switch-Control walkthrough remains a manual checklist item; an optional polish is reading
+      the Recovery Code **character-by-character** (a per-character `accessibilityLabel`) rather than as a
+      single token — weigh when the persona-acceptance/a11y review runs.
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+
+- [ ] **Snapshot-baseline CI-runtime pin.** The 76 Driver baselines were recorded locally on the iPhone
+      17 Pro sim / iOS 26.5, pinned to `iPhone13` + `perceptualPrecision 0.98` (same as T11). If the
+      `macos-15` runner's simulator runtime renders differently enough to exceed the tolerance, the
+      baselines need a one-time CI re-record. The `boundlessdriver` job is **GitHub-only / not locally
+      verifiable** (like `boundlessrider`/`boundlesskit`).
+  - **WHEN:** first CI run of the `boundlessdriver` job (re-record from the runner if it diverges).
+
+- [ ] **4 added catalog keys beyond the spec's table — product-owner review.** T12 added a Driver
+      catalog (`DriverOnboarding.xcstrings`, table `DriverOnboarding`) with 4 voice-and-tone-checked
+      keys the Driver flow needs but the spec's i18n table didn't enumerate: `onboarding.driver.intro`
+      ("Let's get you set up." — self-onboard, vs the Rider's helper-facing "…together"), and the
+      Recovery Code capture trio `onboarding.recovery.{title,explanation,saved}` ("Save your Recovery
+      Code." / "You'll need this to set up Boundless on a new phone. Keep it somewhere safe." / "I've
+      saved it"). All trivially editable pre-release.
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
+
+- [ ] **`DriverShared` reuses `RiderShared` directly (no extracted "OnboardingKit" module).** T12 made
+      two minimal additive extensions to `RiderShared` (the `signInAgain` accessor + `BodyElement.code`)
+      rather than extracting a third shared module. If a future consumer needs the kit without the
+      "Rider" name (none today — Compose/web are separate platforms), consider extracting a neutral
+      `BoundlessOnboardingKit` SwiftPM module. Not needed now (YAGNI).
+  - **WHEN:** if/when a third Apple consumer of the onboarding kit appears.
 
 ## Constitution
 

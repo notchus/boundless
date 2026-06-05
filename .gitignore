@@ -42,6 +42,8 @@ Package.resolved.bak
 apple/BoundlessKit/Artifacts/
 apple/BoundlessKit/Sources/BoundlessKit/
 apple/**/.build-xcode/
+# Xcode/SwiftPM per-user workspace metadata (xcuserdata, etc.) for the SwiftPM packages.
+apple/**/.swiftpm/
 
 # ─── Android / Kotlin / Gradle ─────────────────────────────────────────────
 .gradle/

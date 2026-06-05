@@ -8,9 +8,10 @@ import Foundation
 ///
 /// Resolution uses `Bundle.module.localizedString(forKey:value:table:)` (not `String(localized:)`,
 /// whose `LocalizationValue` wants a compile-time literal) because the keys are identifiers
-/// resolved at runtime. Three keys live in the catalog for completeness (AC12) but are rendered by a
+/// resolved at runtime. Two keys live in the catalog for completeness (AC12) but are rendered by a
 /// different surface, so they have no accessor here: the two `admin.onboarding.*` keys (SvelteKit
-/// admin UI, spec 001 T15) and `auth.signin_again` (Driver interactive re-auth, spec 001 T12).
+/// admin UI, spec 001 T15). `auth.signin_again` gained its accessor in T12 (the Driver app reaches
+/// this shared kit) — see `signInAgain` below.
 public enum L10n {
     private static func resolve(_ key: String) -> String {
         // `value: key` → a missing entry falls back to the visible key (caught by tests / pseudo).
@@ -61,10 +62,12 @@ public enum L10n {
     public static var autoUpdateEnabled: String { resolve("onboarding.autoupdate.enabled") }
 
     // ── Re-auth / degradation ────────────────────────────────────────────────────────────
-    // `auth.signin_again` (Driver interactive re-auth) has NO accessor here — like the two
-    // `admin.onboarding.*` keys, it lives in the catalog for completeness (AC12) but is rendered by
-    // a different surface (the Driver app, spec 001 T12), so adding a Rider accessor would be dead
-    // public surface (reviewer T11). It returns when the Driver re-auth screen is built.
+    /// Driver interactive re-auth entry: a Driver whose session expired routes to `PhoneEntry`
+    /// (the core's `reauth_state_for(.driver)`, P4) and this leads that screen. Riders never see it
+    /// — a lone Rider gets the form-less `NeedsReauthHelp`/`belowMinVersion` calm screen (AC15).
+    /// The key lives in this shared catalog; the Driver app (spec 001 T12) renders it via this kit.
+    public static var signInAgain: String { resolve("auth.signin_again") }
+
     /// O4 / `NeedsReauthHelp` calm screen. The name is repeated (never a pronoun) — both `%1$@`.
     public static func belowMinVersion(adminName: String) -> String {
         resolve("auth.below_min_version", adminName)

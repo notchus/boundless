@@ -178,3 +178,21 @@ jobs:
         # pinned device config (iPhone13) with tolerant perceptualPrecision; if a runner's simulator
         # runtime diverges, baselines may need a one-time re-record (DEFERRED.md → Apple / T11).
         run: bash scripts/test-boundlessrider.sh
+
+  boundlessdriver:
+    name: BoundlessDriver (Driver onboarding UI · iOS-sim snapshot + a11y tests — spec 001 T12)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml) + iOS targets
+        run: |
+          rustup show
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Build BoundlessKit, then run the Driver UI snapshot + a11y tests
+        # Builds the BoundlessKit XCFramework, then xcodebuild test on a simulator: the four a11y
+        # snapshot variants per Driver screen + the Recovery-Code-capture / Driver-re-auth /
+        # no-signup / VoiceOver-order / AC14 logic tests. DriverShared reuses RiderShared's renderer.
+        # GitHub-only (needs macOS + Xcode). Baselines pinned to iPhone13 + tolerant
+        # perceptualPrecision; a runner-runtime divergence may need a one-time re-record
+        # (DEFERRED.md → Apple / Driver UI — T12).
+        run: bash scripts/test-boundlessdriver.sh
