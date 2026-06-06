@@ -1,5 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Driver app strings (spec 001 T14; the Android twin of DriverShared/DriverOnboarding.xcstrings). The
+  shared onboarding/auth catalog lives in :rider:shared (merged in at build time); only the per-app
+  brand name + the 4 Driver-only keys live here. Every user-visible string is catalog-sourced (P8).
+  Apostrophes are escaped (\'). Real translations + gsw / RTL / zz-ZZ arrive via Weblate + the signed
+  KV manifest (ADR-0014).
+-->
 <resources>
-    <!-- Brand name — not translated. Real onboarding copy ships as catalog keys with T14 (P8). -->
     <string name="app_name" translatable="false">Boundless</string>
+
+    <!-- Driver self-onboarding intro (FreshInstall). Self-directed — distinct from the Rider's
+         helper-facing "…together". Warm, invites, not childish. -->
+    <string name="onboarding_driver_intro">Let\'s get you set up.</string>
+
+    <!-- The Driver's one-time Recovery-Code capture (ADR-0016 D3 / AC19). Captured once at onboarding
+         so the Driver can self-serve a future device replacement. "Recovery Code" is a glossary noun. -->
+    <string name="onboarding_recovery_title">Save your Recovery Code.</string>
+    <string name="onboarding_recovery_explanation">You\'ll need this to set up Boundless on a new phone. Keep it somewhere safe.</string>
+    <!-- Confirm action — first-person, action-oriented. No trailing period (UI label convention). -->
+    <string name="onboarding_recovery_saved">I\'ve saved it</string>
 </resources>

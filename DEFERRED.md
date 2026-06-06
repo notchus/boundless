@@ -1158,6 +1158,108 @@
       completeness but rendered by the admin web / Driver, not the Rider.
   - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording (keep in lock-step with the iOS catalog).
 
+## Android / Driver UI (spec 001 T14 — out-of-scope register)
+
+> T14 shipped the **Compose Driver onboarding UI slice** in `android/driver/app` (package
+> `app.boundless.driver`) + the behavior-preserving extraction of the role-neutral kit into a new
+> `com.android.library` **`:rider:shared`** (the Android twin of iOS's `RiderShared` library; both apps
+> depend on it — an app module can't depend on another app module). The Driver reuses the shared kit and
+> adds only the three deltas from T12 (self-onboard intro, one-time Recovery-Code capture, interactive
+> re-auth PhoneEntry), all rendered from `core::auth` via `:core-bridge` (P4). 44 tests green (19 screens
+> ×4 = 76 Paparazzi baselines + 25 logic/a11y/content); `:rider:app`'s 68 baselines + logic tests
+> re-verified green **unchanged** (proof the extraction changed nothing). Same functional-core /
+> imperative-shell split as T07–T13. Everything below was deliberately left out (the **T14-shell**); each
+> carries a WHEN trigger.
+
+- [ ] **The deployable launcher `MainActivity` (the Driver composition root).** Like T13, T14 ships the
+      screens/model/VM/router/catalog + tests as "UI legs" with **no launcher Activity** (a
+      `com.android.application` module assembles without one). The shippable `MainActivity` that
+      instantiates `DriverOnboardingViewModel` with the real conformers, hosts `DriverOnboardingRouter`,
+      and wraps it in `DriverTheme` — bundle id **`app.boundless.driver`** (Apple/Android register-bundle
+      items) — is deferred.
+  - **WHEN:** when preparing the first Driver Android build.
+
+- [ ] **The real `RecoveryCodeProviding` + the OpenAPI Kotlin HTTP client (`OnboardingNetworking`).** T14
+      ships the `RecoveryCodeProviding` interface + a `FakeRecovery`; the real impl reads
+      `fresh_recovery_code` off the `/api/auth/bind-device` (and rebind) response. Likewise the real
+      `OnboardingNetworking` (`openapi-generator` kotlin → `/api/auth/{signin,bind-device}`). Both deferred
+      because the deployable Worker they call does **not exist yet** (T07-shell-B); building them now is
+      untestable "this should work" code. They drop in behind the existing interfaces untouched.
+      **Carry-forward (T14 security review, low):** the Recovery Code is a secret but is a bare `String?`
+      everywhere (faithfully mirroring the iOS twin `recoveryCode: String?`), so a future caller could log
+      it with no compiler friction. When the real provider lands, wrap it in a thin `RecoveryCode` newtype
+      with no `toString`/`Debug` returning the raw value (the `DeviceToken`/`PhoneNumber` discipline, P2) +
+      add a CI/lint grep asserting no `Log.*`/`print` of the value — and coordinate with the iOS twin so
+      both platforms gain the same guard. (No live break today: zero logging in the shipped slice.)
+  - **WHEN:** **T07-shell-B** (a live Worker) + the T10 Kotlin OpenAPI codegen.
+
+- [ ] **The self-serve re-bind ENTRY UI** (phone + Recovery Code on a *new* device → re-bind, old token
+      invalidated, fresh code issued). The onboarding **state machine has no recovery-rebind state** to
+      render, so building a UI for it now would be UI not driven by the core (against P4) — exactly as iOS
+      T12 deferred it. The AC19 server/logic legs are **done** (T04/T05/T07); T14 closed AC19's **capture**
+      leg. Needs either a new core state or a separate flow.
+  - **WHEN:** a recovery-rebind flow spec (or when the Driver app shell adds a "new phone" entry point).
+
+- [ ] **`NotificationManager`/FCM + signed-manifest fetch/verify + Keystore refresh storage (§10-F).** The
+      real `NotificationPermissionRequesting` (`POST_NOTIFICATIONS` on API 33+), FCM device-token
+      registration, the `ManifestProviding` impl (KV manifest fetch + libsodium verify + cache, ADR-0014,
+      providing `{adminName}`), and the **EncryptedSharedPreferences / Keystore** refresh-credential store
+      (never plain `SharedPreferences`) — all behind injected boundaries today; the conformers are the
+      shell. Same as the T13-shell items (the Driver reuses the shared boundaries).
+      **Carry-forward (T14 security review, nit):** before the shell persists ANY credential, set
+      **`android:allowBackup="false"`** (or a tight `dataExtractionRules`/`fullBackupContent` that excludes
+      the Keystore-backed store) on **both** the Driver and Rider app manifests — Android Auto Backup
+      otherwise ships app-private files to the user's Google account (a P2/I12 cloud-exfiltration vector).
+  - **WHEN:** the Driver app shell / push spec **007** / **T07-shell-B**.
+
+- [ ] **Onboarding-Code / phone field input-security + submit re-entrancy guard (same as T13-shell).** When
+      the real input flow is wired (MainActivity), mark the code field as a one-time code
+      (`ContentType.SmsOtpCode`, a **Compose 1.8** API) + no-personalized-learning, and the phone field
+      `ContentType.PhoneNumber`, so the single-use secret and the phone number don't leak into the keyboard
+      learning store (P2 spirit). Also disable the action while a `submitPhone`/`submitCode` coroutine is
+      in-flight (double-tap guard). T14 wires no real input (fields are rendered in snapshots only), and the
+      clean content-type API needs Compose 1.8 — so both land with the real input flow.
+      **Carry-forward (T14 security review, nit):** while the **Recovery-Code capture** screen is shown,
+      set **`FLAG_SECURE`** on the window (block screenshots / screen-recording of the secret) and ensure
+      the code value never enters the autofill / clipboard-history learning store — same content-type
+      discipline as the OTP field above.
+  - **WHEN:** **T14-shell** (MainActivity real input) / a Compose 1.8 bump.
+
+- [ ] **Recorded TalkBack walkthrough + character-by-character Recovery-Code spell-out (manual / polish).**
+      The automated AC11 leg asserts the model-level reading order (incl. the code read as static text). A
+      **recorded** TalkBack / Switch-Access walkthrough remains a manual checklist item; an optional polish
+      is reading the Recovery Code **character-by-character** (a per-character semantics label) rather than
+      as one token — weigh at the persona-acceptance/a11y review (the iOS twin flagged the same).
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+
+- [ ] **Snapshot-baseline CI-runtime pin.** The 76 Driver baselines were recorded locally on macOS via
+      Paparazzi's bundled layoutlib. The `android` CI job is **GitHub-only / not locally verifiable**
+      (Ubuntu runner), so the first CI run is the real cross-runtime proof; re-record from the runner if the
+      text rendering diverges (a known snapshot reality, as on iOS T11/T12 and Android T13). The CI `android`
+      job must be extended to run `:driver:app:verifyPaparazziDebug` + `:driver:app:testDebugUnitTest` +
+      `:rider:shared:assembleDebug` alongside the rider ones.
+  - **WHEN:** first CI run of the extended `android` job; extend the job's task list with the Driver + `:rider:shared`.
+
+- [ ] **4 added Driver catalog keys beyond the spec's table — product-owner review.** T14 added a Driver
+      `strings.xml` (4 keys) mirroring the iOS `DriverOnboarding.xcstrings` verbatim:
+      `onboarding_driver_intro` ("Let's get you set up."), and the Recovery-Code capture trio
+      `onboarding_recovery_{title,explanation,saved}` ("Save your Recovery Code." / "You'll need this to set
+      up Boundless on a new phone. Keep it somewhere safe." / "I've saved it"). All voice-and-tone-checked,
+      trivially editable pre-release. Keep in lock-step with the iOS Driver catalog.
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
+
+- [ ] **Move the shared test resolver/fakes to AGP `testFixtures` once KGP ≥ 2.1.** T14 wanted the catalog
+      resolver + fakes single-sourced in `:rider:shared`'s `testFixtures`, but **KGP 2.0.21 doesn't compile
+      Kotlin in `testFixtures` source sets** (that landed in Kotlin 2.1.0; the AGP feature exists but the
+      Kotlin task `compileDebugTestFixturesKotlin` is absent). 2.0.21 is pinned by Paparazzi 1.3.5 / AGP
+      8.4.2, so it can't be bumped now. Fallback (shipped): `CatalogRiderStrings` lives in
+      `:rider:shared/src/main` (inert in production — the shipping resolver is the deferred
+      `AndroidRiderStrings`), and the trivial fakes (`FakeNetworking`/`…`) are duplicated per app test. When
+      the toolchain advances (Paparazzi 2.x stable → Kotlin 2.1+), move the resolver + fakes into
+      `:rider:shared/src/testFixtures` and consume via `testImplementation(testFixtures(project(":rider:shared")))`
+      to drop the resolver out of `main` and de-duplicate the fakes.
+  - **WHEN:** the next Android toolchain bump (Paparazzi 2.x / Kotlin 2.1+).
+
 ## Admin web / SvelteKit onboarding (spec 001 T15 — out-of-scope register)
 
 > T15 shipped the **admin onboarding UI slice**: the SvelteKit app scaffold + the four onboarding

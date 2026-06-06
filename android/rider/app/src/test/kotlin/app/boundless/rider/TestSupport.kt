@@ -12,13 +12,20 @@ import uniffi.boundless_ffi_kotlin.BindResult
 import uniffi.boundless_ffi_kotlin.Role
 import uniffi.boundless_ffi_kotlin.SignInResult
 
-/** Shared fixtures for the Rider onboarding tests. */
+/**
+ * Rider onboarding test fixtures. The kit + the catalog resolver ([CatalogRiderStrings]) now live in
+ * `:rider:shared`; these fakes are the Rider app's test doubles. (The Driver app has equivalent
+ * doubles in its own test source set — a few lines each; AGP testFixtures can't host shared Kotlin on
+ * the pinned KGP 2.0.21, so the resolver is single-sourced in `:rider:shared/main` and the trivial
+ * fakes are per-app.)
+ */
 object Fixtures {
     /** The admin's personal name, supplied by the manifest in production (ADR-0014). */
     const val ADMIN_NAME = "Sarah"
 }
 
-/** The real catalog (parsed from the shipped strings.xml) — the single source of truth for copy. */
+/** The real catalog (parsed from the shipped `:rider:shared` strings.xml) — the single source of
+ *  truth for copy, with no English drift between tests/snapshots and the shipped strings. */
 val TestStrings: RiderStrings = CatalogRiderStrings.fromDefaultCatalog()
 
 fun testScreens(): RiderOnboardingScreens = RiderOnboardingScreens(TestStrings)

@@ -45,15 +45,21 @@ android {
             )
             // CatalogRiderStrings resolves copy by parsing the REAL strings.xml (single source of
             // truth — no English drift), so tests + snapshots render the genuine shipped catalog.
+            // The shared catalog now lives in :rider:shared (merged into the app at build time).
             it.systemProperty(
                 "boundless.strings.path",
-                project.file("src/main/res/values/strings.xml").absolutePath,
+                rootProject.file("rider/shared/src/main/res/values/strings.xml").absolutePath,
             )
         }
     }
 }
 
 dependencies {
+    // The role-neutral onboarding kit (screens/renderer/view-model/router/a11y/strings + the shared
+    // catalog) lives in :rider:shared; the app keeps only RiderSettings + RiderTheme. :rider:shared
+    // re-exports :core-bridge + Compose via `api`, but the explicit deps below keep the app's own
+    // surface self-documenting (and the FFI-driving tests import uniffi types directly).
+    implementation(project(":rider:shared"))
     implementation(project(":core-bridge"))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
