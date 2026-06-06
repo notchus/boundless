@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rider app shell. The launcher Activity + real onboarding host arrive with T13; this empty
+     <application> lets the module assemble as a stub home. App label comes from the strings
+     catalog (P8: no hardcoded user-visible strings; app/brand name marked non-translatable). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="@string/app_name" />
+</manifest>

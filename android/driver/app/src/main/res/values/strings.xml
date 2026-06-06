@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand name — not translated. Real onboarding copy ships as catalog keys with T14 (P8). -->
+    <string name="app_name" translatable="false">Boundless</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand name — not translated (voice-and-tone applies to copy, not the product name). The
+         real onboarding copy ships as catalog keys with T13 (P8). -->
+    <string name="app_name" translatable="false">Boundless</string>
+</resources>

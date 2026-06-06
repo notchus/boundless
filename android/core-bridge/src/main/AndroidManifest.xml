@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- :core-bridge is a pure binding library: no components, no permissions. The namespace is set
+     in build.gradle.kts; this empty manifest keeps AGP happy across versions. -->
+<manifest />

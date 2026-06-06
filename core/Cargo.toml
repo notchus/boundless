@@ -107,12 +107,13 @@ pollster = "0.4"
 rand_core = { version = "0.9", default-features = false }
 rand_chacha = "0.9"
 
-# UniFFI — Rust→Swift/Kotlin binding generation (spec 001 T10-shell, the Swift leg →
-# BoundlessKit). Apple/Android TOOLING ONLY — never on the wasm path: activated solely by
-# core/ffi-swift (and, later, core/ffi-kotlin). The wasm-safe core crates (domain/auth/crypto/
-# server) stay uniffi-free; ffi-swift mirrors their enums with exhaustive `From` conversions
-# (a compile-checked parity guard, not a hand-rolled duplicate — ADR-0022). 0.31.1 = latest
-# stable, verified 2026-06-05 via docs-researcher against crates.io (MPL-2.0; lock = ground
-# truth). The `cli` feature (for the uniffi-bindgen binary) is enabled ONLY by ffi-swift's
-# own host-only `bindgen` feature — never by default, so clap stays out of the iOS staticlib.
+# UniFFI — Rust→Swift/Kotlin binding generation (spec 001 T10-shell Swift leg → BoundlessKit;
+# Android bring-up Kotlin leg → BoundlessCore). Apple/Android TOOLING ONLY — never on the wasm
+# path: activated solely by core/ffi-swift AND core/ffi-kotlin. The wasm-safe core crates
+# (domain/auth/crypto/server) stay uniffi-free; both ffi crates mirror their enums with
+# exhaustive `From` conversions (a compile-checked parity guard, not a hand-rolled duplicate —
+# ADR-0022). 0.31.1 = latest stable, verified 2026-06-05 via docs-researcher against crates.io
+# (MPL-2.0; lock = ground truth). The `cli` feature (for the uniffi-bindgen binary) is enabled
+# ONLY by the two ffi crates' own host-only `bindgen` feature — never by default, so clap stays
+# out of the shipped iOS staticlib / Android `.so`.
 uniffi = "0.31.1"

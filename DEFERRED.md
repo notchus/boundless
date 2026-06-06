@@ -971,34 +971,98 @@
       `BoundlessOnboardingKit` SwiftPM module. Not needed now (YAGNI).
   - **WHEN:** if/when a third Apple consumer of the onboarding kit appears.
 
-## Android toolchain + Compose UI (spec 001 T13/T14 — BLOCKED, bring-up prerequisite)
+## Android bring-up (spec 001 — DONE 2026-06-06; unblocks T13/T14)
 
-> T13 (Compose Rider UI) and T14 (Compose Driver UI) — the Android mirrors of T11/T12 — are
-> **toolchain-blocked** in this environment and were **not** attempted (anti-hallucination: no
-> "this should work" code without a build/test). The user chose T15 instead. Three things must
-> exist before T13/T14 can be implemented with evidence:
+> The Android toolchain + `core/ffi-kotlin` UniFFI AAR + `android/` Gradle project — the Kotlin
+> analog of T10-shell's BoundlessKit — are now **built and proven end-to-end** (the prerequisite
+> that turned T13/T14 from "toolchain-blocked" to "just write the screens + their tests"). Shipped:
+> - **`core/ffi-kotlin`** — the UniFFI surface, mirroring `core/ffi-swift` exactly (mirror enums
+>   `Role`/`OnboardingState`/`OnboardingEvent`/`LaunchDecision`/`SignInResult`/`BindResult` +
+>   exhaustive `From` parity guard + the 6 `#[uniffi::export]` fns; `crate-type=["lib","cdylib"]`;
+>   `uniffi-bindgen` `[[bin]]` behind a host-only `bindgen` feature). 5 host round-trip tests
+>   (`cargo test -p boundless-ffi-kotlin`). The wasm core stays uniffi-free — `cargo build
+>   --target wasm32 -p {domain,crypto,auth,server-core}` still clean (ADR-0022; ffi-kotlin is
+>   never on the wasm path).
+> - **Android toolchain** installed under `$HOME` (no sudo): cmdline-tools `latest` (20.0) +
+>   platform-34 + build-tools-34.0.0 + **NDK 28.2.13676358**; the 4 Rust Android targets
+>   (aarch64/armv7/x86_64/i686-linux-android); **cargo-ndk 4.1.2**. Proven by a 4-ABI `.so`
+>   cross-compile.
+> - **`scripts/build-corebridge.sh`** (Kotlin analog of build-boundlesskit.sh): host cdylib →
+>   `uniffi-bindgen` Kotlin → `cargo ndk` 4-ABI `.so` into `:core-bridge` jniLibs + the host cdylib
+>   for the JVM smoke test. Generated Kotlin + `.so` are **git-ignored build artifacts** (reproducible;
+>   tracked via `core/**` in the drift gate), exactly like the BoundlessKit xcframework.
+> - **`android/` Gradle project** (wrapper-pinned **Gradle 8.7**; **AGP 8.4.2 · Kotlin 2.0.21 ·
+>   Paparazzi 1.3.5 · Compose 1.7.5/Material3 1.3.1 · compileSdk 34 · JNA 5.17.0** — the
+>   proven-Paparazzi-green set, ground truth = Paparazzi 1.3.5's catalog): `:core-bridge` (the P4
+>   "BoundlessCore" AAR) + `:rider:app` (T13 home) + `:driver:app` (T14 home). **Proven green:** the
+>   `:core-bridge` host-JVM **FFI smoke test** (Rust→UniFFI→Kotlin/JNA, no emulator — 1 test pass),
+>   the `:rider:app` **Paparazzi** sample record+verify, and `assembleDebug` for both apps (the
+>   per-ABI `libboundless_ffi_kotlin.so` is packaged into the APK alongside JNA's libjnidispatch).
+> - **CI:** new `android` job (Ubuntu; `android-actions/setup-android` + sdkmanager + rust targets +
+>   cargo-ndk → `scripts/test-corebridge.sh`). GitHub-only / not-locally-gated (like `boundlesskit`).
+> - `docs/stack-matrix.md` filled (Android section + Kotlin/cargo-ndk/SDK-NDK rows); ADR-0022 already
+>   covers the mirror-types decision (no new ADR — the Kotlin leg is the documented Android twin).
+>
+> **T13 and T14 are now UNBLOCKED** — each is "write the Compose screens (rendered from `:core-bridge`)
+> + the ×4 a11y Paparazzi snapshots + TalkBack/no-signup/no-toggle tests", mirroring T11/T12.
+>
+> Out-of-scope register for this bring-up (each with a WHEN):
 
-- [ ] **Install the Android SDK + NDK.** No SDK (`~/Library/Android` absent, `ANDROID_HOME` empty,
-      no `sdkmanager`, no Android Studio) and no NDK are present. `gradle` (sdkman) + JDK 21 are, but
-      Compose/Paparazzi need a `compileSdk` platform, and the UniFFI Kotlin AAR needs the NDK
-      (cargo-ndk cross-compile to Android ABIs). Installing is a heavy, machine-modifying, GB-scale
-      step (accepts Google licenses) — surface to the owner before doing it.
-  - **WHEN:** before T13/T14 (Compose UIs).
-- [ ] **Build the `core/ffi-kotlin` UniFFI AAR** (the Kotlin analog of T10-shell's `BoundlessKit`).
-      `core/ffi-kotlin` is still a bare T01 skeleton (`Cargo.toml` + `src/`); only the **Swift**
-      `BoundlessKit` was built at T10-shell. The Compose UIs render `core::auth` via this AAR (P4),
-      exactly as the SwiftUI UIs use `BoundlessKit`. Mirror ADR-0022 (mirror enums + `From` parity,
-      wasm core stays uniffi-free). Needs `uniffi-bindgen` (Kotlin) + cargo-ndk + the NDK.
-  - **WHEN:** with/before T13/T14.
-- [ ] **Stand up the `android/` Gradle project** (`android/` is absent): `settings.gradle(.kts)`,
-      root build, `gradle/libs.versions.toml` (Compose BOM, Material3, Paparazzi, Turbine, Hilt per
-      stack-matrix), `android/rider/app` + `android/driver/app` modules. Then T13/T14 build the Compose
-      screens + Paparazzi ×4 a11y snapshots + TalkBack/no-signup/no-toggle tests (mirroring T11/T12).
-  - **WHEN:** T13/T14.
-- [ ] **Kotlin codegen + the Android binding-drift / allow-list wiring** (OpenAPI-Kotlin client +
-      proto-Kotlin → `api/generated/kotlin/`, per the T10 codegen register) lands with the same slice;
-      re-run the network allow-list against the new `gradle.lockfile`(s).
-  - **WHEN:** T13/T14.
+- [x] ~~Install the Android SDK + NDK~~ — **DONE 2026-06-06** (cmdline-tools 20.0, platform/build-tools
+      34, NDK 28.2.13676358 under `~/Library/Android/sdk`).
+- [x] ~~Build the `core/ffi-kotlin` UniFFI AAR~~ — **DONE 2026-06-06** (see above; ADR-0022 parity).
+- [x] ~~Stand up the `android/` Gradle project~~ — **DONE 2026-06-06** (`:core-bridge` + `:rider:app` +
+      `:driver:app`, Paparazzi + FFI smoke proven green).
+
+- [ ] **Committed `gradle.lockfile`(s) + fold the Android tree into `check-network-allowlist.sh` (I8/AC13).**
+      The Android dep tree is **already gated** by an **interim** CI step (`scripts/check-android-trackers.sh`,
+      run in the `android` job): it resolves the three modules' dependency closures and greps them against
+      `ci/forbidden-trackers.txt` (currently clean — only androidx/jna/paparazzi/kotlin), so a transitive
+      bump that pulls a tracker fails CI, not just review. What's still deferred is the *committed*
+      `gradle.lockfile` + having `check-network-allowlist.sh` scan it like the other 5 locks (it already
+      globs `gradle.lockfile`, so it's "commit the lockfile + re-run"). Enabling Gradle dependency locking
+      across an AGP multi-module build has known footguns (`lockAllConfigurations` makes every config
+      require a lock → builds break if generation missed one; LENIENT mode + a `resolveAndLockAll` task is
+      the safer shape), so the *lockfile* deserves its own focused slice — but the tracker risk is covered
+      now by the interim grep.
+  - **WHEN:** with **T13/T14** (when the Android dep tree stabilizes with the real Compose/Hilt/Turbine
+    set) or the next CI-hardening pass. The interim grep covers the gap until then.
+
+- [ ] **`sdkmanager`/cmdline-tools writes SDK XML v4; AGP 8.4.2's tooling understands up to v3** — a
+      benign build **warning** ("This version only understands SDK XML versions up to 3 but … version 4
+      was encountered"), seen because cmdline-tools `latest` (20.0) is newer than AGP 8.4.2. Build/test/
+      assemble all succeed regardless. If it ever becomes more than cosmetic, pin an older cmdline-tools
+      or bump AGP (which is gated on Paparazzi — see the version note in stack-matrix).
+  - **WHEN:** only if it stops being a pure warning (or when AGP is next bumped).
+
+- [ ] **Snapshot-baseline CI-runtime pin.** The Paparazzi sample baseline was recorded locally
+      (macOS/this machine). It is **text-free** (a solid Material3-color box), so it should be
+      byte-stable across the Ubuntu runner (no font hinting) — but the `android` job is **GitHub-only /
+      not locally verifiable** (like `boundlessrider`), so the first CI run is the real proof; re-record
+      from the runner if it diverges. T13/T14's real screens (with text) will face the usual snapshot
+      cross-runtime tolerance question — handle as on iOS.
+  - **WHEN:** first CI run of the `android` job; and at T13/T14 for the real screens.
+
+- [ ] **Kotlin OpenAPI/proto codegen → `api/generated/kotlin/`** (the T10 codegen register's Kotlin
+      leg: `openapi-generator` kotlin + `protoc-gen-kotlin`). NOT part of the bring-up (that wired only
+      the **UniFFI** Kotlin, the domain/auth state machine — the network client is separate, exactly as
+      the Swift OpenAPI client was deferred from the BoundlessKit T10-shell). Re-run the network
+      allow-list against the new `gradle.lockfile`(s) when it lands.
+  - **WHEN:** with **T13/T14** (the Compose UIs that consume the generated network client).
+
+- [ ] **Carry the T02 platform-parity UniFFI mapping notes into the Kotlin codegen** (`AppVersion`
+      record/string, `MemberId` custom-type, tainted-type formatter-free surface — same as flagged for
+      Swift). The bring-up's `core/ffi-kotlin` surface deliberately excludes all of these (only the
+      state-machine enums + `Role` + `bool` cross — ADR-0022 scope), so none were needed yet; they become
+      actionable when a Kotlin UI task first needs one of those types across the FFI.
+  - **WHEN:** **T13/T14**, whenever `AppVersion`/`MemberId`/a tainted type is first exported to Kotlin.
+
+- [ ] **`core/ffi-kotlin` ⇄ `core/ffi-swift` surface parity is a convention, not yet a gate.** The two
+      mirror crates MUST stay identical (same enums/variants/fns), enforced today only by the shared core
+      they both mirror (a core change breaks both compiles) + the `platform-parity` review. A cheap CI
+      guard (e.g. assert the exported fn/enum sets match across the two crates) would make the lock-step
+      mechanical rather than reviewer-dependent.
+  - **WHEN:** next CI-hardening pass.
 
 ## Admin web / SvelteKit onboarding (spec 001 T15 — out-of-scope register)
 
@@ -1012,17 +1076,46 @@
 > locks); binding-drift unchanged (68 inputs — `web/` is not a drift input). Everything below was
 > deliberately left out (the **T15-shell**); each carries a WHEN trigger.
 
-- [ ] **The deployable Cloudflare runtime: real KV + Postgres bindings + `wrangler` deploy.** T15 runs
-      on the **interim in-memory backend** (`src/lib/server/webauthn-deps.ts` reuses the T09 in-memory
-      port fakes) and `@sveltejs/adapter-node` (locally buildable). The shell wires the real
-      **KV `ChallengeStore`** (5-min one-time challenges, ADR-0017 D3), the **Postgres**
-      `InviteStore`/`CredentialStore` via the Worker (incl. the invite-token HMAC compare routed
-      through the core's `admin_invitation_token_matches` per ADR-0017's P4 carve-out), swaps in
-      `@sveltejs/adapter-cloudflare`, and deploys via `wrangler` (NOT installed — same constraint as
-      the Rust Worker runtime, T07-shell-B). This supersedes the T09-register items "real KV
-      ChallengeStore", "real Postgres Invite/CredentialStore", and the deployable `+server.ts` routes
-      (those routes now exist against the in-memory backend; only the production adapters remain).
-  - **WHEN:** **T15-shell / T09-shell** (with T07-shell-B's Worker + Hyperdrive).
+> **INVESTIGATION (2026-06-06, per user request "investigate the T15-shell more").** The shell was
+> being treated as one monolithic, deploy-blocked lump ("wrangler not installed"). It is **not**:
+> the load-bearing finding is that **`wrangler`'s `getPlatformProxy()` emulates Cloudflare bindings
+> (KV, etc.) in-process via Miniflare/workerd with NO Cloudflare account and NO `wrangler login`** —
+> it reads the bindings from `wrangler.toml`/`.jsonc` and returns `{ env, cf, ctx }`; only
+> `wrangler deploy` needs an account. SvelteKit's `@sveltejs/adapter-cloudflare` itself invokes
+> `getPlatformProxy()` during `vite dev`, so server code that reads `platform.env.<BINDING>` runs the
+> SAME paths off-edge. (Sources, verified 2026-06-06 via docs-researcher:
+> developers.cloudflare.com/workers/wrangler/api/ ; svelte.dev/docs/kit/adapter-cloudflare ;
+> developers.cloudflare.com/kv/api/{write,read,delete}-key-value-pairs/.) So the shell splits cleanly:
+
+- [ ] **(A) Locally buildable + testable NOW — no account (the clean next session).** Add `wrangler`
+      as a devDep (+ a `wrangler.toml` with a `[[kv_namespaces]]` binding `CHALLENGES`), swap the
+      in-memory `ChallengeStore` in `web/src/lib/server/webauthn-deps.ts` for a **real KV
+      `ChallengeStore`** — `put(key, json, { expirationTtl: 300 })` (note: `expirationTtl` is in
+      **seconds, minimum 60** → 300 = the ADR-0017 D3 five-minute one-time challenge), `get(key,'json')`,
+      `delete(key)` to consume-on-first-use — and **test it via `getPlatformProxy()` in Vitest** (real
+      Miniflare KV, no account). Also locally doable: swap `@sveltejs/adapter-node` → `@sveltejs/
+      adapter-cloudflare` and type `App.Platform` (`platform.env.{CHALLENGES,HYPERDRIVE,…}`) in
+      `src/app.d.ts`. After installing `wrangler`, **re-run `scripts/check-network-allowlist.sh`** over
+      the expanded `web/pnpm-lock.yaml` (I8/AC13). This closes the T09-register "real KV ChallengeStore"
+      item without any edge deploy.
+  - **WHEN:** a cleanly-scoped **fully-local next session** (no account, no Worker runtime needed).
+- [ ] **(B) Genuinely deploy/account-blocked — rides with T07-shell-B.** The **Postgres**
+      `InviteStore`/`CredentialStore` over **Hyperdrive** (`env.HYPERDRIVE.connectionString`/`.connect()`
+      → a TCP Postgres driver; incl. the invite-token HMAC compare routed through the core's
+      `admin_invitation_token_matches` per ADR-0017's P4 carve-out) couples to the **unbuilt Rust Worker
+      runtime** (T07-shell-B) and a real Hyperdrive/Neon, so it cannot be proven this side of that. Plus
+      the actual **`wrangler deploy`** (needs a Cloudflare account + OAuth/API-token) and the live
+      deployed-edge E2E. `getPlatformProxy` can emulate a KV-backed *interim* `InviteStore`/`Credential
+      Store` locally, but the **production** stores are Postgres (the schema + RLS already exist, T06),
+      so building a throwaway KV version of them is not worth it — defer the real ones to the Worker.
+  - **WHEN:** **T07-shell-B** (the deployable Worker + Hyperdrive) / **T15-shell** deploy.
+- [ ] **Recommendation (flagged for the owner).** Do leg **(A)** as its own local session — it is
+      self-contained, account-free, and turns the WebAuthn challenge store from a stub into the real KV
+      one with a Vitest proof. Hold leg **(B)** until T07-shell-B stands up the Worker/Hyperdrive (so the
+      Postgres stores + deploy are tested against something real, not "this should work" code). This
+      session delivered the **investigation only** (the user said "investigate"); no T15-shell code was
+      written here — bundling a `wrangler` install + KV leg on top of the Android bring-up would blow the
+      context budget and mix two slices.
 - [ ] **Persistent server-side session store behind the §10-F cookie.** T15 sets the httpOnly + Secure
       + SameSite=Strict admin-session cookie (proven on the wire: HttpOnly + SameSite=Strict; `secure`
       asserted in `session.test.ts`) but the session *data* lives in an in-memory map

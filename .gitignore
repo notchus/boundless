@@ -57,6 +57,15 @@ local.properties
 **/*.apk
 gradle.properties.local
 
+# BoundlessCore / core-bridge (spec 001 Android bring-up) — BUILD ARTIFACTS, reproducible
+# from core/ffi-kotlin via scripts/build-corebridge.sh. The Android analog of the BoundlessKit
+# block above: the per-ABI UniFFI `.so` is BINARY, and the generated UniFFI Kotlin is a
+# deterministic function of core/ffi-kotlin (itself tracked by the binding-drift gate). NOT the
+# committed api/generated/** wire bindings. Treated like target/. (Paparazzi snapshot baselines
+# under src/test/snapshots/ ARE committed — they are golden source, not build output.)
+android/core-bridge/src/main/kotlin/
+android/core-bridge/src/main/jniLibs/
+
 # ─── Node / pnpm / web ─────────────────────────────────────────────────────
 node_modules/
 .svelte-kit/

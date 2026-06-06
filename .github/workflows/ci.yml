@@ -201,3 +201,36 @@ jobs:
         # perceptualPrecision; a runner-runtime divergence may need a one-time re-record
         # (DEFERRED.md → Apple / Driver UI — T12).
         run: bash scripts/test-boundlessdriver.sh
+
+  android:
+    name: BoundlessCore + Compose harness (UniFFI AAR · FFI smoke · Paparazzi — spec 001 Android bring-up)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JDK 21 (matches AGP 8.4.2 / Gradle 8.7)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK (cmdline-tools + licenses)
+        uses: android-actions/setup-android@v3
+      - name: Install SDK platform 34 · build-tools 34 · NDK r28 (pinned)
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;28.2.13676358"
+      - name: Rust Android targets + cargo-ndk (pinned via rust-toolchain.toml + lock)
+        run: |
+          rustup show
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+          cargo install cargo-ndk --version 4.1.2 --locked
+      - name: Build BoundlessCore (UniFFI Kotlin + 4-ABI .so), then run FFI smoke + Paparazzi + assemble
+        # build-corebridge.sh (core/ffi-kotlin → uniffi-bindgen Kotlin + cargo-ndk .so) then Gradle:
+        # the host-JVM FFI smoke test (Rust→UniFFI→Kotlin/JNA, no emulator), Paparazzi verify against
+        # the committed baseline, and assembleDebug for both app modules (links the per-ABI .so).
+        # GitHub-only / not locally gated (like boundlesskit). The Paparazzi sample is text-free, so
+        # its baseline is robust across runner OS; if the runtime ever diverges, re-record (DEFERRED.md
+        # → Android). ANDROID_NDK_HOME is resolved by the script from the pinned NDK under ANDROID_HOME.
+        run: bash scripts/test-corebridge.sh
+      - name: I8/AC13 — no trackers in the Android dependency tree (interim until gradle.lockfile)
+        # The committed gradle.lockfile + check-network-allowlist.sh wiring is DEFERRED (Gradle
+        # multi-module locking footguns); until then this greps the resolved Android dep closure
+        # against ci/forbidden-trackers.txt so a transitive tracker fails CI, not just review.
+        run: bash scripts/check-android-trackers.sh

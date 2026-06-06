@@ -149,6 +149,11 @@ dependencies = [
 [[package]]
 name = "boundless-ffi-kotlin"
 version = "0.0.0"
+dependencies = [
+ "boundless-auth",
+ "boundless-domain",
+ "uniffi",
+]
 
 [[package]]
 name = "boundless-ffi-swift"

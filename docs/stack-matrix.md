@@ -14,7 +14,7 @@
 |---|---|---|
 | Rust | 1.95.0 (latest stable at project init, 2026-06-04; ≥ dryoc MSRV 1.89) | `rust-toolchain.toml` |
 | Swift | TODO (latest stable shipping with Xcode) | Xcode version pin |
-| Kotlin | TODO (2.x latest stable) | `gradle/libs.versions.toml` |
+| Kotlin | 2.0.21 (Android; pinned at the bring-up — the Paparazzi 1.3.5-tested Kotlin, ground truth) | `android/gradle/libs.versions.toml` |
 | TypeScript | 6.0.3 (strict; `web/` pinned exact 2026-06-05, spec 001 T09 — lock = ground truth; the SvelteKit app at T15 may widen the tree) | `package.json` + `tsconfig.json` |
 | Node.js | 22 LTS (current LTS) | `.nvmrc` |
 | Xcode | TODO (latest GM) | `.xcode-version` |
@@ -86,18 +86,31 @@
 
 ## Android (Jetpack Compose)
 
-| Dependency | Group:Artifact | Used for |
-|---|---|---|
-| Jetpack Compose BOM | androidx.compose | UI |
-| Compose Material 3 | androidx.compose.material3 | Components |
-| Compose for Wear OS | androidx.wear.compose | Wear UI |
-| Glance | androidx.glance:glance-appwidget | Home screen widgets |
-| Hilt | com.google.dagger:hilt-android | DI |
-| Kotlinx Coroutines | org.jetbrains.kotlinx:kotlinx-coroutines-android | Async |
-| Kotlinx DateTime | org.jetbrains.kotlinx:kotlinx-datetime | Dates |
-| BoundlessCore | UniFFI-generated AAR | Domain |
-| Paparazzi | app.cash.paparazzi | Snapshot tests |
-| Turbine | app.cash.turbine | Flow testing |
+> **Version pins set at the Android bring-up (spec 001, 2026-06-06).** The constraint is
+> **Paparazzi**: its latest *stable* is **1.3.5** (2.0.0 is alpha-only), and Paparazzi 1.3.5's own
+> catalog pairs **AGP 8.4.2 / Kotlin 2.0.21 / Compose 1.7.5 / Material3 1.3.1** — so this is the
+> *proven-Paparazzi-green* set, pinned one AGP major behind latest (AGP 9 removed `BaseExtension`,
+> which Paparazzi 1.3.x needs). P1 + the a11y bar MANDATE the ×4 Paparazzi snapshots (T13/T14), so
+> Paparazzi must work. AGP 8.4.2 caps `compileSdk` at 34 — exactly the API Paparazzi 1.3.5's
+> layoutlib renders. The Gradle lockfiles under `android/` are the enforced truth (`gradle/libs.versions.toml`).
+
+| Dependency | Group:Artifact | Version | Used for |
+|---|---|---|---|
+| Android Gradle Plugin | com.android.tools.build:gradle | 8.4.2 | Android build (Paparazzi-compatible; ground truth = Paparazzi 1.3.5 catalog) |
+| Gradle (wrapper) | — | 8.7 | Build tool (AGP 8.4 min = 8.6; JDK 21-compatible) |
+| Kotlin | org.jetbrains.kotlin | 2.0.21 | Language + Compose Compiler plugin (`org.jetbrains.kotlin.plugin.compose`) |
+| Compose (ui / foundation) | androidx.compose.ui / .foundation | 1.7.5 | UI (explicit pins = Paparazzi tested set; BOM adoption is a T13/T14 option) |
+| Compose Material 3 | androidx.compose.material3 | 1.3.1 | Components |
+| BoundlessCore (`:core-bridge`) | UniFFI-generated AAR | from core/ffi-kotlin (uniffi 0.31.1) | Domain/auth state machine across the FFI (P4). Built by `scripts/build-corebridge.sh`: cargo cdylib → uniffi-bindgen Kotlin → cargo-ndk 4-ABI `.so`. Git-ignored build artifacts (reproducible; tracked via `core/**` in the drift gate), like the Swift BoundlessKit. ADR-0022. |
+| JNA | net.java.dev.jna:jna | 5.17.0 | UniFFI 0.31.1 Kotlin runtime (`@aar` on-device; plain jar for host-JVM smoke test) |
+| Paparazzi | app.cash.paparazzi | 1.3.5 | Snapshot tests (JVM/layoutlib API 34; ×4 a11y variants land with T13/T14) |
+| JUnit4 | junit:junit | 4.13.2 | Test runner for the FFI smoke + Paparazzi tests |
+| Compose for Wear OS | androidx.wear.compose | TODO | Wear UI (later spec) |
+| Glance | androidx.glance:glance-appwidget | TODO | Home screen widgets (later spec) |
+| Hilt | com.google.dagger:hilt-android | TODO | DI (added with T13/T14) |
+| Kotlinx Coroutines | org.jetbrains.kotlinx:kotlinx-coroutines-android | TODO | Async (added with T13/T14) |
+| Kotlinx DateTime | org.jetbrains.kotlinx:kotlinx-datetime | TODO | Dates |
+| Turbine | app.cash.turbine | TODO | Flow testing (added with T13/T14) |
 
 **Forbidden:**
 - `Log.d` / `Log.i` / etc. of tainted types
@@ -236,5 +249,7 @@
 | macOS runner | Apple builds, snapshot tests |
 | Ubuntu runner | Rust, Android, web, Cloudflare deploy |
 | Fastlane | iOS deploy automation |
-| Gradle Managed Devices | Android UI tests |
+| Gradle Managed Devices | Android instrumented UI tests (later; the bring-up's Paparazzi is JVM-side, no emulator) |
+| cargo-ndk | 4.1.2 — cross-compiles `core/ffi-kotlin` to the 4 Android ABI `.so`s for the `:core-bridge` AAR (`scripts/build-corebridge.sh`). Pinned at the Android bring-up. |
+| Android SDK / NDK | cmdline-tools `latest` (20.0) + platform 34 + build-tools 34.0.0 + **NDK 28.2.13676358**. CI installs via `android-actions/setup-android@v3` + `sdkmanager`; the `android` job is GitHub-only. |
 | Wrangler | Cloudflare Workers deploy |
