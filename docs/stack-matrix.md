@@ -103,14 +103,14 @@
 | Compose Material 3 | androidx.compose.material3 | 1.3.1 | Components |
 | BoundlessCore (`:core-bridge`) | UniFFI-generated AAR | from core/ffi-kotlin (uniffi 0.31.1) | Domain/auth state machine across the FFI (P4). Built by `scripts/build-corebridge.sh`: cargo cdylib → uniffi-bindgen Kotlin → cargo-ndk 4-ABI `.so`. Git-ignored build artifacts (reproducible; tracked via `core/**` in the drift gate), like the Swift BoundlessKit. ADR-0022. |
 | JNA | net.java.dev.jna:jna | 5.17.0 | UniFFI 0.31.1 Kotlin runtime (`@aar` on-device; plain jar for host-JVM smoke test) |
-| Paparazzi | app.cash.paparazzi | 1.3.5 | Snapshot tests (JVM/layoutlib API 34; ×4 a11y variants land with T13/T14) |
+| Paparazzi | app.cash.paparazzi | 1.3.5 | Snapshot tests (JVM/layoutlib API 34). **Consumed spec 001 T13** (`:rider:app`): the ×4 a11y variants per screen — default / `fontScale=2f` (largest) / `nightMode=NIGHT` (dark) / `layoutDirection=RTL` — via `unsafeUpdateConfig` (1.3.5 has no per-`snapshot` deviceConfig overload); `Paparazzi(supportsRtl=true)` so RTL mirrors. `NightMode`/`LayoutDirection` are `com.android.resources.*` (not `app.cash.paparazzi.*`). 17 screens × 4 = 68 committed baselines under `src/test/snapshots/images/`. T14 reuses the mechanism. |
 | JUnit4 | junit:junit | 4.13.2 | Test runner for the FFI smoke + Paparazzi tests |
 | Compose for Wear OS | androidx.wear.compose | TODO | Wear UI (later spec) |
 | Glance | androidx.glance:glance-appwidget | TODO | Home screen widgets (later spec) |
-| Hilt | com.google.dagger:hilt-android | TODO | DI (added with T13/T14) |
-| Kotlinx Coroutines | org.jetbrains.kotlinx:kotlinx-coroutines-android | TODO | Async (added with T13/T14) |
+| Hilt | com.google.dagger:hilt-android | TODO (NOT used by T13) | DI — T13 passes deps via constructor (mirrors iOS "no DI container"); revisit if a later spec needs a graph |
+| Kotlinx Coroutines | org.jetbrains.kotlinx:kotlinx-coroutines-android | 1.9.0 | Async — the Rider onboarding view model's `suspend` boundaries (spec 001 T13). 1.9.0 is the latest stable built against Kotlin 2.0 (1.10.x needs Kotlin 2.1, above the 2.0.21 pin); `-test` (`kotlinx-coroutines-test`, `runTest`) is the test runner for the suspend logic. Apache-2.0, JetBrains (allow-list clean). Verified 2026-06-06 via docs-researcher against Maven Central; lock = ground truth. |
 | Kotlinx DateTime | org.jetbrains.kotlinx:kotlinx-datetime | TODO | Dates |
-| Turbine | app.cash.turbine | TODO | Flow testing (added with T13/T14) |
+| Turbine | app.cash.turbine | TODO (NOT used by T13) | Flow testing — T13's view model exposes Compose `mutableStateOf`, not `Flow`, so no Turbine yet |
 
 **Forbidden:**
 - `Log.d` / `Log.i` / etc. of tainted types

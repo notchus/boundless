@@ -1,6 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Rider onboarding string catalog (spec 001 T13; the Android twin of RiderShared/Onboarding.xcstrings).
+  Every user-visible Rider string lives here (P8: no hardcoded strings in code). Keys mirror the iOS
+  catalog with dot→underscore. {adminName} placeholders are positional %1$s (substituted by RiderStrings;
+  the repeated %1$s in auth_below_min_version repeats the NAME, never a pronoun — locales inflect by
+  gender). Apostrophes are escaped (\'). The two admin_onboarding_* keys are here for catalog
+  completeness (AC12 / pseudo-locale) but are rendered by the SvelteKit admin UI (T15), not the Rider.
+  Real translations + the gsw / RTL / zz-ZZ locales arrive via Weblate + the signed KV manifest (ADR-0014).
+-->
 <resources>
-    <!-- Brand name — not translated (voice-and-tone applies to copy, not the product name). The
-         real onboarding copy ships as catalog keys with T13 (P8). -->
+    <!-- Brand name — not translated (voice-and-tone applies to copy, not the product name). -->
     <string name="app_name" translatable="false">Boundless</string>
+
+    <!-- Affordances — the single large control per step (a11y notes). UI labels: no trailing period. -->
+    <string name="onboarding_action_continue">Continue</string>
+    <string name="onboarding_action_try_again">Try again</string>
+
+    <!-- Helper intro (FreshInstall) — warm, not childish; fits a helper sitting beside the rider. -->
+    <string name="onboarding_helper_intro">Let\'s set up this phone together.</string>
+
+    <!-- Sign-in (PhoneEntry / PhoneNotOnFile). %1$s is the admin's personal name; no existence leak. -->
+    <string name="onboarding_signin_phone_prompt">What\'s the phone number on file?</string>
+    <string name="onboarding_signin_phone_not_on_file">That number doesn\'t match what\'s on file. Try again or call %1$s.</string>
+    <string name="onboarding_signin_phone_not_on_file_generic">That number doesn\'t match what\'s on file. Try again, or your group can help.</string>
+
+    <!-- Device binding (Onboarding Code / BindingFailed). "Onboarding Code" is a glossary noun (ADR-0016 D1). -->
+    <string name="onboarding_binding_code_prompt">Enter the Onboarding Code from %1$s.</string>
+    <string name="onboarding_binding_code_prompt_generic">Enter your Onboarding Code.</string>
+    <string name="onboarding_binding_code_invalid">That code didn\'t work. Ask %1$s for a new one.</string>
+    <string name="onboarding_binding_code_invalid_generic">That code didn\'t work. Your group can give you a new one.</string>
+
+    <!-- Permissions (+ declined). Calm, no scolding (AC14). %1$s is the admin's personal name. -->
+    <string name="onboarding_permissions_notifications_why">This lets you know when your driver is at the door.</string>
+    <string name="onboarding_permissions_allow">Turn on notifications</string>
+    <string name="onboarding_permissions_decline">Not now</string>
+    <string name="onboarding_permissions_notifications_declined">We\'ll let %1$s know notifications aren\'t on yet.</string>
+    <string name="onboarding_permissions_notifications_declined_generic">We\'ll let your group know notifications aren\'t on yet.</string>
+
+    <!-- Auto-update (the O3 step + the AC5 "auto-update enabled" confirmation). -->
+    <string name="onboarding_autoupdate_step">Turn on automatic updates.</string>
+    <string name="onboarding_autoupdate_enabled">Automatic updates are on.</string>
+
+    <!-- Re-auth / degradation. signin_again is the Driver re-auth entry (T14); below_min_version is the
+         O4 / NeedsReauthHelp calm screen — %1$s repeated (the NAME, never a pronoun). -->
+    <string name="auth_signin_again">Let\'s sign in again. Your phone number works.</string>
+    <string name="auth_below_min_version">This device needs %1$s\'s help. %1$s has been told.</string>
+    <string name="auth_below_min_version_generic">This device needs your group\'s help. They\'ve been told.</string>
+
+    <!-- Rider Settings (AC6: NO automatic-updates toggle — auto-update lives in OS settings). -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_help">Get help</string>
+
+    <!-- Admin web (SvelteKit, T15). Here for catalog completeness / pseudo-locale (AC12); not rendered
+         by the Rider app, so RiderStrings has no accessor for these. -->
+    <string name="admin_onboarding_register_credential">Set up your security key or passkey.</string>
+    <string name="admin_onboarding_invite_expired">This invitation has expired. Ask the developer for a new one.</string>
 </resources>

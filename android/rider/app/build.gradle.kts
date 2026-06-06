@@ -33,6 +33,24 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.all {
+            // The onboarding logic tests drive the core state machine through the :core-bridge UniFFI
+            // bindings, which JNA-load the HOST cdylib that build-corebridge.sh leaves in
+            // core/target/release (no emulator). The Paparazzi snapshots don't touch the FFI.
+            it.systemProperty(
+                "jna.library.path",
+                rootProject.file("../core/target/release").absolutePath,
+            )
+            // CatalogRiderStrings resolves copy by parsing the REAL strings.xml (single source of
+            // truth — no English drift), so tests + snapshots render the genuine shipped catalog.
+            it.systemProperty(
+                "boundless.strings.path",
+                project.file("src/main/res/values/strings.xml").absolutePath,
+            )
+        }
+    }
 }
 
 dependencies {
@@ -41,6 +59,11 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    // Host JVM unit tests load the UniFFI bindings via JNA; the plain jar bundles the host
+    // jnidispatch natives (the :core-bridge @aar variant is android-only). Mirrors :core-bridge.
+    testImplementation("net.java.dev.jna:jna:${libs.versions.jna.get()}")
 }

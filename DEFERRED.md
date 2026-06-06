@@ -1064,6 +1064,100 @@
       mechanical rather than reviewer-dependent.
   - **WHEN:** next CI-hardening pass.
 
+## Android / Rider UI (spec 001 T13 — out-of-scope register)
+
+> T13 shipped the **Compose Rider onboarding UI slice** in `android/rider/app` (package
+> `app.boundless.rider`): every onboarding screen rendered from `core::auth` via the `:core-bridge`
+> UniFFI AAR (P4), the `strings.xml` catalog + `RiderStrings`, the view-model/router, Rider Settings,
+> and the full test suite — 68 ×4 a11y Paparazzi baselines + 10 logic/a11y/content test classes
+> (`./gradlew test` debug+release green; `verifyPaparazziDebug` green; both apps `assembleDebug`).
+> Same functional-core / imperative-shell split as T07–T12. Everything below was deliberately left out
+> (the **T13-shell**); each carries a WHEN trigger.
+
+- [ ] **The deployable launcher `MainActivity` (the composition root).** A `com.android.application`
+      module assembles without an Activity (proven), so T13 ships the screens/model/VM/router/catalog +
+      tests as "UI legs" with **no launcher Activity** — the Android twin of T11 deferring the iOS
+      `.xcodeproj` app bundle. The shippable `MainActivity` that instantiates `OnboardingViewModel` with
+      the real conformers, hosts `OnboardingRouter`, and wraps it in `RiderTheme` is deferred.
+  - **WHEN:** when preparing the first Android build (ties to the FCM/Play-auto-update items below).
+
+- [ ] **The production `AndroidRiderStrings` (R.string resolver) + its wiring.** T13 ships the
+      `RiderStrings` interface + `Keys` + `strings.xml`; the production impl over Android `Resources`
+      (`getString(R.string.x, *args)`) is the shell (it needs a `Context`, so it is constructed by
+      MainActivity). Tests/snapshots use `CatalogRiderStrings` (parses the same strings.xml). When
+      `AndroidRiderStrings` lands, an instrumented/Robolectric smoke test could exercise the real
+      resource path (today it is compile-checked only — its `key→R.string` map references must resolve).
+  - **WHEN:** **T13-shell** (with MainActivity).
+
+- [ ] **The real `OnboardingNetworking` (OpenAPI Kotlin HTTP client).** T13 ships the
+      `OnboardingNetworking` interface + a fake; the real impl (`openapi-generator` kotlin →
+      `/api/auth/{signin,bind-device}`) feeds real `SignInResult`/`BindResult` into the view model.
+      Deferred because the deployable Worker it calls does **not exist yet** (T07-shell-B); building it
+      now is untestable "this should work" code. The Kotlin OpenAPI/proto **codegen** itself is the
+      T10-codegen register's Kotlin leg (`api/generated/kotlin/`) — re-run the network allow-list against
+      the (still-deferred) committed `gradle.lockfile` when it lands.
+  - **WHEN:** **T07-shell-B** (a live Worker) + the T10 Kotlin codegen.
+
+- [ ] **`NotificationManager` permission flow + FCM registration + signed-manifest fetch/verify +
+      Keystore refresh storage (§10-F).** The real `NotificationPermissionRequesting`
+      (`POST_NOTIFICATIONS` runtime permission on API 33+; Critical-Alerts-equivalent N/A on Android),
+      FCM device-token registration, the `ManifestProviding` impl (KV manifest fetch + libsodium verify
+      + cache, ADR-0014, providing `{adminName}`), and the **EncryptedSharedPreferences / Keystore**
+      refresh-credential store (never plain `SharedPreferences`, forbidden-patterns) are all behind
+      injected boundaries today; the conformers are the shell.
+  - **WHEN:** the Android app shell / push spec **007** / **T07-shell-B**.
+
+- [ ] **Onboarding-Code / phone field input-security (security-auditor M1).** The `OutlinedTextField`
+      sets only `KeyboardType` today. When the real input flow is wired (a helper types the code), the
+      code field must be marked as a **one-time code** (`Modifier.semantics { contentType =
+      ContentType.SmsOtpCode }`, a **Compose 1.8** API) + **no-personalized-learning** /
+      autocorrect-off, and the phone field `ContentType.PhoneNumber`, so the single-use binding secret
+      and the phone number do not leak into the keyboard's learning dictionary / autofill store (P2
+      spirit). The iOS twin gets this via `.textContentType(.oneTimeCode/.telephoneNumber)`. Deferred
+      because (a) T13 wires no real input (the field is rendered in snapshots only; real entry is the
+      shell's MainActivity) and (b) the clean content-type API needs Compose 1.8 (1.7.5's `autoCorrect`
+      is deprecated) — so it lands with the real input flow + a possible Compose bump. Add a Compose
+      semantics test asserting the content types when it does.
+  - **WHEN:** **T13-shell** (MainActivity real input) / a Compose 1.8 bump.
+
+- [ ] **Submit re-entrancy guard (reviewer LOW).** The router launches `viewModel.submitPhone/
+      submitCode/decideNotifications` via `scope.launch`; a double-tap before the suspend resolves can
+      fire two in-flight coroutines (faithful parity with iOS `Task { await … }`; harmless with the
+      instant test fakes). With a slow real network this could double-submit. Disable the action while
+      in-flight (or guard on a "submitting" flag) when the real networking lands.
+  - **WHEN:** **T13-shell** (real `OnboardingNetworking`).
+
+- [ ] **Optional Confirmation/Banner icon parity (platform-parity M1).** The Android `Confirmation`
+      ("Automatic updates are on.") and `Banner` render text + shape/tint only; the iOS twin adds a
+      `checkmark.circle` / `info.circle`. The a11y bar is already met (shape+text, not color-only — see
+      the renderer comments), and adding the icons would pull `material-icons-extended` (a large dep) —
+      so T13 keeps them iconless by design. If visual parity is later wanted, add the two icons (weigh
+      the dep, or ship a tiny local vector) in the shell.
+  - **WHEN:** **T13-shell** (only if visual icon parity is desired).
+
+- [ ] **Recorded TalkBack walkthrough + Accessibility Scanner pass (manual).** The automated AC11 leg
+      asserts the model-level reading order (labels/traits/order; the auto-update confirmation as a
+      state, not a button). Paparazzi has no semantics-tree strategy, so the **recorded** TalkBack /
+      Switch-Access walkthrough + the Accessibility Scanner run remain a manual checklist item (plan §7).
+      Optional automation: a Robolectric + `compose-ui-test` `createComposeRule` reading-order test
+      (a new dep — weigh against the model-level assertion, which already covers order).
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+
+- [ ] **Snapshot-baseline CI-runtime pin.** The 68 baselines were recorded locally on macOS via
+      Paparazzi's bundled layoutlib. layoutlib renders with its own bundled fonts (more portable than
+      device snapshots), but the `android` CI job is **GitHub-only / not locally verifiable** (Ubuntu
+      runner), so the first CI run is the real proof of cross-runtime text rendering; re-record from the
+      runner if it diverges (a known snapshot-testing reality, as on iOS T11/T12). Paparazzi's default
+      `maxPercentDifference` (0.1) applies.
+  - **WHEN:** first CI run of the extended `android` job (`:rider:app:verifyPaparazziDebug` with real screens).
+
+- [ ] **11 added catalog keys beyond the spec's 14 — product-owner review.** T13's `strings.xml` mirrors
+      the iOS `RiderShared` catalog exactly (25 keys), which already includes the 11 affordance/settings +
+      name-less `*_generic` fallback keys T11 added and flagged. Same wording, surfaced again here for the
+      Android catalog. The two `admin_onboarding_*` + `auth_signin_again` keys are present for AC12
+      completeness but rendered by the admin web / Driver, not the Rider.
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording (keep in lock-step with the iOS catalog).
+
 ## Admin web / SvelteKit onboarding (spec 001 T15 — out-of-scope register)
 
 > T15 shipped the **admin onboarding UI slice**: the SvelteKit app scaffold + the four onboarding
