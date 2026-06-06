@@ -169,6 +169,10 @@ name = "boundless-ffi-wasm"
 version = "0.0.0"
 
 [[package]]
+name = "boundless-logging"
+version = "0.0.0"
+
+[[package]]
 name = "boundless-server-core"
 version = "0.0.0"
 dependencies = [

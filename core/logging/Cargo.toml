@@ -1,0 +1,18 @@
+# boundless-logging — the PII scrubber/detector for the structured-logging pipeline
+# (privacy invariant I10, constitution P2). Dep-free and wasm32-safe: the deployable
+# Worker (T07-shell-B) is wasm, and its `emit()` sink will call this detector before
+# persisting any log line. Scaffolded + filled by spec 001 task T16 (the cross-cutting
+# verification sweep) — see core/logging/src/scrub.rs.
+[package]
+name = "boundless-logging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies — the detector is hand-rolled byte scanning over the raw log line, so it
+# pulls no `regex` (keeps the wasm Worker footprint minimal and the matching deterministic +
+# auditable). The onboarding-replay test (tests/onboarding_replay.rs) treats each fixture
+# line as opaque text, so it needs no JSON parser either.
+[dependencies]

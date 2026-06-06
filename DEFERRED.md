@@ -1356,6 +1356,62 @@
       gated** (like the other CI jobs). No image snapshots are used (axe + structural assertions instead).
   - **WHEN:** first CI run of the extended `web` job.
 
+## Cross-cutting verification (spec 001 T16 — out-of-scope register)
+
+> T16 shipped the suite-wide invariant gates: the I10 PII **scrubber/detector** (`core/logging`) +
+> the onboarding log-fixture replay (AC3); the cross-platform catalog **parity** + pseudo-locale
+> **generation** gate + a **web `zz-ZZ` render** (AC12); the network allow-list **named test** (AC13);
+> and verification of the existing N-2 **compat** replay as the final run (AC9). All host/CI-testable,
+> **no new dependencies**. The deployable logging *pipeline* and the per-platform pixel-truncation
+> *renders* were deliberately left out (each needs an unbuilt runtime); each carries a WHEN trigger.
+
+- [ ] **`boundless::logging::emit()` sink + no-raw-`tracing` lint + Logpush/latest-run CI replay.**
+      T16 ships the **detector** (`boundless_logging::detect_pii`); the deployable *sink* that routes
+      every Worker log line through it before persistence, the lint forbidding direct `tracing::*`
+      (I10), and the CI step that replays the **latest real run's** logs through the scrubber (vs.
+      T16's fixture replay) all need the Worker runtime. **Carry-forward (already flagged at
+      T07/T09/T15):** route `StoreError` and the invite-token URL segment through `emit()`, and add
+      the I10 scrubber fixtures for a unique-violation `\x…` DETAIL blob + a URL-embedded opaque token.
+  - **WHEN:** **T07-shell-B** (the deployable Worker + logging wiring).
+
+- [ ] **Native (iOS / Android) `zz-ZZ` pixel-truncation snapshot variant.** T16 renders the
+      pseudo-locale **without truncation on the web surface** (Playwright reflow) and proves catalog
+      *completeness* across all five platforms (the parity gate), but the native ×4 a11y snapshot
+      matrices (T11–T14) do not yet include a `zz-ZZ` variant. Adding one to each (swift-snapshot /
+      Paparazzi) is a per-platform render task — the honest scope flag, consistent with AC11's manual
+      VoiceOver/TalkBack walkthrough and AC5/AC6's OS-toggle.
+  - **WHEN:** each platform's **-shell** (the app bundle / MainActivity task), or a pre-GA a11y pass.
+
+- [ ] **Scrubber hardening — residual detector gaps** (T16 adversarial-review findings; all **latent**:
+      the onboarding flow logs none of these shapes, so they are not active leaks — they matter once the
+      live `emit()` sink ships at T07-shell-B). T16 already closed the two highest-impact gaps the review
+      found — **dot-separated phones** (`555.123.4567`, now caught with an IPv4 exclusion) and
+      **single / separate-JSON-field GPS** (`"lat":37.7749,"lng":-122.4194`, now caught). Remaining,
+      deferred deliberately to avoid risky heuristics in a security-critical fn without a full hardening pass:
+  - **Sub-40-char token/secret blobs.** `TOKEN_BLOB_MIN = 40` reliably catches this system's actual
+    secrets (the ADR-0021 opaque **32-byte** access/refresh bearer = 43–64 chars; device tokens), but
+    misses a 16-byte token (~22–32 chars) or a dashed grouped code. Lowering the bare length threshold
+    would false-positive on long `SCREAMING_SNAKE` error codes / dotted event names (which the fixture
+    replay contains), so it needs an **entropy / mixed-charset heuristic** (flag a ≥~22-char run with
+    mixed case+digits; leave all-caps codes and all-lower event names alone), not just a smaller number.
+  - **Lowercase-only street addresses** (`47 willow lane`) — `find_street_addresses` requires a
+    capitalized word. Addresses enter at admin *issuance* (spec 008), not onboarding, and the tainted
+    `Address` newtype is the primary control; relax case here when issuance/logging lands.
+  - **Bare-dash digit-glue run-merge** — a phone glued directly onto a UUID via a bare `-`
+    (`5551234567-0000-…`) merges into one >15-digit run and escapes the phone window. Contrived (real
+    JSON quote-delimits fields, so all realistic adjacent forms are caught — verified); fix when phone
+    detection is next reworked (re-scan sub-windows on an over-long run).
+  - **General:** Unicode-confusable / homoglyph phone & email; name+DOB heuristics (today structurally
+    covered by the tainted newtypes not being `Serialize`/`Display`); threshold tuning against real
+    Logpush samples; and a `scrub()` that **redacts** (not just detects) for the `emit()` path.
+  - **WHEN:** a privacy-hardening pass with the **T07-shell-B** `emit()` sink (when this detector first
+    becomes the live backstop), extending `scrub_redteam.rs` with each closed gap's positive case.
+
+- [ ] **Real `gsw` / RTL / `zz-ZZ` translations via Weblate + signed-KV (ADR-0014).** The `zz-ZZ`
+      here is **generated** (pseudoize), not translated; real locales (incl. the shipping Swiss German
+      and Arabic/Hebrew RTL) arrive through the translation pipeline + the signed KV manifest.
+  - **WHEN:** the translation pipeline / manifest service spec.
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

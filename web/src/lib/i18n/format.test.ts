@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { en } from './catalog';
 import { direction, resolveLocale, t } from './index';
+import { PSEUDO_CLOSE, PSEUDO_OPEN, pseudoize } from './pseudo';
 
 describe('t() — ICU message formatting', () => {
 	it('resolves a plain catalog key in the source locale', () => {
@@ -27,8 +28,13 @@ describe('t() — ICU message formatting', () => {
 		expect(t('admin.signin.title', 'ar')).toBe(en['admin.signin.title']);
 	});
 
-	it('accepts the pseudo-locale tag without throwing (AC12 mechanism)', () => {
-		expect(t('admin.signin.title', 'zz-ZZ')).toBe(en['admin.signin.title']);
+	it('renders the generated pseudo-locale (zz-ZZ) catalog (AC12 — T16)', () => {
+		// T16 wires `catalogs['zz-ZZ'] = pseudoCatalog(en)`, so the tag now resolves to the
+		// generated pseudo string (single-sourced from the same `pseudoize`), not the en fallback.
+		const out = t('admin.signin.title', 'zz-ZZ');
+		expect(out).toBe(pseudoize(en['admin.signin.title']));
+		expect(out).not.toBe(en['admin.signin.title']);
+		expect(out.startsWith(PSEUDO_OPEN) && out.endsWith(PSEUDO_CLOSE)).toBe(true);
 	});
 });
 

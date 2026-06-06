@@ -49,6 +49,8 @@ jobs:
         working-directory: core
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: test
+        # `--workspace` includes boundless-logging — the I10 PII scrubber + red-team self-test +
+        # the onboarding log-fixture replay (spec 001 T16, AC3).
         working-directory: core
         run: cargo test --locked --workspace
       - name: server build + test
@@ -123,7 +125,7 @@ jobs:
         run: cargo test --locked -p boundless-server-store
 
   web:
-    name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15)
+    name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15/T16)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -141,15 +143,18 @@ jobs:
       - name: Typecheck (svelte-check, strict)
         run: pnpm typecheck
       - name: Unit/integration tests (vitest)
+        # Includes tests/cross-platform/** (spec 001 T16): the AC12 catalog parity + pseudo-locale
+        # generation, and the AC13 network allow-list wrapper (ac13_onboarding_adds_no_third_party).
         run: pnpm test
       - name: Build (SvelteKit)
         run: pnpm build
       - name: Install Chromium (virtual authenticator)
         run: pnpm exec playwright install --with-deps chromium
-      - name: e2e — WebAuthn ceremony (AC20, T09) + admin onboarding UI (AC2/AC11b/AC1(b), T15)
+      - name: e2e — WebAuthn ceremony (AC20, T09) + admin onboarding UI (AC2/AC11b/AC1(b), T15) + zz-ZZ render (AC12, T16)
         # `pnpm test:e2e` auto-starts the SvelteKit dev server (playwright webServer) for the T15
-        # admin-onboarding suite (axe + virtual-authenticator through the real routes); the T09
-        # verification-core ceremony suite serves its own page. GitHub-only.
+        # admin-onboarding suite (axe + virtual-authenticator through the real routes) and the T16
+        # pseudo-locale render (pseudo_locale_renders_all_onboarding_screens[zz-ZZ] + reflow); the
+        # T09 verification-core ceremony suite serves its own page. GitHub-only.
         run: pnpm test:e2e
 
   boundlesskit:
