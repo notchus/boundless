@@ -739,10 +739,10 @@
       scaffolded SvelteKit app (**T15**).
   - **WHEN:** **T15** (admin onboarding UI) / **T09-shell**.
 
-- [ ] **Real Cloudflare **KV** `ChallengeStore` impl.** The production one-time-use, 5-min-TTL challenge
-      store on KV (ADR-0017 D3). T09 ships the port + the consume-once/TTL semantics (proven against the
-      in-memory fake); the KV binding is the shell's.
-  - **WHEN:** **T15 / T09-shell** (KV binding).
+- [x] **Real Cloudflare **KV** `ChallengeStore` impl. DONE 2026-06-07 (T15-shell leg A).** The production
+      one-time-use, 5-min-TTL challenge store now runs on real Cloudflare KV (`KvChallengeStore`),
+      account-free-proven against Miniflare KV via `getPlatformProxy()` and live in `vite dev`/Playwright
+      under adapter-cloudflare. See "Admin web / SvelteKit onboarding (T15)" → leg (A) for details.
 
 - [ ] **Real Postgres `InviteStore` + `CredentialStore` via the Worker.** Reads/writes of
       `admin_invitations` (load + atomic `consumed_at` stamp) and `admin_webauthn_credentials` (list active
@@ -1322,18 +1322,27 @@
 > developers.cloudflare.com/workers/wrangler/api/ ; svelte.dev/docs/kit/adapter-cloudflare ;
 > developers.cloudflare.com/kv/api/{write,read,delete}-key-value-pairs/.) So the shell splits cleanly:
 
-- [ ] **(A) Locally buildable + testable NOW — no account (the clean next session).** Add `wrangler`
-      as a devDep (+ a `wrangler.toml` with a `[[kv_namespaces]]` binding `CHALLENGES`), swap the
-      in-memory `ChallengeStore` in `web/src/lib/server/webauthn-deps.ts` for a **real KV
-      `ChallengeStore`** — `put(key, json, { expirationTtl: 300 })` (note: `expirationTtl` is in
-      **seconds, minimum 60** → 300 = the ADR-0017 D3 five-minute one-time challenge), `get(key,'json')`,
-      `delete(key)` to consume-on-first-use — and **test it via `getPlatformProxy()` in Vitest** (real
-      Miniflare KV, no account). Also locally doable: swap `@sveltejs/adapter-node` → `@sveltejs/
-      adapter-cloudflare` and type `App.Platform` (`platform.env.{CHALLENGES,HYPERDRIVE,…}`) in
-      `src/app.d.ts`. After installing `wrangler`, **re-run `scripts/check-network-allowlist.sh`** over
-      the expanded `web/pnpm-lock.yaml` (I8/AC13). This closes the T09-register "real KV ChallengeStore"
-      item without any edge deploy.
-  - **WHEN:** a cleanly-scoped **fully-local next session** (no account, no Worker runtime needed).
+- [x] **(A) Locally buildable + testable NOW — no account. DONE 2026-06-07.** Shipped: `KvChallengeStore`
+      (`web/src/lib/server/webauthn/kv-challenge-store.ts`) over the existing `ChallengeStore` port —
+      `put` with `expirationTtl` (60s-floor clamp `kvExpirationTtl`; only caller passes 300 = the ADR-0017
+      D3 5-min challenge), `take` = `get('text')`→`delete` (best-effort consume-once; documented + defended
+      by the one-time httpOnly cookie + `@simplewebauthn` challenge binding + sign-count). Proven against
+      **real Miniflare KV with no account** via `getPlatformProxy()` (`kv-challenge-store.test.ts`:
+      round-trip / consume-once / absent→null / isolation + the clamp unit). Made **live**: swapped
+      `@sveltejs/adapter-node` → **`@sveltejs/adapter-cloudflare` 7.2.8** (its `vite dev` injects
+      `platform.env` via `getPlatformProxy` — verified from the adapter source; binding read from
+      `web/wrangler.toml`), `webauthn-deps.ts` selects `KvChallengeStore` when `platform.env.CHALLENGES`
+      is bound else the in-memory fallback (Vitest/adapterless), the 3 `+server.ts` routes thread
+      `event.platform`, `App.Platform` typed in `app.d.ts`. The Playwright register→sign-in ceremony now
+      round-trips the challenge through real KV. Pins (lock = ground truth, exact): `wrangler` 4.98.0,
+      `@sveltejs/adapter-cloudflare` 7.2.8, `@cloudflare/workers-types` 4.20260606.1 (adapter-node removed)
+      → `docs/stack-matrix.md`. `web/pnpm-workspace.yaml` approves the workerd/esbuild/sharp build scripts
+      (pnpm 11). Gates: `pnpm typecheck` 0/0 · `pnpm test` 66 (6 real-KV) · `pnpm build` (adapter-cloudflare,
+      no account) · `pnpm test:e2e` 13 · **allow-list clean across 6 locks** (the AC13 web re-scan). Closes
+      the T09-register "Real Cloudflare KV `ChallengeStore` impl" item (below). **NB the getPlatformProxy
+      gotchas (for the next Worker/KV slice):** it boots an in-process workerd over a Node↔workerd loopback
+      bridge — run a single instance (orphaned workerd from prior runs make it hang), don't pipe its stdout
+      through `tail` (buffering), and `dispose()` it; with those, boot is ~0.1s.
 - [ ] **(B) Genuinely deploy/account-blocked — rides with T07-shell-B.** The **Postgres**
       `InviteStore`/`CredentialStore` over **Hyperdrive** (`env.HYPERDRIVE.connectionString`/`.connect()`
       → a TCP Postgres driver; incl. the invite-token HMAC compare routed through the core's
@@ -1343,14 +1352,24 @@
       deployed-edge E2E. `getPlatformProxy` can emulate a KV-backed *interim* `InviteStore`/`Credential
       Store` locally, but the **production** stores are Postgres (the schema + RLS already exist, T06),
       so building a throwaway KV version of them is not worth it — defer the real ones to the Worker.
+      **Also fold into this deploy slice (from the leg-A review):**
+      (i) **Make `challengeStore` fail-closed** — when the production (non-`dev`) edge build finds no
+      `platform.env.CHALLENGES`, **throw** instead of silently falling back to the per-isolate in-memory
+      store (which would break consume-once across isolates, ADR-0017 D3). The in-memory fallback stays
+      reachable only under `dev`/Vitest. Add the unit test asserting the production path throws. This is
+      the web twin of the Worker's "fail-closed guard so the scaffold store can never be silently
+      deployed" (T07-shell-B). Reviewers rated this the top finding — latent today (no deploy target), a
+      blocker for deploy.
+      (ii) **Generate `App.Platform` via `wrangler types`** (instead of the hand-typed `app.d.ts`) once
+      the bindings multiply (the Hyperdrive binding lands here), so a `wrangler.toml` binding rename is
+      caught by the type system rather than silently disabling KV (forbidden-patterns: generate env types).
+      (iii) **Set `send_metrics = false` in `server/wrangler.toml`** too (the Rust Worker harness) — leg A
+      added it to `web/wrangler.toml`; server/ should match for the same privacy reason (I8 spirit).
   - **WHEN:** **T07-shell-B** (the deployable Worker + Hyperdrive) / **T15-shell** deploy.
-- [ ] **Recommendation (flagged for the owner).** Do leg **(A)** as its own local session — it is
-      self-contained, account-free, and turns the WebAuthn challenge store from a stub into the real KV
-      one with a Vitest proof. Hold leg **(B)** until T07-shell-B stands up the Worker/Hyperdrive (so the
-      Postgres stores + deploy are tested against something real, not "this should work" code). This
-      session delivered the **investigation only** (the user said "investigate"); no T15-shell code was
-      written here — bundling a `wrangler` install + KV leg on top of the Android bring-up would blow the
-      context budget and mix two slices.
+- [x] **Recommendation (flagged for the owner) — RESOLVED 2026-06-07.** Leg **(A)** shipped as its own
+      local session (above). Leg **(B)** stays held until **T07-shell-B** stands up the Worker/Hyperdrive,
+      so the Postgres invite/credential stores + deploy are tested against something real, not
+      "this should work" code.
 - [ ] **Persistent server-side session store behind the §10-F cookie.** T15 sets the httpOnly + Secure
       + SameSite=Strict admin-session cookie (proven on the wire: HttpOnly + SameSite=Strict; `secure`
       asserted in `session.test.ts`) but the session *data* lives in an in-memory map

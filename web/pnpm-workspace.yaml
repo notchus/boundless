@@ -1,0 +1,10 @@
+# pnpm 11 blocks dependency build scripts by default. The Cloudflare local test/build toolchain
+# (wrangler → Miniflare → workerd; esbuild; sharp for image optimization) needs them to run so the
+# platform-specific `workerd` binary is installed — that is what powers `getPlatformProxy()` (real
+# Miniflare KV, no Cloudflare account) and `vite dev` binding emulation under @sveltejs/adapter-cloudflare
+# (spec 001 T15-shell leg A). These build scripts are vetted, account-free, and run locally only.
+# Mirrors server/pnpm-workspace.yaml (the Rust Worker harness). See memory: worker-toolchain-bringup.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true

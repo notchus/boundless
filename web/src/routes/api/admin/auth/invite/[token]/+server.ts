@@ -13,8 +13,8 @@ import { CHALLENGE_TTL_SECS } from '$lib/server/webauthn';
 import { startRegistrationCeremony } from '$lib/server/webauthn-deps';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params, url, cookies }) => {
-	const ceremony = await startRegistrationCeremony(url, cookies, params.token);
+export const GET: RequestHandler = async ({ params, url, cookies, platform }) => {
+	const ceremony = await startRegistrationCeremony(url, cookies, params.token, platform);
 	if (ceremony.status === 'live') {
 		return json({ publicKey: ceremony.options, challenge_ttl_secs: CHALLENGE_TTL_SECS });
 	}

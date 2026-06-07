@@ -14,8 +14,10 @@ export interface Clock {
 
 /**
  * Per-ceremony WebAuthn challenge store (Cloudflare KV in production; ADR-0017 D3).
- * `take` is **consume-once**: it returns the stored challenge and atomically deletes it, and
- * yields `null` if the key is absent or past its TTL — so a replayed/expired challenge fails.
+ * `take` is **consume-once**: it returns the stored challenge and deletes it, and yields `null` if
+ * the key is absent or past its TTL — so a replayed/expired challenge fails. Consume-once is
+ * **atomic** in the in-memory impl but **best-effort** on KV (no atomic get-and-delete) — see
+ * `kv-challenge-store.ts` for the residual window and the defence-in-depth that bounds it.
  */
 export interface ChallengeStore {
   put(key: string, challenge: string, ttlSecs: number): Promise<void>;

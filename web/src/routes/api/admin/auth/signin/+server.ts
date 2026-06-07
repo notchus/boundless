@@ -14,16 +14,16 @@ import { ADMIN_SESSION_COOKIE, createSession, SESSION_COOKIE_OPTIONS } from '$li
 import { CEREMONY_COOKIE, CEREMONY_COOKIE_OPTIONS, getWebAuthnDeps, newCeremonyKey } from '$lib/server/webauthn-deps';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
-	const deps = getWebAuthnDeps(url);
+export const GET: RequestHandler = async ({ url, cookies, platform }) => {
+	const deps = getWebAuthnDeps(url, platform);
 	const ceremonyKey = newCeremonyKey();
 	const options = await buildAuthenticationOptions(deps, { ceremonyKey });
 	cookies.set(CEREMONY_COOKIE, ceremonyKey, CEREMONY_COOKIE_OPTIONS);
 	return json({ publicKey: options });
 };
 
-export const POST: RequestHandler = async ({ request, url, cookies }) => {
-	const deps = getWebAuthnDeps(url);
+export const POST: RequestHandler = async ({ request, url, cookies, platform }) => {
+	const deps = getWebAuthnDeps(url, platform);
 	const ceremonyKey = cookies.get(CEREMONY_COOKIE);
 	if (ceremonyKey === undefined) {
 		return json({ error_code: 'ADMIN_WEBAUTHN_CHALLENGE_EXPIRED' }, { status: 400 });

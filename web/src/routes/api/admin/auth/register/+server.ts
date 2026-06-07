@@ -13,8 +13,8 @@ import { verifyRegistration, WebAuthnError } from '$lib/server/webauthn';
 import { CEREMONY_COOKIE, getWebAuthnDeps } from '$lib/server/webauthn-deps';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ request, url, cookies }) => {
-	const deps = getWebAuthnDeps(url);
+export const POST: RequestHandler = async ({ request, url, cookies, platform }) => {
+	const deps = getWebAuthnDeps(url, platform);
 	const ceremonyKey = cookies.get(CEREMONY_COOKIE);
 	if (ceremonyKey === undefined) {
 		return json({ error_code: 'ADMIN_WEBAUTHN_CHALLENGE_EXPIRED' }, { status: 400 });

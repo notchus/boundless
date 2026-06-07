@@ -2,20 +2,24 @@
 // verification functions consume.
 //
 // FUNCTIONAL-CORE / IMPERATIVE-SHELL: the verification LOGIC (T09, `$lib/server/webauthn`) is
-// unchanged; this file only wires its ports. For the buildable + Playwright-testable slice the ports
-// are the **same in-memory implementations** the T09 unit tests use (reused, not duplicated) and the
-// RP config is derived from the request URL. The real Cloudflare **KV** challenge store + **Postgres**
-// invite/credential stores (via the Worker, incl. the invite-token HMAC routed through the core per
-// ADR-0017's P4 carve-out) are the **T15-shell** (DEFERRED.md). This mirrors the Rust Worker composing
-// an in-memory `DeviceStore` until token encryption lands. There is no production deploy yet (no
-// wrangler), so this interim in-memory backend cannot accidentally serve real traffic.
+// unchanged; this file only wires its ports. The **challenge** store is now the real Cloudflare **KV**
+// store (`KvChallengeStore`, ADR-0017 D3) whenever the `CHALLENGES` binding is present — on the edge
+// under adapter-cloudflare, and in `vite dev`/Playwright where the adapter exposes a local Miniflare KV
+// (T15-shell leg A). It falls back to the in-memory store only for Vitest unit tests / adapterless runs.
+// The **invite/credential** stores remain in-memory (the **Postgres** stores over Hyperdrive — incl. the
+// invite-token HMAC routed through the core per ADR-0017's P4 carve-out — are T15-shell leg B,
+// DEFERRED.md). The RP config is derived from the request URL (env-overridable). This mirrors the Rust
+// Worker composing a real store for one port and an in-memory `DeviceStore` for another until its
+// dependency lands. There is no production deploy yet, so the in-memory invite/credential backend cannot
+// accidentally serve real traffic.
 
 import { env } from '$env/dynamic/private';
 import type { Cookies } from '@sveltejs/kit';
 import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/server';
 
-import { buildRegistrationOptions, evaluateInvite, WebAuthnError } from '$lib/server/webauthn';
-import type { Clock, RpConfig, WebAuthnDeps } from '$lib/server/webauthn';
+import { buildRegistrationOptions, CHALLENGE_TTL_SECS, evaluateInvite, WebAuthnError } from '$lib/server/webauthn';
+import type { ChallengeStore, Clock, RpConfig, WebAuthnDeps } from '$lib/server/webauthn';
+import { KvChallengeStore } from '$lib/server/webauthn/kv-challenge-store';
 import {
 	MemoryChallengeStore,
 	MemoryCredentialStore,
@@ -25,10 +29,28 @@ import {
 /** Real server clock (unix seconds) — the only ambient input; everything else is injected. */
 const clock: Clock = { now: () => Math.floor(Date.now() / 1000) };
 
-// Interim in-memory backend (see header). `let` so the dev-only `/api/test/reset` seam can swap them.
+// In-memory backend. `challenges` is now only the FALLBACK (used when no KV binding is present, e.g.
+// Vitest); `invites`/`credentials` remain the live interim stores (leg B). `let` so the dev-only
+// `/api/test/reset` seam can swap them.
 let challenges = new MemoryChallengeStore(clock);
 let invites = new MemoryInviteStore();
 let credentials = new MemoryCredentialStore();
+
+/**
+ * Pick the challenge store for this request: the real Cloudflare **KV** store (ADR-0017 D3) when the
+ * `CHALLENGES` binding is present — on the edge under adapter-cloudflare, or in `vite dev` where the
+ * adapter exposes a local Miniflare KV via wrangler's getPlatformProxy — and the in-memory fallback
+ * otherwise (Vitest unit tests + any adapterless run).
+ *
+ * The in-memory fallback is **dev/test-only**. On a real multi-isolate edge deploy it would silently
+ * break consume-once (per-isolate `Map`, not shared, not eviction-durable), so the deploy slice MUST
+ * make this **fail closed** — throw when `CHALLENGES` is unbound in production rather than fall back.
+ * Tracked in DEFERRED.md → T15-shell leg B (deferred because this slice has no deploy target).
+ */
+function challengeStore(platform: App.Platform | undefined): ChallengeStore {
+	const kv = platform?.env?.CHALLENGES;
+	return kv ? new KvChallengeStore(kv) : challenges;
+}
 
 /**
  * Relying-Party config. Production MUST pin these via env (`WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGIN`/
@@ -43,9 +65,10 @@ function rpConfig(url: URL): RpConfig {
 	};
 }
 
-/** Build the deps for one request. Reads the current store singletons (so a dev reset is honored). */
-export function getWebAuthnDeps(url: URL): WebAuthnDeps {
-	return { rp: rpConfig(url), clock, challenges, invites, credentials };
+/** Build the deps for one request. Reads the current store singletons (so a dev reset is honored);
+ *  selects the real KV challenge store when `platform.env.CHALLENGES` is bound (else in-memory). */
+export function getWebAuthnDeps(url: URL, platform?: App.Platform): WebAuthnDeps {
+	return { rp: rpConfig(url), clock, challenges: challengeStore(platform), invites, credentials };
 }
 
 // — Ceremony challenge key (the KV-challenge key in production) round-tripped via a short-lived
@@ -57,7 +80,7 @@ export const CEREMONY_COOKIE_OPTIONS: Parameters<import('@sveltejs/kit').Cookies
 	secure: true,
 	sameSite: 'strict',
 	path: '/',
-	maxAge: 300, // matches CHALLENGE_TTL_SECS
+	maxAge: CHALLENGE_TTL_SECS, // single-sourced so the cookie window can't drift from the KV TTL
 };
 
 export function newCeremonyKey(): string {
@@ -90,8 +113,9 @@ export async function startRegistrationCeremony(
 	url: URL,
 	cookies: Cookies,
 	token: string,
+	platform?: App.Platform,
 ): Promise<InviteCeremony> {
-	const deps = getWebAuthnDeps(url);
+	const deps = getWebAuthnDeps(url, platform);
 	const ceremonyKey = newCeremonyKey();
 	try {
 		const options = await buildRegistrationOptions(deps, {

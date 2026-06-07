@@ -1,0 +1,37 @@
+# Cloudflare config for the Boundless admin web (SvelteKit). Spec 001 T15-shell leg A.
+#
+# This file exists so the admin-WebAuthn **challenge store** runs on a REAL Cloudflare KV namespace
+# (ADR-0017 D3: one-time-use, ~5-min-TTL WebAuthn challenges) instead of the interim in-memory stub:
+#   • `@sveltejs/adapter-cloudflare` reads these bindings and, during `vite dev`, calls
+#     wrangler's `getPlatformProxy()` so `platform.env.CHALLENGES` is a live Miniflare KV — locally,
+#     with NO Cloudflare account (only `wrangler deploy` needs one).
+#   • The `kv-challenge-store.test.ts` Vitest suite calls `getPlatformProxy()` directly against this
+#     same binding (real Miniflare KV, no account).
+#
+# DEPLOY IS DEFERRED (T15-shell leg B, rides with T07-shell-B): there is no `main`/`assets`/
+# `pages_build_output_dir` here yet, so `pnpm build` builds in the adapter's default (Pages) mode with
+# no account; the real deploy-target keys + the real KV namespace `id` + the Hyperdrive binding for the
+# Postgres invite/credential stores are finalized in the deploy slice. See DEFERRED.md.
+
+name = "boundless-admin-web"
+compatibility_date = "2026-06-05"
+compatibility_flags = ["nodejs_compat"]
+
+# Privacy: opt out of wrangler's first-party usage telemetry (to sparrow.cloudflare.com) for every
+# wrangler invocation that reads this config — incl. getPlatformProxy() in `vite dev`/tests/CI. Boundless
+# is privacy-by-design (I8); we suppress even build-tool phone-home. (server/wrangler.toml should match —
+# see DEFERRED.md.)
+send_metrics = false
+
+# One-time-use WebAuthn challenge store (ADR-0017 D3). Miniflare emulates this locally by BINDING NAME;
+# the `id` is a placeholder used only by `wrangler deploy` (deferred) — replace with the real namespace
+# id at deploy time. The binding name MUST stay "CHALLENGES" (App.Platform + KvChallengeStore depend on it).
+[[kv_namespaces]]
+binding = "CHALLENGES"
+id = "challenges_placeholder_replaced_at_deploy"
+
+# Deferred (T15-shell leg B): the Postgres invite/credential stores run over Hyperdrive via the Worker
+# runtime (T07-shell-B). Uncomment + wire when that slice lands.
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "hyperdrive_placeholder_replaced_at_deploy"
