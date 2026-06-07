@@ -1353,13 +1353,29 @@
       Store` locally, but the **production** stores are Postgres (the schema + RLS already exist, T06),
       so building a throwaway KV version of them is not worth it — defer the real ones to the Worker.
       **Also fold into this deploy slice (from the leg-A review):**
-      (i) **Make `challengeStore` fail-closed** — when the production (non-`dev`) edge build finds no
-      `platform.env.CHALLENGES`, **throw** instead of silently falling back to the per-isolate in-memory
-      store (which would break consume-once across isolates, ADR-0017 D3). The in-memory fallback stays
-      reachable only under `dev`/Vitest. Add the unit test asserting the production path throws. This is
-      the web twin of the Worker's "fail-closed guard so the scaffold store can never be silently
-      deployed" (T07-shell-B). Reviewers rated this the top finding — latent today (no deploy target), a
-      blocker for deploy.
+      (i) **Make `challengeStore` fail-closed — DONE 2026-06-07 (own local session).** Selection is now
+      the pure `selectChallengeStore(kv, fallback, allowInMemoryFallback)` in
+      `web/src/lib/server/webauthn/kv-challenge-store.ts`: real KV when the `CHALLENGES` binding is present;
+      the per-isolate in-memory fallback ONLY when `dev` (`$app/environment`, statically inlined to `false`
+      in any `vite build` — verified in the built `chunks/webauthn-deps.js` call site
+      `selectChallengeStore(platform?.env?.CHALLENGES, challenges, false)`); else it **throws** (a PII-free
+      operator 500 naming ADR-0017 D3). `webauthn-deps.ts:challengeStore` delegates, passing `dev`. 3 Vitest
+      cases (throws prod-no-kv / falls back dev-no-kv / real-Miniflare-KV when bound). Gates: typecheck 0 ·
+      vitest 69 · `pnpm build` (no account) · e2e 13 (the dev ceremony still round-trips the KV branch — no
+      dev behaviour change) · allow-list clean (6 locks). reviewer + security-auditor: ship (0
+      crit/high/med). Two forward-looking notes carried to the deploy/logging slice:
+        • **(F1, I10 — when the web logging backstop lands).** The throw is raised *before* the route `try`,
+          so it propagates as an uncaught endpoint error → SvelteKit's default `handleError` `console.error`s
+          it (the message is suppressed to the client outside dev). The message is PII-free, so **no leak
+          today** — but when the **web scrubbed `emit()` sink + a `handleError` hook + the no-raw-`console`
+          lint** land (T07-shell-B / T16-shell), route uncaught endpoint throws through `emit()` and add an
+          I10 scrubber fixture for this exact operator string (assert zero redactions). **WHEN:** the web
+          logging slice.
+        • **(F2, optional hardening).** The *pure* selector is fully tested; the *wiring* (built `dev`→`false`
+          so the prod-no-binding path actually throws) is asserted only by the manual built-chunk grep. A
+          build-artifact test asserting `dev` is inlined to `false` at the `selectChallengeStore` call site
+          (the automated form of that grep) would pin it. Not added (reviewers: not required this slice; it
+          needs a prior `pnpm build`). **WHEN:** the deploy slice.
       (ii) **Generate `App.Platform` via `wrangler types`** (instead of the hand-typed `app.d.ts`) once
       the bindings multiply (the Hyperdrive binding lands here), so a `wrangler.toml` binding rename is
       caught by the type system rather than silently disabling KV (forbidden-patterns: generate env types).

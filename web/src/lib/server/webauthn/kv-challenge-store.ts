@@ -3,8 +3,9 @@
 //
 // This replaces the interim in-memory stub (`MemoryChallengeStore`) whenever a Cloudflare KV binding
 // is present: `@sveltejs/adapter-cloudflare` exposes it as `platform.env.CHALLENGES` (on the edge, and
-// during `vite dev` via wrangler's `getPlatformProxy()` → a local Miniflare KV). The composition root
-// (`webauthn-deps.ts`) selects this store when the binding exists, else the in-memory fallback.
+// during `vite dev` via wrangler's `getPlatformProxy()` → a local Miniflare KV). The selection itself
+// lives here too — `selectChallengeStore` (below) is the pure decision the composition root
+// (`webauthn-deps.ts`) calls: real KV when bound, the in-memory fallback only in dev, else fail closed.
 //
 // CONSUME-ONCE is BEST-EFFORT, by design. KV has no atomic get-and-delete, so `take` reads then
 // deletes; under a tight concurrent replay two reads could observe the same value before the delete
@@ -46,4 +47,32 @@ export class KvChallengeStore implements ChallengeStore {
 		await this.kv.delete(key);
 		return challenge;
 	}
+}
+
+/**
+ * Pick the challenge store for a request. Returns the real Cloudflare **KV** store when a `CHALLENGES`
+ * binding is present (the edge, and `vite dev`/Playwright via adapter-cloudflare's getPlatformProxy).
+ *
+ * When the binding is ABSENT it falls back to the per-isolate in-memory store ONLY when
+ * `allowInMemoryFallback` is true (dev/test) — otherwise it **fails closed** by throwing. The in-memory
+ * store is a per-isolate `Map`: on a real multi-isolate edge deploy a challenge stored by one isolate
+ * could be looked up in another, silently breaking the one-time-use guarantee (ADR-0017 D3) and masking
+ * a binding misconfiguration that should hard-fail. Callers pass `dev` ($app/environment) as the flag,
+ * so a production build with no `CHALLENGES` binding refuses to serve rather than degrade quietly.
+ *
+ * Pure (no SvelteKit-virtual imports) so it is unit-testable under the bare Vitest config — the
+ * imperative shell (`webauthn-deps.ts`) supplies the platform binding, the fallback, and `dev`.
+ */
+export function selectChallengeStore(
+	kv: KVNamespace | undefined,
+	fallback: ChallengeStore,
+	allowInMemoryFallback: boolean,
+): ChallengeStore {
+	if (kv) return new KvChallengeStore(kv);
+	if (allowInMemoryFallback) return fallback;
+	throw new Error(
+		'Admin-WebAuthn challenge store unavailable: the CHALLENGES KV namespace is not bound. ' +
+			'Refusing the in-memory fallback outside dev — it cannot guarantee one-time-use WebAuthn ' +
+			'challenges across edge isolates (ADR-0017 D3).',
+	);
 }

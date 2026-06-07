@@ -13,13 +13,14 @@
 // dependency lands. There is no production deploy yet, so the in-memory invite/credential backend cannot
 // accidentally serve real traffic.
 
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import type { Cookies } from '@sveltejs/kit';
 import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/server';
 
 import { buildRegistrationOptions, CHALLENGE_TTL_SECS, evaluateInvite, WebAuthnError } from '$lib/server/webauthn';
 import type { ChallengeStore, Clock, RpConfig, WebAuthnDeps } from '$lib/server/webauthn';
-import { KvChallengeStore } from '$lib/server/webauthn/kv-challenge-store';
+import { selectChallengeStore } from '$lib/server/webauthn/kv-challenge-store';
 import {
 	MemoryChallengeStore,
 	MemoryCredentialStore,
@@ -39,17 +40,16 @@ let credentials = new MemoryCredentialStore();
 /**
  * Pick the challenge store for this request: the real Cloudflare **KV** store (ADR-0017 D3) when the
  * `CHALLENGES` binding is present — on the edge under adapter-cloudflare, or in `vite dev` where the
- * adapter exposes a local Miniflare KV via wrangler's getPlatformProxy — and the in-memory fallback
- * otherwise (Vitest unit tests + any adapterless run).
+ * adapter exposes a local Miniflare KV via wrangler's getPlatformProxy.
  *
- * The in-memory fallback is **dev/test-only**. On a real multi-isolate edge deploy it would silently
- * break consume-once (per-isolate `Map`, not shared, not eviction-durable), so the deploy slice MUST
- * make this **fail closed** — throw when `CHALLENGES` is unbound in production rather than fall back.
- * Tracked in DEFERRED.md → T15-shell leg B (deferred because this slice has no deploy target).
+ * When the binding is absent this **fails closed** outside dev: the in-memory fallback is dev/test-only
+ * (Vitest unit tests + any adapterless run), because on a real multi-isolate edge deploy a per-isolate
+ * `Map` cannot guarantee consume-once across isolates (it would silently break one-time-use and mask a
+ * binding misconfiguration). The decision lives in the pure `selectChallengeStore`; here we just supply
+ * the binding, the current fallback singleton (so a dev `/api/test/reset` swap is honoured), and `dev`.
  */
 function challengeStore(platform: App.Platform | undefined): ChallengeStore {
-	const kv = platform?.env?.CHALLENGES;
-	return kv ? new KvChallengeStore(kv) : challenges;
+	return selectChallengeStore(platform?.env?.CHALLENGES, challenges, dev);
 }
 
 /**

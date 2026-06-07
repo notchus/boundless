@@ -8,7 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPlatformProxy } from 'wrangler';
 import type { KVNamespace } from '@cloudflare/workers-types';
 
-import { KvChallengeStore, kvExpirationTtl } from './kv-challenge-store';
+import { KvChallengeStore, kvExpirationTtl, selectChallengeStore } from './kv-challenge-store';
+import type { ChallengeStore } from './ports';
 
 describe('kvExpirationTtl', () => {
 	it('floors a sub-60 TTL to KV’s 60-second minimum', () => {
@@ -22,8 +23,23 @@ describe('kvExpirationTtl', () => {
 	});
 });
 
+// A trivial fallback stand-in; the selector only stores the reference, never calls it. (The
+// "binding present" branch is covered with the REAL Miniflare KV in the suite below — no fake KV.)
+const fallback: ChallengeStore = { put: async () => {}, take: async () => null };
+
+describe('selectChallengeStore — no-binding branches (pure, no Miniflare)', () => {
+	it('fails closed: no binding + fallback disallowed (production) throws (ADR-0017 D3)', () => {
+		expect(() => selectChallengeStore(undefined, fallback, false)).toThrow(/CHALLENGES KV namespace is not bound/);
+	});
+
+	it('falls back to the in-memory store when no binding but fallback is allowed (dev/test)', () => {
+		expect(selectChallengeStore(undefined, fallback, true)).toBe(fallback);
+	});
+});
+
 describe('KvChallengeStore (real Miniflare KV via getPlatformProxy — no Cloudflare account)', () => {
 	let dispose: () => Promise<void>;
+	let kv: KVNamespace;
 	let store: KvChallengeStore;
 
 	beforeAll(async () => {
@@ -32,11 +48,18 @@ describe('KvChallengeStore (real Miniflare KV via getPlatformProxy — no Cloudf
 			persist: false,
 		});
 		dispose = proxy.dispose;
+		kv = proxy.env.CHALLENGES;
 		store = new KvChallengeStore(proxy.env.CHALLENGES);
 	});
 
 	afterAll(async () => {
 		await dispose();
+	});
+
+	it('selectChallengeStore picks the real KV store whenever the binding is present (either dev flag)', () => {
+		// When a binding exists, the dev flag is irrelevant — never the in-memory fallback.
+		expect(selectChallengeStore(kv, fallback, false)).toBeInstanceOf(KvChallengeStore);
+		expect(selectChallengeStore(kv, fallback, true)).toBeInstanceOf(KvChallengeStore);
 	});
 
 	it('round-trips a stored challenge', async () => {
