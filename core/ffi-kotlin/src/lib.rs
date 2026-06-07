@@ -13,7 +13,9 @@
 //!
 //! The surface here is intentionally **identical** to `core/ffi-swift`: both platforms render the
 //! same core state machine, so a divergence between the Swift and Kotlin mirrors would itself be a
-//! parity bug (caught by `platform-parity`). Keep the two crates' surfaces in lock-step.
+//! parity bug. Keep the two crates' surfaces in lock-step — enforced by the parity gate
+//! `core/ffi-swift/tests/parity_with_kotlin.rs`, which asserts the two exported surfaces stay
+//! byte-identical (an FFI-only divergence the per-crate compile guard cannot catch).
 //!
 //! ## Surface (client-relevant onboarding state machine only)
 //! Clients **render states, they never decide them** — so this exposes the pure

@@ -1107,12 +1107,27 @@
       actionable when a Kotlin UI task first needs one of those types across the FFI.
   - **WHEN:** **T13/T14**, whenever `AppVersion`/`MemberId`/a tainted type is first exported to Kotlin.
 
-- [ ] **`core/ffi-kotlin` ⇄ `core/ffi-swift` surface parity is a convention, not yet a gate.** The two
+- [x] **`core/ffi-kotlin` ⇄ `core/ffi-swift` surface parity is a convention, not yet a gate.** The two
       mirror crates MUST stay identical (same enums/variants/fns), enforced today only by the shared core
       they both mirror (a core change breaks both compiles) + the `platform-parity` review. A cheap CI
       guard (e.g. assert the exported fn/enum sets match across the two crates) would make the lock-step
       mechanical rather than reviewer-dependent.
-  - **WHEN:** next CI-hardening pass.
+  - **DONE:** 2026-06-07. Gate = the host test **`core/ffi-swift/tests/parity_with_kotlin.rs`**: it
+    `include_str!`s both crates' `lib.rs`, normalizes each (the production region before `#[cfg(test)]`,
+    minus `//!`/`///`/`//` full-line comments + blank lines + trailing whitespace) and asserts the two
+    are **byte-identical**, reporting the first differing line on mismatch. Whole-region byte-identity is
+    strictly stronger than a fn/enum-set check (it also pins the symmetric `From` mappings + variant
+    field names/order) and needs no Rust parser — robust because the post-edit hook keeps both files
+    `cargo fmt`-canonical. It **complements** (does not overlap) the compile-time `From`-`match` guard:
+    that catches *core↔mirror* drift, this catches *mirror↔mirror* (FFI-only) drift the compile cannot
+    see. Rides the existing `rust-core` CI job (`cargo test --workspace`) — no new CI wiring. Hardened per
+    the platform-parity review (F3): asserts `#[cfg(test)]` appears **exactly once** so a future
+    cfg(test)-gated *production* item can't silently shrink the compared surface (a false-pass) — proven
+    by a transient negative check (`found 2` → loud fail). Header pointers added to both `lib.rs` files.
+    Reviews: `platform-parity` + `reviewer` both "ship it" (0 crit/high/med). **Out of scope (still
+    deferred):** sharing the mirror types from a single source — ADR-0022 keeps the two crates separate
+    deliberately (the wasm-free-core constraint); this gate makes the hand-maintained lock-step
+    mechanical, nothing more.
 
 ## Android / Rider UI (spec 001 T13 — out-of-scope register)
 

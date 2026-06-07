@@ -11,6 +11,11 @@
 //! conversion is updated — so the generated Swift can never silently drift from the core (P4).
 //! This is a sanctioned codegen adapter, not a hand-rolled duplicate. See **ADR-0022**.
 //!
+//! That compile guard does NOT catch an **FFI-only** divergence (a `#[uniffi::export]` fn or mirror
+//! variant added/renamed/re-signed here but not in `core/ffi-kotlin`, with the core unchanged). The
+//! parity gate `tests/parity_with_kotlin.rs` does: it asserts the two crates' exported surfaces stay
+//! byte-identical. Keep this `lib.rs` surface in lock-step with `core/ffi-kotlin/src/lib.rs`.
+//!
 //! ## Surface (client-relevant onboarding state machine only)
 //! Clients **render states, they never decide them** — so this exposes the pure
 //! `boundless_auth::state` graph: [`launch`], [`on_event`], [`is_terminal`],

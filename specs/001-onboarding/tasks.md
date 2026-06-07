@@ -240,6 +240,14 @@ Wave 8:  T16 (cross-cutting verification)
 
 ---
 
+## Post-T16 — CI-hardening follow-ups (from `DEFERRED.md`, not numbered tasks)
+
+> Account-free, locally-verifiable invariant gates picked up after the T01–T16 waterline, one slice each.
+
+- **FFI mirror-crate surface-parity gate — ✅ DONE (2026-06-07).** `core/ffi-swift/tests/parity_with_kotlin.rs` asserts the two UniFFI mirror crates' (`core/ffi-swift` ⇄ `core/ffi-kotlin`) `lib.rs` exported surfaces stay **byte-identical** (the production region before `#[cfg(test)]`, comments/blanks stripped), catching an **FFI-only divergence** (P4/P7) that the compile-time `From`-`match` guard cannot see. Rides the `rust-core` CI job; no new wiring. Reviewed (`platform-parity` + `reviewer`: ship, 0 crit/high/med; F3 hardening = `#[cfg(test)]` must appear exactly once). See `DEFERRED.md` → Android bring-up register.
+
+---
+
 ## Deferred (NOT tasks here — tracked in `DEFERRED.md`)
 
 - The two remaining new privacy-invariant tests land with the **deletion** work, not this spec: extend the I12 forgetting property test to the auth artifacts, and the named delete-leg device-token invalidation (the refresh-rotation-replay test **is** in T05). Account deletion flow itself is out of scope (spec §Out of scope).
