@@ -70,10 +70,10 @@ Numbered SQL under `server/migrations/`. Conventions: PII columns `*_encrypted b
 **OpenAPI 3.1** — source of truth `api/openapi.yaml`; generated clients in `api/generated/<lang>/` (swift-openapi-generator / openapi-generator kotlin / openapi-typescript), **never hand-edited**. `client_min_version` is a **required** field on every `/api/auth/*` response (AC7).
 
 Endpoint sketches (shapes finalized at implementation; field names not final):
-- `POST /api/auth/signin` — `{ phone_lookup_hash }` → `{ member_match, client_min_version, client_recommended_version, manifest_pointer }`. No existence leak (voice-and-tone).
+- `POST /api/auth/signin` — `{ phone }` (E.164, TLS; server hashes per I3 — ADR-0023) → `{ member_match, client_min_version, client_recommended_version, manifest_pointer }`. No existence leak (voice-and-tone).
 - `POST /api/auth/bind-device` — `{ onboarding_code, platform, app_version, … }` → session + `DeviceToken` (AC4, AC17). Server-validated; no offline completion.
 - `POST /api/auth/refresh` — refresh-token rotation; silent; carries `client_min_version` (AC18, AC7). **Access token = opaque-random bearer (ADR-0021).**
-- `POST /api/auth/recovery/rebind` — Driver: `{ phone_lookup_hash, recovery_code, … }` → re-bind, old token invalidated, fresh code issued (AC19).
+- `POST /api/auth/recovery/rebind` — Driver: `{ phone, recovery_code, … }` (E.164, TLS; server hashes per I3 — ADR-0023) → re-bind, old token invalidated, fresh code issued (AC19).
 - `POST /api/dev/admins` — developer-only, hardware-key-backed; unauth'd **and** admin-auth'd both rejected (AC1, I11).
 - `GET /api/admin/auth/invite/{token}` + `POST /api/admin/auth/register` — WebAuthn registration; consumes invite token (AC16, AC20).
 - `POST /api/admin/auth/signin` — WebAuthn assertion (AC2, D4).

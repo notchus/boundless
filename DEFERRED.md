@@ -517,33 +517,44 @@
       exists, gate the scaffold behind a non-default `scaffold` cargo feature (a release build that forgets
       it fails to compile) **or** a boot-time dev-var check that fails closed in production. **WHEN:** with
       (or before) the `wrangler deploy` / PgAuthStore slice — land it the moment a real deploy path appears.
+      **Nit while here (ADR-0023 sec-audit F3, 2026-06-07):** the scaffold `DEMO_PHONE = +15551230000`
+      (`scaffold_store.rs`) is `555-1230` — *outside* NANP's reserved fictional block `555-01XX`, so not
+      guaranteed non-routable. Change it to a `555-01XX` value (e.g. `+15555550100`) for consistency with
+      the `fixtures/compat/**` phones when the scaffold store is next touched (deleted with this item).
     - **`PgDeviceStore` (device-token persistence) + APNs/FCM registration.** Needs spec-008 device-token
       at-rest encryption (the in-memory `DeviceStore` stands in until then). **WHEN:** push spec 007 / issuance 008.
     - **Turnstile** (code-guess + refresh throttle) + the **per-source refresh-rejection 429** network
       enforcement (the `GroupHubState` counter exists; the Worker enforces). **WHEN:** with the PgAuthStore slice.
     - **The `boundless::logging::emit()` sink + no-raw-`tracing` lint + Logpush replay** (P2/I10) — also a
-      T16-shell item; route `StoreError` + the invite-token URL segment through it. **WHEN:** this same shell track.
+      T16-shell item; route `StoreError` + the invite-token URL segment through it. **Carry-forward
+      (ADR-0023 / sec-audit F1, 2026-06-07):** now that the wire carries the plaintext `phone`, the Worker
+      must keep the **inbound raw `String` phone** — `body.phone` in the window *before* `normalize_phone`
+      tints it into a `PhoneNumber` — off the log path and never echo it in an error response (the current
+      generic `"bad phone"`/`"internal"` strings are correct; keep them generic). Add a Worker integration
+      test asserting sign-in/bind/recovery error responses for a malformed/unmatched phone contain **no
+      substring of the submitted phone** (the testable form of ADR-0023's "hash, use, drop" obligation,
+      which also covers the AC3 "drops/never-logged" leg the core constant-time test doesn't). **WHEN:** this same shell track.
     - **Real signed-manifest KV serving** (ADR-0014; the skeleton only reads a manifest index key). **WHEN:** the manifest-service spec.
     - **`wrangler deploy` + the live deployed-edge contract-conformance E2E** (replay the golden fixtures
       against the deployed Worker through the real Hyperdrive pooler). **Needs a Cloudflare account.**
       **WHEN:** the deploy-hardening pass.
 
-- [ ] **OpenAPI `SignInRequest` ↔ I3 contract defect (surfaced wiring T07-shell-B slice 1).** The frozen
-      `api/openapi.yaml` `SignInRequest` carries a client-computed **`phone_lookup_hash`**, but I3 keys
-      that hash with a **per-instance server secret** (`core/crypto/src/hashing.rs`) that a client cannot
-      hold (no client computes it — grep-confirmed), and `core::server::sign_in` itself takes the raw
-      (normalized) **phone** and hashes server-side. So the wire must carry the phone (TLS-protected),
-      not a hash — the OpenAPI schema is internally inconsistent with I3 as built. The skeleton wires the
-      phone (matching the system as built) and flags this. **The same defect affects all three auth
-      request schemas** — `SignInRequest`, `BindDeviceRequest`, and `RecoveryRebindRequest` each carry a
-      client-uncomputable `phone_lookup_hash` (platform-parity F1/F2). Harmless today (no shipped client
-      parses these envelopes — the iOS/Android `OnboardingNetworking` is still a stub), but it MUST be
-      resolved **before** the OpenAPI request codegen (T10-shell) generates real request builders, or the
-      generated client will send a base64 hash and the Worker will 400. **Resolution needs one ADR**
-      reconciling all three: amend the OpenAPI requests (→ `phone`) or I3 (a client-side keyless pre-hash
-      + server re-hash scheme).
-  - **WHEN:** before the PgAuthStore slice wires the real sign-in lookup, and before the T10-shell OpenAPI
-    request codegen — whichever comes first.
+- [x] **OpenAPI auth-request ↔ I3 contract defect — RESOLVED 2026-06-07 (ADR-0023).** The frozen
+      `api/openapi.yaml` carried a client-computed **`phone_lookup_hash`** on all three auth requests
+      (`SignInRequest`/`BindDeviceRequest`/`RecoveryRebindRequest`), but I3 keys that hash with a
+      **per-instance server secret** (`core/crypto/src/hashing.rs`) a client cannot hold, and
+      `core::server::sign_in` already takes the raw (normalized) **phone** and hashes server-side — so the
+      contract was internally inconsistent with I3 (platform-parity F1/F2; flagged in `server/src/runtime/mod.rs`).
+  - **DONE:** **Option A** (amend the OpenAPI requests → `phone`, E.164 over TLS; server normalizes +
+    HMAC-hashes + drops the plaintext, never logged P2 / only the keyed hash + `phone_encrypted` stored,
+    I3/I5) — see **ADR-0023**. Rejected Option B (client keyless pre-hash: unsalted low-entropy phone hash
+    is brute-forceable + forces client-side normalization, violating P4 single-source `normalize_phone`).
+    Changed: the 3 OpenAPI request schemas + the signin path/field descriptions; the 3 illustrative
+    `fixtures/compat/**` bodies (`phone_lookup_hash` → `phone`); spec 001 §C step 2 + AC3 wording (server-
+    side model; AC3 checkbox unchanged); a regression test (`web/tests/contract/api-contract.test.ts` —
+    each auth request requires `phone`, exposes no `phone_lookup_hash`); the drift lock. **No Rust source
+    change** (the engine was already correct). This **unblocks** the T10-shell OpenAPI request codegen and
+    the T07-shell-B PgAuthStore sign-in lookup, which now consume a consistent contract.
 
 - [x] **Live DB-level integration tests of the atomic contracts (postgres:16) — DONE in slice A.**
       The true DB-level TOCTOU proofs the in-memory stub only *modelled* now exist in

@@ -48,12 +48,14 @@ paths:
   /api/auth/signin:
     post:
       operationId: authSignIn
-      summary: Phone-hash sign-in (no existence leak).
+      summary: Phone sign-in (no existence leak).
       description: |
-        Looks up a member by `phone_lookup_hash` (the plaintext phone never crosses the wire —
-        I3/AC3). The response is uniform whether or not the phone matched (carry-forward (b)): it
-        always carries the version handshake (AC7) and a manifest pointer, and the routing outcome
-        rides in the body. A below-minimum client collapses to `AUTH_BELOW_MIN_VERSION` (O4/O8).
+        Looks up a member by phone: the client sends the E.164 `phone` (TLS-protected); the server
+        normalizes it and computes the I3 `phone_lookup_hash` with the per-instance secret a client
+        cannot hold (ADR-0023), then drops the plaintext (tainted type, never logged — P2). The
+        response is uniform whether or not the phone matched (carry-forward (b)): it always carries
+        the version handshake (AC7) and a manifest pointer, and the routing outcome rides in the
+        body. A below-minimum client collapses to `AUTH_BELOW_MIN_VERSION` (O4/O8).
       requestBody:
         required: true
         content:
@@ -351,13 +353,16 @@ components:
     # ── /api/auth/signin ──────────────────────────────────────────────────────────────────
     SignInRequest:
       type: object
-      required: [phone_lookup_hash, reported]
+      required: [phone, reported]
       properties:
-        phone_lookup_hash:
+        phone:
           type: string
           description: |
-            HMAC-SHA256 phone-lookup hash, computed by the client (I3/AC3). The plaintext phone
-            never crosses the wire. Base64.
+            The member's phone number in E.164 form (e.g. `+15555550101`), TLS-protected. The
+            server normalizes it and computes the I3 `phone_lookup_hash` with the per-instance
+            secret (ADR-0023 — the keyed hash is server-side; a client cannot compute it), then
+            drops the plaintext (tainted type, never logged — P2; only the keyed hash and
+            `phone_encrypted` are persisted, I3/I5).
         reported:
           $ref: '#/components/schemas/ClientVersion'
 
@@ -406,11 +411,13 @@ components:
     # ── /api/auth/bind-device ──────────────────────────────────────────────────────────────
     BindDeviceRequest:
       type: object
-      required: [phone_lookup_hash, onboarding_code, reported, device_token]
+      required: [phone, onboarding_code, reported, device_token]
       properties:
-        phone_lookup_hash:
+        phone:
           type: string
-          description: HMAC-SHA256 phone-lookup hash (I3). Base64.
+          description: |
+            The member's phone number in E.164 form, TLS-protected. Server-hashed for the I3
+            lookup, then dropped (ADR-0023; never logged — P2).
         onboarding_code:
           type: string
           description: The Onboarding Code the helper entered. Sensitive; server-validated.
@@ -522,11 +529,13 @@ components:
     # ── /api/auth/recovery/rebind ──────────────────────────────────────────────────────────
     RecoveryRebindRequest:
       type: object
-      required: [phone_lookup_hash, recovery_code, reported, device_token]
+      required: [phone, recovery_code, reported, device_token]
       properties:
-        phone_lookup_hash:
+        phone:
           type: string
-          description: HMAC-SHA256 phone-lookup hash (I3). Base64.
+          description: |
+            The member's phone number in E.164 form, TLS-protected. Server-hashed for the I3
+            lookup, then dropped (ADR-0023; never logged — P2).
         recovery_code:
           type: string
           description: The Driver-held Recovery Code. Sensitive; server-validated, rotated on use.

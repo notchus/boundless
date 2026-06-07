@@ -134,8 +134,10 @@ The flow is identical in structure for Rider and Driver; the Rider variant is in
 to be run by a trusted helper, the Driver variant by the Driver. Steps:
 
 1. **Install** the app from the App Store / Play Store (done by the helper for a Rider).
-2. **Sign in:** enter the member's phone number; the client sends `phone_lookup_hash`
-   to the server. The server's auth response includes `client_min_version` (O4) and
+2. **Sign in:** enter the member's phone number; the client sends it (E.164, TLS-protected)
+   to the server, which normalizes it and computes the I3 `phone_lookup_hash` server-side —
+   the keyed hash a client cannot compute (ADR-0023). The server's auth response includes
+   `client_min_version` (O4) and
    `client_recommended_version` (the latter feeds the O5 stragglers panel) plus the
    manifest pointer (ADR-0014).
 3. **Verify / bind device:** enter the Onboarding Code. On success the server issues a
@@ -228,10 +230,11 @@ Admin onboarding state machine:
 - [ ] **AC2** — Admin registration uses WebAuthn; no password field exists anywhere in
       the admin auth flow. Test: the admin auth surface contains no password input;
       registration completes only with a WebAuthn credential.
-- [ ] **AC3** — Phone-number auth lookup uses `phone_lookup_hash` with a constant-time
-      compare; the plaintext phone is never sent in an auth lookup beyond the hashing
-      boundary, and never logged (asserts I3, P2). Test: `i3_phone_lookup_constant_time`
-      plus a log-scrubber replay of the onboarding fixtures.
+- [ ] **AC3** — Phone-number auth lookup uses `phone_lookup_hash` (HMAC-SHA256 keyed by the
+      per-instance secret, computed **server-side** — ADR-0023) with a constant-time compare;
+      the client sends the plaintext phone (E.164) only over TLS, and the server hashes it and
+      drops it — the plaintext is never persisted or logged (asserts I3, P2). Test:
+      `i3_phone_lookup_constant_time` plus a log-scrubber replay of the onboarding fixtures.
 - [ ] **AC4** — On successful first-launch, a `DeviceToken` is registered bound to
       `(member_id, platform, app_version)`; on re-onboarding the same member on a new
       device, the prior device's token is invalidated (asserts the **onboarding-layer
@@ -367,7 +370,8 @@ Admin onboarding state machine:
 Invariants touched and how they are preserved:
 
 - **I3 (phone hashed for lookup, encrypted for display):** auth uses `phone_lookup_hash`
-  (constant-time); plaintext phone never logged; display is Admin-only and audit-logged.
+  (constant-time, computed server-side — ADR-0023); the plaintext phone transits under TLS but is
+  never logged or stored in plaintext; display is Admin-only and audit-logged.
 - **I4 (device tokens scoped per device/version, invalidated on auth change):** this spec
   enforces the onboarding-layer cases (token registration + invalidation on new-device
   re-onboarding, AC4); the full enumeration of I4's "any auth change" triggers is settled

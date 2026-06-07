@@ -133,3 +133,42 @@ describe('AC7 — API contract freeze (OpenAPI leg, spec 001 T10)', () => {
     }
   });
 });
+
+// The three auth REQUEST schemas, each a flat object (no allOf/oneOf) — so its own `required` +
+// `properties` are read directly.
+const AUTH_REQUEST_SCHEMAS = ['SignInRequest', 'BindDeviceRequest', 'RecoveryRebindRequest'] as const;
+
+function ownSchema(name: string): { required: Set<string>; properties: Set<string> } {
+  const s = schemas()[name];
+  if (!isObject(s)) throw new Error(`openapi.yaml: missing schema ${name}`);
+  const required = new Set<string>();
+  const req = s['required'];
+  if (Array.isArray(req)) for (const r of req) if (typeof r === 'string') required.add(r);
+  const properties = new Set<string>();
+  const props = s['properties'];
+  if (isObject(props)) for (const k of Object.keys(props)) properties.add(k);
+  return { required, properties };
+}
+
+describe('ADR-0023 — auth requests carry the plaintext phone, not a client-computed hash', () => {
+  // I3's `phone_lookup_hash` is HMAC-SHA256 keyed by a per-instance SERVER secret (core/crypto), so
+  // no client can compute it; the server hashes the received E.164 `phone` and drops the plaintext
+  // (never logged — P2; only the keyed hash is persisted — I3). The request contract must therefore
+  // carry `phone` and never `phone_lookup_hash` — a regression to the latter would generate a client
+  // that sends a base64 hash the server can't use.
+  it('all three auth requests require `phone` and expose no `phone_lookup_hash`', () => {
+    for (const name of AUTH_REQUEST_SCHEMAS) {
+      const { required, properties } = ownSchema(name);
+      expect(required.has('phone'), `${name}.required must include phone`).toBe(true);
+      expect(properties.has('phone'), `${name}.properties must include phone`).toBe(true);
+      expect(
+        properties.has('phone_lookup_hash'),
+        `${name}: must not expose a client-computed phone_lookup_hash (ADR-0023)`,
+      ).toBe(false);
+      expect(
+        required.has('phone_lookup_hash'),
+        `${name}: must not require a client-computed phone_lookup_hash (ADR-0023)`,
+      ).toBe(false);
+    }
+  });
+});

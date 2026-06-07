@@ -12,12 +12,12 @@
 //!   DO envelope and persists a counter via `state.storage()`. This is **not** the full frozen
 //!   `BindDeviceRequest` (no onboarding-code consume, no device-token bind) — that is the deferred PG slice.
 //!
-//! **Contract note (flagged, not resolved here):** the frozen `SignInRequest` schema carries a
-//! client-computed `phone_lookup_hash`, but I3 keys that hash with a **per-instance server secret**
-//! (`core/crypto`), which a client cannot hold — and `core::server::sign_in` itself takes the raw
-//! (normalized) phone and hashes server-side. So this skeleton's request carries `phone`, matching
-//! the system as actually built. Reconciling the OpenAPI `SignInRequest` with I3 needs an ADR
-//! (recorded in DEFERRED.md → T07-shell-B); it is out of scope for this bring-up slice.
+//! **Contract note (RESOLVED — ADR-0023):** the auth request schemas now carry the E.164 `phone`
+//! (TLS-protected), not a client-computed `phone_lookup_hash` — I3 keys that hash with a
+//! **per-instance server secret** (`core/crypto`) a client cannot hold, and `core::server::sign_in`
+//! takes the raw (normalized) phone and hashes server-side (which this skeleton already does). The
+//! frozen `api/openapi.yaml` was reconciled to that as-built behavior; this `SignInWire { phone }`
+//! matches the contract.
 //!
 //! [`AuthService::sign_in`]: boundless_server_core::AuthService::sign_in
 

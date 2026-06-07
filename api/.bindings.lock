@@ -3,7 +3,7 @@
 # sha256 of contract inputs (api/ + core/) and generated outputs (api/generated/).
 [inputs]
 d0d0bb0281b2a3e904cb335297e73e670d6779775cb7c2139d7818fcde3c00a5  api/boundless.proto
-717ec6a84aa855219b5a29e71a1114be46a5838bbd8f4c5bb45a1f78c643f5f3  api/openapi.yaml
+92c31255eed07df11c1e21a8cb8e37202e67835528853be8e6ce580e5ac27574  api/openapi.yaml
 6ba10a866524801aa9cd730bab9c09d6deac075cc01c55036e96984f1bf11fa8  core/Cargo.lock
 58de21e5641441b171810834177158bf07126933e81321232da068660d654cf4  core/Cargo.toml
 9088ac802f24f37abfbe1787fc02a251d68eff427e8a12e40756e5257185cd7e  core/auth/Cargo.toml

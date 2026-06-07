@@ -13,9 +13,10 @@
 //! **Scope (what this does and does not catch).** This harness exercises only the **version
 //! handshake** — it parses each fixture's `client_version` and asserts the support-window decision.
 //! It deliberately does **not** replay the request *body* against a wire DTO: the sign-in body has no
-//! core `Serialize` type yet (`SignInRequest` holds a tainted `PhoneNumber`, I3 — its plaintext never
-//! crosses the wire implicitly), so request-shape fidelity for older minors is owned by the OpenAPI
-//! contract test (AC7 / T10) and the deployable-Worker replay (T08-shell), not here. The `body`
+//! core `Serialize` type yet (`SignInRequest` holds a tainted `PhoneNumber` with no `Serialize`, so it
+//! can never be auto-serialized into a log line — P2; the wire request carries the E.164 `phone`, which
+//! the server hashes per I3 — ADR-0023), so request-shape fidelity for older minors is owned by the
+//! OpenAPI contract test (AC7 / T10) and the deployable-Worker replay (T08-shell), not here. The `body`
 //! fields in the fixtures are illustrative until then. Bumping the server minor means bumping
 //! [`CURRENT`] and adding a matching `current.json` (the prior `current` becomes the new `n_minus_1`).
 

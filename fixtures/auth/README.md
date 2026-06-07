@@ -7,9 +7,11 @@ treat these as the canonical examples the OpenAPI is aligned to, not a frozen wi
 
 These are **test vectors, not real data**: `member_id`s are well-known UUIDs, tokens are
 never present as raw secrets (a successful bind is represented by non-secret session
-metadata — the refresh wire format is deliberately left open per plan §10-D), and
-`phone_lookup_hash` values are opaque placeholders (the plaintext phone never appears —
-I3). Error fixtures carry the stable codes registered in `docs/error-codes.md` (P12).
+metadata — the refresh wire format is deliberately left open per plan §10-D), and these
+**response** fixtures carry no phone or lookup hash at all. (The *request* fixtures in
+`fixtures/compat/` carry the E.164 `phone` the client sends over TLS; the server hashes it
+into `phone_lookup_hash` server-side per I3 — ADR-0023.) Error fixtures carry the stable
+codes registered in `docs/error-codes.md` (P12).
 
 | File | Represents | State / AC | Notes |
 |---|---|---|---|
