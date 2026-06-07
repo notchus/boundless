@@ -469,42 +469,81 @@
 > no Worker toolchain needed. The remaining T07-shell-B (Worker runtime + the access-token store
 > column/verify lookup + `PgDeviceStore`) stays below.
 
-- [ ] **T07-shell-B — the deployable workers-rs Worker (the async-port bridge is now DONE, above).**
-      The `#[event]`/ Router entry point, the `GroupHub` Durable Object (persisting `GroupHubState`),
-      and the Cloudflare bindings — Queues (admin alerts), KV (manifest + per-Group `{adminName}`),
-      Turnstile (code-guess + refresh throttle), Hyperdrive → Postgres. Drives the **already-built,
-      now-`AuthStore`-implementing `PgAuthStore`** over a `hyperdrive.connect()` `worker::Socket` —
-      which requires (i) resolving the `tokio-postgres` **wasm32 feature flags** and (ii) the
-      **pooler-safe `query_raw`** path (the Hyperdrive pooler dislikes tokio-postgres unnamed prepared
-      statements; native tests don't hit this). The async-port bridge it needed is **done** (ADR-0020),
-      so the Worker composes `PgAuthStore` (`AuthStore`) with a **`PgDeviceStore`** (`DeviceStore`) —
-      the latter needs the spec-008 device-token encryption (see the device-token deferral below); until
-      then the device half has no Postgres impl. The production **CSPRNG `SecretSource`** is **DONE**
-      (`RngSecretSource`, slice 2) — the Worker only **injects** a getrandom-backed RNG into it.
-      **APNs/FCM** device-token registration, the `RefreshResponse::server_verdict` → PII-free `emit()`
-      logging (never returned to the client), and the **per-source refresh-rejection 429** (the
-      `GroupHubState` counter exists; the network enforcement is the shell's).
-      - **Access-token verify path (ADR-0021; the mint side is DONE in slice 2):** the access token is an
-        **opaque-random bearer** (no JWT, no signing key). It is minted by `RngSecretSource` and its
-        at-rest hash primitive (`access_token_hash`/`_matches`) ships in slice 2; the Worker must add the
-        **`access_token_hash bytea` column + the per-request verify lookup** (a migration + a `PgAuthStore`
-        method) that re-reads the family's mutable status each request. **Guard-rail (ADR-0021):** this
-        lookup must NOT be a naive standalone Neon round trip — fold it into the request's existing
-        group-scoped RLS txn, or serve `token-hash → family_status` from `GroupHub` DO in-memory state, and
-        **on any revoke the DO/Worker cache must write-through/evict** (authoritative-on-revoke, not TTL),
-        or it recreates the stale window the opaque format exists to avoid. (The Worker authenticates
-        *before* the DO RPC, so "fold into the DO" = fold auth into that RPC, not a separate pre-call.)
-      - **W2 boot-guard call site (the guard fn is DONE in slice 2):** the Worker must call
-        `ensure_least_privilege(&client)` immediately after `hyperdrive.connect()`, before constructing any
-        `PgAuthStore`, and **fail closed** on `Err` (+ a CI smoke test). The reusable function + both-legs
-        real-PG test already exist; only the boot-time *invocation* + infra role provisioning remain.
-  - **Needs `docs-researcher`:** the workers-rs runtime (`worker`/`worker-build` versions, the
-    `#[event]`/Router/DO/`hyperdrive.connect()` Socket API) + the miniflare/workerd test harness —
-    then pin `worker`/`worker-build` and fill `docs/stack-matrix.md`. (`tokio-postgres`/`tokio` are
-    already pinned by slice A.) Toolchain note (verified 2026-06-05): `wrangler` + `worker-build` are
-    **not installed** in the dev env, and the only supported Worker test path is a **JS/TS miniflare**
-    harness — both are part of this slice's setup cost.
-  - **WHEN:** the T07-shell-B infra task (after slice A).
+- [~] **T07-shell-B — the deployable workers-rs Worker. SLICE 1 (toolchain bring-up + Worker
+      skeleton) DONE 2026-06-07; the Postgres/deploy legs remain (slices 2+).**
+  - **DONE — slice 1 (Worker skeleton, 2026-06-07):** Stood up the Worker toolchain (`cargo install
+    worker-build` 0.8.3; `wrangler` 4.98.0 + `@cloudflare/vitest-pool-workers` 0.16.13 + `vitest`
+    4.1.8 via pnpm — all crates.io/npm-reachable through the sandbox; **no Cloudflare account**) and a
+    **real, miniflare-tested Worker skeleton** in `server/` (`boundless-worker`): the `#[event(fetch)]`
+    + `worker::Router`, the `GroupHub` Durable Object, and the KV + Queues bindings, composing the
+    **real core `AuthService::sign_in`** (P4) over a clearly-labelled **scaffold in-memory store**
+    (`runtime/scaffold_store.rs`, to be deleted when `PgAuthStore` is wired). Routes: `GET /healthz`
+    (version handshake AC7/O4 + a real KV `MANIFEST` read), `POST /api/auth/signin` (the frozen
+    `api/openapi.yaml` `SignInResponse` wire shape — matched/not-on-file/below-min, no existence leak —
+    + the below-min admin alert drained to the `ADMIN_ALERTS` Queue, §10-E), `POST /api/auth/bind-device`
+    (forwarded to the `GroupHub` DO, which applies the core §10-E rate-limit window + persists a counter
+    via `state.storage()`, AC17). **Crate is cfg-split** (`worker` is a `cfg(target_arch="wasm32")`
+    dep; the runtime is wasm-only) so the native `store` + `compat` tests stay green; `default-members
+    = ["."]` so `worker-build` (which builds default members) never drags the native `store` crate onto
+    wasm. Proof: `worker-build --release` compiles a 24 kB wasm; **6 miniflare tests green** (no
+    account); native `cargo clippy/test --workspace` + wasm clippy clean. Pins → `docs/stack-matrix.md`
+    (Edge/Server section). CI: new `worker` job. **Contract defect flagged** (see the new bullet below).
+  - **REMAINING — the PG/deploy legs (need a local Postgres + a Cloudflare account, or spec-008):**
+    - **Replace the scaffold store with `PgAuthStore`-over-Hyperdrive.** Drive the already-built,
+      `AuthStore`-implementing `PgAuthStore` over a `hyperdrive.connect()` `worker::Socket`. **Confirmed
+      blocker (docs-researcher 2026-06-07):** workers-rs has **no first-class Hyperdrive binding**, and
+      the Hyperdrive pooler rejects tokio-postgres's default prepared statements — so this needs a
+      **forked `tokio-postgres` (`unnamed-statement` branch)** or `query_with_param_types()`, plus the
+      wasm32 feature flags. Locally testable via `wrangler dev` Hyperdrive `localConnectionString` →
+      a local Postgres (absent in this env); real pooler behaviour needs a Cloudflare account. Record
+      the driver choice in an ADR before building. **WHEN:** a slice with a local Postgres (after the
+      forked-driver ADR).
+    - **Access-token verify path (ADR-0021; mint side DONE slice 2):** add the `access_token_hash bytea`
+      column + the per-request verify lookup (re-reads family status), folded into the request's
+      group-scoped RLS txn or served from `GroupHub` DO in-memory state with **write-through/evict on
+      revoke** (authoritative-on-revoke, not TTL). **WHEN:** with the PgAuthStore slice.
+    - **W2 boot-guard call site (guard fn DONE slice 2):** call `ensure_least_privilege(&client)` right
+      after `hyperdrive.connect()`, fail closed (+ CI smoke). **WHEN:** with the PgAuthStore slice + infra role.
+    - **Route the sign-in below-min alert dedup through the `GroupHub` DO** (reviewer H1, slice 1). The
+      §10-E once-per-day dedup (`GroupHubState.should_alert`) lives in `AuthService.hub`, which the
+      skeleton's `build_service()` re-creates **per request** — so on the sign-in path the dedup does not
+      persist (every below-min sign-in re-enqueues a `BelowMinVersion` alert; harmless in the skeleton,
+      an R12 alert-flood in production). The bind path already persists via the DO; sign-in must too once
+      `AuthService` is hosted in / fronted by the DO. **WHEN:** the PgAuthStore slice (when sign-in runs in the DO).
+    - **Fail-closed guard so the scaffold store/key can never be silently deployed** (security-auditor F1,
+      slice 1). Today the "replace before production" boundary is documented + structurally signalled
+      (names, doc, file-slated-for-deletion) but not *enforced*: the constant `SCAFFOLD_HMAC_KEY` + the
+      single seeded demo member are wired into the live `#[event(fetch)]` path. Before `wrangler deploy`
+      exists, gate the scaffold behind a non-default `scaffold` cargo feature (a release build that forgets
+      it fails to compile) **or** a boot-time dev-var check that fails closed in production. **WHEN:** with
+      (or before) the `wrangler deploy` / PgAuthStore slice — land it the moment a real deploy path appears.
+    - **`PgDeviceStore` (device-token persistence) + APNs/FCM registration.** Needs spec-008 device-token
+      at-rest encryption (the in-memory `DeviceStore` stands in until then). **WHEN:** push spec 007 / issuance 008.
+    - **Turnstile** (code-guess + refresh throttle) + the **per-source refresh-rejection 429** network
+      enforcement (the `GroupHubState` counter exists; the Worker enforces). **WHEN:** with the PgAuthStore slice.
+    - **The `boundless::logging::emit()` sink + no-raw-`tracing` lint + Logpush replay** (P2/I10) — also a
+      T16-shell item; route `StoreError` + the invite-token URL segment through it. **WHEN:** this same shell track.
+    - **Real signed-manifest KV serving** (ADR-0014; the skeleton only reads a manifest index key). **WHEN:** the manifest-service spec.
+    - **`wrangler deploy` + the live deployed-edge contract-conformance E2E** (replay the golden fixtures
+      against the deployed Worker through the real Hyperdrive pooler). **Needs a Cloudflare account.**
+      **WHEN:** the deploy-hardening pass.
+
+- [ ] **OpenAPI `SignInRequest` ↔ I3 contract defect (surfaced wiring T07-shell-B slice 1).** The frozen
+      `api/openapi.yaml` `SignInRequest` carries a client-computed **`phone_lookup_hash`**, but I3 keys
+      that hash with a **per-instance server secret** (`core/crypto/src/hashing.rs`) that a client cannot
+      hold (no client computes it — grep-confirmed), and `core::server::sign_in` itself takes the raw
+      (normalized) **phone** and hashes server-side. So the wire must carry the phone (TLS-protected),
+      not a hash — the OpenAPI schema is internally inconsistent with I3 as built. The skeleton wires the
+      phone (matching the system as built) and flags this. **The same defect affects all three auth
+      request schemas** — `SignInRequest`, `BindDeviceRequest`, and `RecoveryRebindRequest` each carry a
+      client-uncomputable `phone_lookup_hash` (platform-parity F1/F2). Harmless today (no shipped client
+      parses these envelopes — the iOS/Android `OnboardingNetworking` is still a stub), but it MUST be
+      resolved **before** the OpenAPI request codegen (T10-shell) generates real request builders, or the
+      generated client will send a base64 hash and the Worker will 400. **Resolution needs one ADR**
+      reconciling all three: amend the OpenAPI requests (→ `phone`) or I3 (a client-side keyless pre-hash
+      + server re-hash scheme).
+  - **WHEN:** before the PgAuthStore slice wires the real sign-in lookup, and before the T10-shell OpenAPI
+    request codegen — whichever comes first.
 
 - [x] **Live DB-level integration tests of the atomic contracts (postgres:16) — DONE in slice A.**
       The true DB-level TOCTOU proofs the in-memory stub only *modelled* now exist in

@@ -1,0 +1,18 @@
+{
+  "name": "boundless-worker-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only test harness for the boundless-worker Cloudflare Worker (spec 001 T07-shell-B slice 1). Builds the Rust→wasm Worker with worker-build and exercises it via @cloudflare/vitest-pool-workers (miniflare) — no Cloudflare account. The Worker crate itself is Rust (Cargo).",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.0.6",
+  "scripts": {
+    "build": "worker-build --release",
+    "test": "pnpm run build && vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.13",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.98.0"
+  }
+}

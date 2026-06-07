@@ -54,11 +54,14 @@ jobs:
         working-directory: core
         run: cargo test --locked --workspace
       - name: server build + test
-        # `cargo test` builds the Worker crate AND runs the dependency-free static migration
-        # convention test (server/tests/migrations.rs, T06). The live apply runs in the
-        # `server-migrations` job below.
+        # `--workspace` builds the Worker crate (native legs: the cfg-split lib + the compat harness +
+        # the dependency-free static migration convention test, T06) AND the `store` crate (its
+        # integration tests self-skip without a DB; the live run is the `server-store` job below).
+        # NB: `default-members = ["."]` (so `worker-build` never drags `store` onto wasm) means a bare
+        # `cargo test` would skip `store` — `--workspace` keeps both compiled+tested here. The
+        # workers-rs wasm build + miniflare tests run in the dedicated `worker` job.
         working-directory: server
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
   server-migrations:
     name: Migrations (apply · RLS · revert on Postgres)
@@ -123,6 +126,34 @@ jobs:
       - name: integration tests (real Postgres)
         working-directory: server
         run: cargo test --locked -p boundless-server-store
+
+  worker:
+    name: Worker (workers-rs skeleton — wasm build + miniflare — spec 001 T07-shell-B)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (pinned via rust-toolchain.toml) + wasm target
+        run: |
+          rustup show
+          rustup target add wasm32-unknown-unknown
+      - name: Install worker-build (the Rust→wasm bundler)
+        run: cargo install worker-build --version 0.8.3 --locked
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+      - name: Install harness (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Build (worker-build → wasm) + miniflare tests (vitest-pool-workers, no account)
+        # `pnpm test` = `worker-build --release` (downloads wasm-opt on first run) then `vitest run`,
+        # which boots workerd via miniflare and exercises the Router + GroupHub DO + KV + Queues
+        # bindings fully locally. GitHub-only / not gated by the other jobs.
+        run: pnpm test
 
   web:
     name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15/T16)

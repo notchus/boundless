@@ -1,16 +1,22 @@
 # Boundless edge/server — the deployable Cloudflare Workers (workers-rs) crate.
 # Kept as its own package (not part of the core workspace) so the pre-push/CI server
 # stage builds it independently; it depends on `boundless-server-core` once endpoints
-# land. Scaffolded by spec 001 task T01.
+# land. Scaffolded by spec 001 task T01; the deployable Worker skeleton (`#[event]`/Router/
+# `GroupHub` DO/KV/Queues) lands in spec 001 **T07-shell-B slice 1**.
 #
 # This manifest is also the ROOT of a small server workspace (spec 001 T07-shell slice A):
 # the `store` member is the NATIVE Postgres AuthStore adapter (tokio-postgres), kept out of
-# the core/ workspace so it never pollutes the core's wasm-portability guarantee. `default-
-# members` lists both so a bare `cargo test` here builds/tests the Worker crate AND the store
-# crate (the store's integration tests self-skip without a database).
+# the core/ workspace so it never pollutes the core's wasm-portability guarantee.
+#
+# `default-members = ["."]` (the Worker only) is LOAD-BEARING: `worker-build` runs a bare
+# `cargo build --lib --target wasm32-unknown-unknown` over the default members, and the native-only
+# `store` crate (tokio-postgres → mio) cannot compile to wasm — so it must NOT be a default member.
+# `store` is still a full workspace member: it is compiled + tested by the `server-store` CI job
+# (`cargo test -p boundless-server-store`) and linted by `cargo clippy --workspace`. Run
+# `cargo test --workspace` for the native build that exercises both crates.
 [workspace]
 members = ["store"]
-default-members = [".", "store"]
+default-members = ["."]
 
 [package]
 name = "boundless-worker"
@@ -20,20 +26,44 @@ rust-version = "1.89"
 license = "AGPL-3.0-only"
 repository = "https://github.com/notchus/boundless"
 
+# `cdylib` is what `worker-build` bundles into the wasm module; `rlib` keeps the crate linkable
+# as a normal library so the native `[[test]] compat` harness still builds (the Worker runtime
+# itself is `#[cfg(target_arch = "wasm32")]`, so a native `cargo build`/`test` compiles only the
+# cfg-empty lib + the compat test — the `worker` dep below is wasm-only).
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-# workers-rs (`worker`), Hyperdrive/KV/Queues bindings, and the path dependency on
-# ../core/server are added when endpoints land (T07-shell-B/T08).
+# The functional core (P4): the Worker is a thin adapter over `boundless-server-core`'s
+# `AuthService` + ports + `GroupHubState`, so server *logic* cannot drift from what the clients
+# render. All four core crates are pure + wasm32-safe (proven by the core's wasm build gates); they
+# are used only by the `#[cfg(target_arch = "wasm32")]` runtime module, so a native build compiles
+# them but links nothing from the runtime. NB: `boundless-server-store` (tokio-postgres) is
+# deliberately NOT a dependency — Postgres stays off the wasm path until the Hyperdrive slice.
+boundless-server-core = { path = "../core/server" }
+boundless-auth = { path = "../core/auth" }
+boundless-crypto = { path = "../core/crypto" }
+boundless-domain = { path = "../core/domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Parse-only (the seeded scaffold member id); no `v4`/`rng` feature → no getrandom on the wasm path.
+uuid = { version = "1", default-features = false }
+
+# workers-rs runtime — WASM TARGET ONLY (the crate is wasm-only and does not build natively). The
+# `#[event]`/`#[durable_object]` macros are re-exported by `worker` (no separate `worker-macros`
+# dep). Pinned 0.8.3 (latest non-yanked on crates.io, verified 2026-06-07; lock = ground truth).
+# MIT OR Apache-2.0.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `queue` feature gates `Env::queue` (the ADMIN_ALERTS fanout, §10-E).
+worker = { version = "0.8.3", features = ["queue"] }
 
 [dev-dependencies]
 # T08 — the N-2 compatibility replay harness (AC9, `tests/compat/`). It replays the frozen
 # request fixtures in `fixtures/compat/**` through the core version policy (`boundless-auth`'s
 # evaluate_version / minimum_supported), proving the server accepts the current minor and the two
-# previous supported minors and degrades only below the floor (O1/O4). Path deps on the core crates
-# (same convention as the `store` member); serde_json parses the fixtures. No new external crate
-# versions (lock = ground truth).
+# previous supported minors and degrades only below the floor (O1/O4). Native, dev-only.
 boundless-auth = { path = "../core/auth" }
 boundless-domain = { path = "../core/domain" }
-serde_json = "1"
 
 # The compat harness lives in a directory (per AC9 / the task), so it is declared explicitly rather
 # than auto-discovered (cargo only auto-discovers `tests/*.rs`, not `tests/<dir>/`).

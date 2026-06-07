@@ -1,0 +1,46 @@
+# Boundless edge Worker — wrangler config (spec 001 T07-shell-B slice 1).
+#
+# Used by BOTH `worker-build` (the Rust→wasm bundler, via `[build]`) and the local test harness
+# (`@cloudflare/vitest-pool-workers` → miniflare), which reads the bindings from this file and
+# emulates KV / Durable Objects / Queues in-process — NO Cloudflare account required.
+#
+# `wrangler deploy` (which DOES need an account) is out of scope for this slice (DEFERRED.md →
+# T07-shell-B): real KV namespace ids, the Hyperdrive binding, and Queues consumers are wired then.
+name = "boundless-worker"
+main = "build/worker/shim.mjs"
+# Pinned (not Date.now()) — bump deliberately. Recent stable compat date as of 2026-06.
+compatibility_date = "2026-06-05"
+
+[build]
+command = "worker-build --release"
+
+# The GroupHub Durable Object — one per Group; holds the §10-E ephemeral rate-limit / alert-dedup
+# state and (this slice) a durable "served" counter via `state.storage()`.
+[[durable_objects.bindings]]
+name = "GROUP_HUB"
+class_name = "GroupHub"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GroupHub"]
+
+# Signed-manifest KV (ADR-0014 / O2). This slice only READS a manifest index key (the serving +
+# signing pipeline is deferred). The id is a local placeholder — miniflare keys on the binding name;
+# the real namespace id is set at deploy time (DEFERRED.md).
+[[kv_namespaces]]
+binding = "MANIFEST"
+id = "manifest_local_placeholder"
+
+# Admin-alert fanout (§10-E): the below-min / notifications-declined PII-free alerts are produced
+# here and consumed by a separate notifier Worker (the consumer is deferred to the push spec).
+[[queues.producers]]
+binding = "ADMIN_ALERTS"
+queue = "boundless-admin-alerts"
+
+# Hyperdrive → Postgres is DEFERRED (T07-shell-B PgAuthStore slice): workers-rs has no first-class
+# Hyperdrive binding yet and the pooler needs a forked tokio-postgres (docs-researcher 2026-06-07).
+# Local dev would point it at a local Postgres via `localConnectionString`:
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "hyperdrive_placeholder"
+# localConnectionString = "postgresql://boundless_app@localhost:5432/boundless"

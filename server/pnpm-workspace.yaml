@@ -1,0 +1,8 @@
+# pnpm 11 settings for the dev-only Worker test harness. `allowBuilds` approves the install
+# build-scripts pnpm blocks by default (and otherwise hard-errors on). workerd ships the local
+# miniflare runtime binary; esbuild is vitest's bundler; sharp is a transitive optional. None are
+# trackers (the network allow-list scans pnpm-lock.yaml, not this file).
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
