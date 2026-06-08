@@ -85,7 +85,9 @@
     the `getrandom` 0.4.2 wasm32 shim (`wasm_js`). `proptest` 1.11.0 (dev) filled at spec 001
     **T04** (first property tests, `core/auth`). Swift, Kotlin, TypeScript, Xcode, Android
     Studio, pnpm, and the remaining Rust deps (`uniffi`, `tokio`, `chrono`/`time`, `geo`,
-    `petgraph`, …) remain TODO until those parts are initialized.
+    `petgraph`, …) remain TODO until those parts are initialized. Postgres **engine** pinned at **18**
+    (Database section) at the 16→18 bump (2026-06-08; CI + local Docker + Neon origin parity — proven on
+    real PG 18.4 by the migration + `boundless-server-store` suites).
 
 - [ ] **Re-pin `dryoc` to 0.9.0 (or the then-latest)** once it is *published* to
       crates.io. At T01 the stack-matrix's `dryoc 0.9.0` was found to be unpublished
@@ -716,6 +718,17 @@
       credential is a superuser or has `BYPASSRLS` (the Neon default `postgres` role often is), RLS is fully
       bypassed → cross-tenant PII read/write** — the single highest-impact way the privacy model fails in
       production; the guard now exists to catch it, but is inert until the Worker invokes it.
+      **Neon specifics (verified 2026-06-08, docs-researcher):** Neon's default role `neondb_owner` **is**
+      a `neon_superuser` member **with `BYPASSRLS`** → it would (correctly) trip the guard, so the Worker
+      must connect as a **dedicated, non-superuser, non-`BYPASSRLS`, non-table-owner** app role. Because
+      PG15+ **removed the implicit `PUBLIC` `CREATE` on the `public` schema** (carried through PG18), that
+      app role inherits **no** privileges — the provisioning slice must **explicitly `GRANT USAGE` + the
+      needed table/sequence privileges** to it (the local test harness's `boundless_app` setup is the
+      template). Add a **deployed-edge smoke** that connects as the *real* app role and asserts
+      `ensure_least_privilege` passes AND a cross-tenant read returns zero rows (the live analog of
+      `rls_isolates_reads_by_tenant`). (sec-audit F2 at the PG16→18 bump.) NB the `least_privilege` test
+      proves non-superuser/non-BYPASSRLS but **cannot** prove "not the table owner" — that exemption is
+      covered by `FORCE ROW LEVEL SECURITY`, so keep FORCE on every PII table.
   - **WHEN:** **T07-shell-B** / infra (DB role).
 
 - [ ] **Route `StoreError` through the scrubbed log path (sec-audit W4).** `StoreError::Db` wraps a

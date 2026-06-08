@@ -29,8 +29,9 @@
 //! **No PII is logged** (P2): this layer handles only keyed hashes (`bytea`) and opaque ids; the
 //! tainted plaintext types never reach it. [`StoreError`] carries no row values.
 //!
-//! Row ids are minted by Postgres `gen_random_uuid()` — **built-in since PG13** (Neon is PG15/16;
-//! the test target is `postgres:16`), so no `pgcrypto` extension is required on the PII path.
+//! Row ids are minted by Postgres `gen_random_uuid()` — **built-in since PG13** (CI + local Docker +
+//! the Neon origin are all PG18, the parity target), so no `pgcrypto` extension is required on the
+//! PII path.
 #![forbid(unsafe_code)]
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

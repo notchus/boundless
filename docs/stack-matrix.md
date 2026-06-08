@@ -196,6 +196,8 @@
 
 ## Database (Neon Postgres)
 
+**Postgres engine: 18** — CI service (`postgres:18`) + local Docker + the Neon origin are all on the same major for **parity** (bumped from 16 on 2026-06-08; the schema is engine-version-agnostic — proven by the migration + `boundless-server-store` suites against real PG 18.4: 25 tests incl. RLS isolation + the rotate-vs-replay TOCTOU + the superuser/`BYPASSRLS` boot guard). **Local Docker gotcha (18+ only):** mount the data volume at `/var/lib/postgresql` (the new version-specific layout), **not** `/var/lib/postgresql/data` — the ≤17 path makes the 18 image refuse to start. CI service containers and Neon are unaffected (no persistent volume mount / managed storage).
+
 | Extension | Used for |
 |---|---|
 | PostGIS | Nearest-neighbor queries |

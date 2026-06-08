@@ -7,10 +7,11 @@
 //!
 //! **Self-skipping:** [`db_url`] returns `None` (and `url_or_skip!` returns early with a notice)
 //! unless `DATABASE_URL` (or `BOUNDLESS_TEST_PG`) points at a Postgres a superuser can reach. CI
-//! provides a `postgres:16` service (`.github/workflows/ci.yml` → `server-store`). Locally:
-//! `docker run -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16` then
-//! `DATABASE_URL=postgres://postgres:postgres@localhost:55432/boundless_test cargo test -p
-//! boundless-server-store`.
+//! provides a `postgres:18` service (`.github/workflows/ci.yml` → `server-store`). Locally:
+//! `docker run -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=boundless_test -p 55432:5432 postgres:18`
+//! then `DATABASE_URL=postgres://postgres:postgres@localhost:55432/boundless_test cargo test -p
+//! boundless-server-store`. (If you add a persistent `-v` volume, mount it at `/var/lib/postgresql`
+//! — the PG18 layout — not `/var/lib/postgresql/data`.)
 //!
 //! `#![allow(dead_code)]`: this module is compiled into every test binary and not every binary uses
 //! every helper — the standard `tests/common` pattern (it is *in* tests, so the forbidden-patterns

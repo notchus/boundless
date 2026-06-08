@@ -6,7 +6,7 @@
 # clean teardown. The dependency-free static convention test lives in server/tests/migrations.rs.
 #
 # Self-skipping: if psql is absent or no database is configured, it prints a notice and exits 0,
-# so it is safe to call from any hook or CI step. CI provides a postgres:16 service and sets
+# so it is safe to call from any hook or CI step. CI provides a postgres:18 service and sets
 # DATABASE_URL (see .github/workflows/ci.yml → server-migrations).
 #
 # Configure via standard libpq env (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE) or DATABASE_URL.
