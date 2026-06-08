@@ -199,18 +199,36 @@
       real RNG — code/nonce generation) or install a custom *erroring* backend until then, to
       keep "no ambient randomness" literally enforced. See ADR-0018.
   - **WHEN:** **T07** (server), when server-side randomness is first genuinely needed.
-  - **CI gate to add (sec-audit F6, T07-shell-B slice 2).** The "no ambient randomness in `core`"
-    invariant is currently enforced only by a *manual* `cargo build --target wasm32-unknown-unknown
-    -p boundless-server-core`/`-p boundless-crypto`. Two `rand_core` majors now coexist in the lock
-    (`0.9.5` — the slice-2 pin, traits-only/feature-empty on the non-dev path — and `0.10.1`, pulled
-    by dryoc's `rand`). The separation is clean *today* (`cargo tree -p boundless-server-core
-    -e no-dev -i getrandom@0.3.4` prints nothing), but nothing *gates* it: a future `cargo update` or
-    a dep that flips `rand_core/os_rng` could pull `getrandom 0.3.4` onto the production wasm path and
-    silently break the invariant. **Add a CI step** that (a) builds `boundless-server-core` +
-    `boundless-crypto` for `wasm32-unknown-unknown`, and (b) asserts the only non-dev `getrandom` edge
-    is the known dryoc-`0.4.2` (`wasm_js`-shimmed) one. Not added here (GH-Actions-only; not locally
-    verifiable — same constraint as the other CI items).
-  - **WHEN:** next CI-hardening pass / **T07-shell-B**.
+  - [x] **CI gate (sec-audit F6) — DONE 2026-06-08.** The "no ambient randomness in `core`" invariant is
+    now mechanically gated, not manual. Gate = `scripts/check-wasm-no-getrandom.sh` (+ meta-test
+    `scripts/test-wasm-no-getrandom.sh`, the `test-binding-drift.sh` pattern), wired as a step in the
+    existing `rust-core` CI job (the wasm32 target is installed there — zero new toolchain wiring). For
+    `boundless-server-core` + `boundless-crypto` it (a) builds for `wasm32-unknown-unknown` (fail-closed
+    on any non-wasm-safe dep) and (b) scans the crate's **forward** `-e no-dev` wasm tree, failing if any
+    `getrandom v0.3.x` node is present, with a positive control that the allowed `0.4.x` (`wasm_js`-shim)
+    edge IS present (non-vacuity). The earlier draft used a version-pinned `-i getrandom@0.3.4` query;
+    the **reviewer + security-auditor both caught** that a `cargo update` to e.g. `0.3.10` would make the
+    pinned query "not match" → silently pass — so the shipped gate is **version-agnostic within the
+    major** (forward tree + `grep '(^| )getrandom v0\.3\.'`), closing that false-pass. Locally proven:
+    gate green, meta-test green (indented-0.3.x / 0.3.10 patch-bump / 0.4.x-only / positive-control
+    present+absent / word-boundary), and a transient negative check (point the detector at the present
+    0.4.x → FAIL → revert). 0.3.x reaches the graph **only** via dev-deps (proptest), never the non-dev
+    wasm path; the CI *job* run is GitHub-only (not locally gated), but the scripts themselves are fully
+    locally verifiable. The broader **Workspace RNG-backend policy** decision above (keep `wasm_js` vs an
+    erroring backend) stays open — out of scope for this gate.
+  - [ ] **Extend the gate's `CRATES` coverage (sec-audit F1, reviewer).** The gate audits
+    `boundless-server-core` (which transitively covers domain/auth/crypto) + `boundless-crypto`, per the
+    F6 names. **Not** covered: `boundless-ffi-wasm` (the literal browser `cdylib` artifact),
+    `boundless-sync`, `boundless-logging` — and the `server/` workspace's deployed `boundless-worker`
+    (sec-audit F2). All are **dependency-free / out of scope today** (no getrandom possible), so this is a
+    latent gap, not a live break. Add each to `CRATES` when it gains a getrandom edge — **`ffi-wasm` at
+    T10** is the highest-value (it ships to the browser and gains wasm-bindgen/validation deps there). NB
+    the positive control assumes the audited crate legitimately carries the `0.4.x` shim, so a
+    randomness-free crate can't simply be added — decide per-crate (carry-the-shim → add as-is; truly
+    randomness-free → assert *no* getrandom at all instead). For `server/`, note ADR-0021 *allows* the
+    Worker a real getrandom-backed CSPRNG, so the invariant there is narrower (the *core crates compiled
+    into* the Worker stay injection-only, the Worker itself may not).
+  - **WHEN:** **T10** (ffi-wasm) / when sync·logging·worker gain deps / a CI-hardening pass.
 
 - [ ] **`core/crypto/tests/invariants.rs` enumerating *every* privacy invariant (P9 goal).**
       T03 covers **I3** (+ the AC10 manifest tiers). I1/I2/etc. get their named tests when

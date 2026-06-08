@@ -53,6 +53,14 @@ jobs:
         # the onboarding log-fixture replay (spec 001 T16, AC3).
         working-directory: core
         run: cargo test --locked --workspace
+      - name: wasm randomness gate (no ambient getrandom in core — ADR-0021 / F6)
+        # Asserts getrandom 0.3.x never reaches the production (non-dev) wasm path of the core crates
+        # ("no ambient randomness in core"); the allowed edge is the 0.4.x wasm_js shim. `check` then
+        # its meta-test, mirroring the binding-drift job. The scripts cd into core/ themselves; the
+        # wasm32 target is installed in the toolchain step above.
+        run: |
+          bash scripts/check-wasm-no-getrandom.sh
+          bash scripts/test-wasm-no-getrandom.sh
       - name: server build + test
         # `--workspace` builds the Worker crate (native legs: the cfg-split lib + the compat harness +
         # the dependency-free static migration convention test, T06) AND the `store` crate (its
