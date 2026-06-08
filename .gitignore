@@ -1,6 +1,7 @@
 # Boundless .gitignore
 
 # ─── SECRETS — never commit ────────────────────────────────────────────────
+
 .mcp.json
 .claude/settings.json
 .env
@@ -86,6 +87,10 @@ blob-report/
 # ─── Cloudflare Workers (wrangler) ─────────────────────────────────────────
 .wrangler/
 wrangler.toml.local
+# Local-dev secrets for `wrangler dev` (e.g. HMAC_KEY) — NEVER commit (the deploy path uses
+# `wrangler secret put`). See docs/runbooks/deploy-worker.md.
+.dev.vars
+.dev.vars.*
 
 # ─── OS / editor ───────────────────────────────────────────────────────────
 .DS_Store

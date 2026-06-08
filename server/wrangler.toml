@@ -12,6 +12,10 @@ main = "build/worker/shim.mjs"
 # Pinned (not Date.now()) — bump deliberately. Recent stable compat date as of 2026-06.
 compatibility_date = "2026-06-05"
 
+# Disable wrangler CLI telemetry (matches web/wrangler.toml; I8 spirit). NB: this is a `wrangler`
+# *CLI* setting only — it does not change anything about the deployed Worker's own behavior.
+send_metrics = false
+
 # Build command for BOTH `wrangler deploy` and `worker-build`. The real `PgAuthStore` over Hyperdrive
 # is the only store now, so this is featureless — the old `scaffold`-feature `compile_error!` deploy
 # guard is RETIRED (no hardcoded key / seeded member exists to protect against). Fail-closed moved to
@@ -32,11 +36,12 @@ tag = "v1"
 new_classes = ["GroupHub"]
 
 # Signed-manifest KV (ADR-0014 / O2). This slice only READS a manifest index key (the serving +
-# signing pipeline is deferred). The id is a local placeholder — miniflare keys on the binding name;
-# the real namespace id is set at deploy time (DEFERRED.md).
+# signing pipeline is deferred). The id is a placeholder — miniflare keys on the binding name, so it
+# is ignored locally/in tests; replace it with the real namespace id at deploy.
+# → docs/runbooks/deploy-worker.md step 2 (`wrangler kv namespace create MANIFEST`).
 [[kv_namespaces]]
 binding = "MANIFEST"
-id = "manifest_local_placeholder"
+id = "REPLACE_AT_DEPLOY_kv_namespace_id"
 
 # Admin-alert fanout (§10-E): the below-min / notifications-declined PII-free alerts are produced
 # here and consumed by a separate notifier Worker (the consumer is deferred to the push spec).
@@ -54,10 +59,12 @@ GROUP_ID = "00000000-0000-0000-0000-000000000001"
 # Hyperdrive → Postgres (T07-shell-B PgAuthStore slice). workers-rs 0.8.3 HAS a first-class binding
 # (`env.hyperdrive("HYPERDRIVE")?.connect()? -> Socket`), and the published tokio-postgres drives it
 # over that Socket via the unnamed `query_typed*` family (ADR-0024 — NO fork; the earlier "needs a
-# forked driver" note was wrong). `localConnectionString` is the LOCAL `wrangler dev` target; the
-# vitest harness overrides it per-environment via `miniflare.hyperdrives` (see vitest.config.ts). The
-# real `id` (a `wrangler hyperdrive create` against Neon) is set at deploy — the human gate.
+# forked driver" note was wrong). `localConnectionString` is the LOCAL `wrangler dev` target (real
+# local PG, no account); the vitest harness overrides it per-environment via `miniflare.hyperdrives`
+# (see vitest.config.ts) — so the placeholder `id` is ignored locally/in tests. Replace it with the
+# real Hyperdrive config id at deploy.
+# → docs/runbooks/deploy-worker.md steps 0–1 (`provision-neon.sh` → `wrangler hyperdrive create`).
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "hyperdrive_local_placeholder"
+id = "REPLACE_AT_DEPLOY_hyperdrive_id"
 localConnectionString = "postgresql://boundless_app:boundless_app@localhost:55432/boundless_test"

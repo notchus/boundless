@@ -184,6 +184,14 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - name: Install worker-build (the Rust→wasm bundler)
         run: cargo install worker-build --version 0.8.3 --locked
+      - name: Test the Neon provisioning script (account-free; throwaway DB + RLS proof as the app role)
+        # Proves scripts/provision-neon.sh produces a locked-down boundless_app role that isolates
+        # cross-tenant reads AS the real LOGIN role (the account-free analog of the deployed-edge
+        # cross-tenant smoke, sec-audit F5). Runs BEFORE the worker-test-DB provision: `boundless_app`
+        # is a cluster-global role, so the meta-test pins its password to `boundless_app` (matching
+        # setup-worker-test-db.sh) — keeping the two order-independent. Self-locating → run from root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/test-provision-neon.sh
       - name: Provision the worker test DB (app role + migrations + grants — no seeding)
         # ubuntu-latest ships psql; the script creates the non-superuser LOGIN role the Worker connects
         # as, applies the T06 migrations into public, and grants DML. Self-locating → run from repo root.

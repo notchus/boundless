@@ -560,6 +560,27 @@
       service). **Remaining = the deploy legs only** (the `wrangler deploy` bullet below): the real
       Hyperdrive `id` (`wrangler hyperdrive create` against the user's Neon URL) + `wrangler secret put
       HMAC_KEY` + the real `GROUP_ID` + `wrangler deploy` — the human gate (Cloudflare MCP is read-only).
+      **Deploy-prep DONE (2026-06-08, deploy-prep slice):** the one non-`wrangler` prerequisite (Neon
+      DB provisioning) is now scripted + tested account-free — `scripts/provision-neon.sh` (non-destructive,
+      idempotent: mints the locked-down `boundless_app` role, applies migrations if empty, grants least
+      privilege, prints the app-role Hyperdrive connection string) + `scripts/test-provision-neon.sh` (the
+      meta-test, see the store register below) — and the exact ordered `wrangler` sequence is the new
+      **`docs/runbooks/deploy-worker.md`** (P12's first runbook). The deploy path was validated
+      account-free: `wrangler deploy --dry-run` (bundle + all bindings resolve) and a **live `wrangler dev`
+      + `scripts/smoke-deployed-edge.sh`** round-trip (real HTTP → Worker → local PG over the Hyperdrive
+      socket: `/readyz db:ok`, sign-in `phone_not_on_file`, no credential leak). So the operator's remaining
+      work is exactly: run `provision-neon.sh` once, then the runbook's `wrangler` commands.
+    - **Two review backstops tracked here** (3-lens review of the deploy-prep slice; both latent, no live
+      break): (i) **`provision-neon.sh`'s `GRANT … ON ALL TABLES` is point-in-time** — when migration 0009+
+      lands, a re-run on an already-migrated DB hits the "8/8 → skip" path and the new table is neither
+      created nor granted (RLS still denies → fail-closed, not a privacy break). When 0009+ lands, either add
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT … TO boundless_app` or bump the expected-table count
+      (the twin of the `mig_count` "bump when 0009+ lands" note in `setup-worker-test-db.sh`). (ii) **the
+      `smoke-deployed-edge.sh` no-leak grep** (`postgres(ql)?://|password|bypassrls`) catches a full
+      connection-string leak but not a *bare* secret echo (just the HMAC key / a token) — fine today because
+      the server maps every error to value-free strings (P2), so a secret can't reach the wire; fold the
+      "assert the `db` field never contains a substring of the known HMAC_KEY/connection-string" check into
+      the deployed-edge `/readyz` hardening item below when the smoke has those values.
     - **Access-token verify path (ADR-0021; mint side DONE slice 2):** add the `access_token_hash bytea`
       column + the per-request verify lookup (re-reads family status), folded into the request's
       group-scoped RLS txn or served from `GroupHub` DO in-memory state with **write-through/evict on
@@ -568,10 +589,16 @@
       (`server/src/runtime/mod.rs`) calls `ensure_least_privilege(&client)` after `connect_pg`, before any
       `PgAuthStore` query, and fails closed (generic 500); `/readyz` reports `db:"role_too_privileged"` on
       reject. The miniflare `db:ok` test proves the guard accepts the non-superuser app role in workerd.
-      **Remaining (infra/deploy):** provision the real non-superuser / non-`BYPASSRLS` Neon app role (the
-      guard rejects Neon's default `neondb_owner`, which has `BYPASSRLS`) + the deployed-edge cross-tenant
-      smoke as that role — the live analog of `rls_isolates_reads_by_tenant`, the single highest-impact
-      pre-GA proof (sec-audit F5). **WHEN:** the deploy slice + infra role.
+      **Provisioning SCRIPTED + tested (2026-06-08, deploy-prep slice):** `scripts/provision-neon.sh`
+      mints the non-superuser / non-`BYPASSRLS` `boundless_app` role (the guard rejects Neon's default
+      `neondb_owner`, which has `BYPASSRLS`), and `scripts/test-provision-neon.sh` proves it account-free
+      against local PG18 — the **account-free analog of the deployed-edge cross-tenant proof** (it acts as
+      the *real* `boundless_app` LOGIN role over `public`, a strictly stronger RLS proof than the Rust
+      harness's `SET ROLE`-on-superuser/per-test-schema `rls_isolates_reads_by_tenant`: role-locked · single
+      table owner · least-privilege SQL both-false · RLS isolates cross-tenant · fail-closed). **Remaining
+      (operator/infra):** run `provision-neon.sh` against the real Neon owner URL, and the **live**
+      deployed-edge cross-tenant smoke as that role against the deployed Worker (sec-audit F5, the single
+      highest-impact pre-GA proof). **WHEN:** the operator's deploy (runbook: `docs/runbooks/deploy-worker.md`).
     - **Route the sign-in below-min alert dedup through the `GroupHub` DO** (reviewer H1, slice 1). The
       §10-E once-per-day dedup (`GroupHubState.should_alert`) lives in `AuthService.hub`, which
       `build_service()` re-creates **per request** — so on the sign-in path the dedup does not persist
@@ -785,7 +812,16 @@
       `rls_isolates_reads_by_tenant`). (sec-audit F2 at the PG16→18 bump.) NB the `least_privilege` test
       proves non-superuser/non-BYPASSRLS but **cannot** prove "not the table owner" — that exemption is
       covered by `FORCE ROW LEVEL SECURITY`, so keep FORCE on every PII table.
-  - **WHEN:** **T07-shell-B** / infra (DB role).
+      **(a) call-site DONE (2026-06-08, see the T07-shell-B register). (b) provisioning SCRIPTED + tested
+      account-free (2026-06-08, deploy-prep slice):** `scripts/provision-neon.sh` mints the app role with
+      exactly `GRANT CONNECT + USAGE ON SCHEMA public + table DML` (no sequence/EXECUTE grants needed — uuid
+      PKs, PUBLIC-EXECUTE functions), and `scripts/test-provision-neon.sh` asserts (as the real `boundless_app`
+      LOGIN role over `public`) the literal `ensure_least_privilege` SQL returns both-false, cross-tenant
+      reads return zero, fail-closed holds, **and `count(DISTINCT tableowner)=1`** — the last catches the
+      ownership-split that a local superuser would mask (so `ON ALL TABLES` can't silently under-grant on
+      Neon, where the owner is `neondb_owner`). **Remaining:** the operator runs `provision-neon.sh` against
+      real Neon + the **live** deployed-edge cross-tenant smoke as that role.
+  - **WHEN:** the operator's deploy (`docs/runbooks/deploy-worker.md`) — the scripted/tested legs are DONE.
 
 - [ ] **Route `StoreError` through the scrubbed log path (sec-audit W4).** `StoreError::Db` wraps a
       `tokio_postgres::Error` whose `Display`/`Debug` includes the SQL + the Postgres server message
