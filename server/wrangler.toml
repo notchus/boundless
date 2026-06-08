@@ -11,6 +11,12 @@ main = "build/worker/shim.mjs"
 # Pinned (not Date.now()) — bump deliberately. Recent stable compat date as of 2026-06.
 compatibility_date = "2026-06-05"
 
+# DEPLOY path. Kept featureless ON PURPOSE: the only store wired today is the in-memory ScaffoldStore
+# (a hardcoded dev HMAC key + one seeded demo member), build-gated behind the non-default `scaffold`
+# cargo feature. A featureless wasm build hits a `compile_error!` (src/lib.rs), so `wrangler deploy`
+# FAILS CLOSED until PgAuthStore-over-Hyperdrive is wired (security-auditor F1, DEFERRED.md →
+# T07-shell-B). The local miniflare tests build via package.json's `build` script (which DOES pass
+# `--features scaffold`), NOT this command — see vitest.config.ts.
 [build]
 command = "worker-build --release"
 

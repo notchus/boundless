@@ -22,5 +22,25 @@
 
 // The deployable Worker runtime is wasm-only (the `worker` crate does not build natively). Gating it
 // keeps the native compat harness (`tests/compat/`) + the `store` member buildable with plain cargo.
-#[cfg(target_arch = "wasm32")]
+//
+// It is ALSO gated on the non-default `scaffold` feature (security-auditor F1, T07-shell-B): the only
+// store wired today is the in-memory `runtime::ScaffoldStore` — a hardcoded dev HMAC key + one seeded
+// demo member that must NEVER reach production. The local/test path opts in (`worker-build --release
+// --features scaffold`, server/package.json); the deploy path (`wrangler deploy` → wrangler.toml
+// [build] = `worker-build --release`) stays featureless and hits the `compile_error!` below — so the
+// scaffold cannot be silently deployed. The PgAuthStore-over-Hyperdrive slice deletes the scaffold and
+// retires this feature (DEFERRED.md → T07-shell-B).
+#[cfg(all(target_arch = "wasm32", feature = "scaffold"))]
 mod runtime;
+
+// Fail-closed deploy guard (security-auditor F1): a featureless wasm build — what `wrangler deploy`
+// runs — has no store wired, so fail the build LOUDLY rather than ship an empty Worker (or, worse, the
+// scaffold). Both this and `mod runtime` are wasm32-gated, so a native build (pre-push / the `server`
+// CI job) never trips it. The sentinel line is asserted by scripts/check-worker-deploy-guard.sh.
+#[cfg(all(target_arch = "wasm32", not(feature = "scaffold")))]
+compile_error!(
+    "boundless-worker has no production store yet: build with `--features scaffold` for local \
+     miniflare/dev (the in-memory ScaffoldStore — a hardcoded dev HMAC key + one seeded demo member, \
+     which must never be deployed). A production `wrangler deploy` must first wire PgAuthStore over \
+     Hyperdrive — see DEFERRED.md → T07-shell-B (PgAuthStore slice)."
+);

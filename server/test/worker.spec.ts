@@ -47,7 +47,7 @@ describe('boundless-worker skeleton (T07-shell-B slice 1)', () => {
 	});
 
 	it('sign-in → member_matched for the seeded phone, matching the golden fixture byte-for-byte', async () => {
-		const { res, body } = await signin('+15551230000', '1.2.0');
+		const { res, body } = await signin('+15555550100', '1.2.0');
 		expect(res.status).toBe(200);
 		expect(body).toEqual(signinOk);
 	});
@@ -62,7 +62,7 @@ describe('boundless-worker skeleton (T07-shell-B slice 1)', () => {
 		// A below-min handshake collapses to BelowMinVersion regardless of phone; the Queue send must
 		// succeed (a missing ADMIN_ALERTS binding would 500), proving the alert-fanout binding. The
 		// fixture's reported_client_version is {ios, 0.9.0}, so drive exactly that.
-		const { res, body } = await signin('+15551230000', '0.9.0');
+		const { res, body } = await signin('+15555550100', '0.9.0');
 		expect(res.status).toBe(200);
 		expect(body).toEqual(belowMinVersion);
 	});

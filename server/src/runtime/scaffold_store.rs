@@ -40,8 +40,9 @@ pub fn scaffold_key() -> HmacKey {
 }
 
 /// The seeded demo member's phone — the miniflare test drives a deterministic `member_matched`
-/// with this number and `phone_not_on_file` with any other.
-pub const DEMO_PHONE: &str = "+15551230000";
+/// with this number and `phone_not_on_file` with any other. Uses NANP's reserved fictional block
+/// `555-01XX` (guaranteed non-routable; sec-audit F3), matching the `fixtures/compat/**` phones.
+pub const DEMO_PHONE: &str = "+15555550100";
 
 /// The seeded demo member's opaque id (arbitrary fixed UUID — never surfaced to the client, I6).
 const DEMO_MEMBER_U128: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;

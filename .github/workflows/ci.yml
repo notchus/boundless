@@ -166,10 +166,18 @@ jobs:
       - name: Install harness (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Build (worker-build → wasm) + miniflare tests (vitest-pool-workers, no account)
-        # `pnpm test` = `worker-build --release` (downloads wasm-opt on first run) then `vitest run`,
-        # which boots workerd via miniflare and exercises the Router + GroupHub DO + KV + Queues
-        # bindings fully locally. GitHub-only / not gated by the other jobs.
+        # `pnpm test` = `worker-build --release --features scaffold` (downloads wasm-opt on first run)
+        # then `vitest run`, which boots workerd via miniflare and exercises the Router + GroupHub DO +
+        # KV + Queues bindings fully locally. The `scaffold` feature is what wires the in-memory store;
+        # a deploy build is featureless (see the guard step below). GitHub-only / not gated by other jobs.
         run: pnpm test
+      - name: Fail-closed deploy guard (scaffold can never be silently deployed — sec-audit F1)
+        # A featureless wasm build (the `wrangler deploy` path) MUST fail via the compile_error! in
+        # src/lib.rs — the scaffold's hardcoded dev HMAC key + seeded demo member must never deploy.
+        # Runs after `pnpm test` so the release deps are already compiled (only boundless-worker
+        # recompiles featureless → fast-fails at the macro). The script self-locates; run from repo root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/check-worker-deploy-guard.sh
 
   web:
     name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15/T16)

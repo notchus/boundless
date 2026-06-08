@@ -33,6 +33,15 @@ repository = "https://github.com/notchus/boundless"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# `scaffold` (NON-DEFAULT) opts the wasm Worker into the in-memory `runtime::ScaffoldStore` — a
+# hardcoded dev HMAC key + one seeded demo member that must NEVER reach production. It is the local
+# `wrangler dev` / miniflare-test path only (`worker-build --release --features scaffold`, wired in
+# package.json). A featureless wasm build — what `wrangler deploy` runs (wrangler.toml [build]) — hits
+# the `compile_error!` in src/lib.rs, so the scaffold cannot be silently deployed (security-auditor F1,
+# T07-shell-B). The PgAuthStore-over-Hyperdrive slice deletes the scaffold and retires this feature.
+[features]
+scaffold = []
+
 [dependencies]
 # The functional core (P4): the Worker is a thin adapter over `boundless-server-core`'s
 # `AuthService` + ports + `GroupHubState`, so server *logic* cannot drift from what the clients

@@ -543,17 +543,39 @@
       persist (every below-min sign-in re-enqueues a `BelowMinVersion` alert; harmless in the skeleton,
       an R12 alert-flood in production). The bind path already persists via the DO; sign-in must too once
       `AuthService` is hosted in / fronted by the DO. **WHEN:** the PgAuthStore slice (when sign-in runs in the DO).
-    - **Fail-closed guard so the scaffold store/key can never be silently deployed** (security-auditor F1,
-      slice 1). Today the "replace before production" boundary is documented + structurally signalled
-      (names, doc, file-slated-for-deletion) but not *enforced*: the constant `SCAFFOLD_HMAC_KEY` + the
-      single seeded demo member are wired into the live `#[event(fetch)]` path. Before `wrangler deploy`
-      exists, gate the scaffold behind a non-default `scaffold` cargo feature (a release build that forgets
-      it fails to compile) **or** a boot-time dev-var check that fails closed in production. **WHEN:** with
-      (or before) the `wrangler deploy` / PgAuthStore slice — land it the moment a real deploy path appears.
-      **Nit while here (ADR-0023 sec-audit F3, 2026-06-07):** the scaffold `DEMO_PHONE = +15551230000`
-      (`scaffold_store.rs`) is `555-1230` — *outside* NANP's reserved fictional block `555-01XX`, so not
-      guaranteed non-routable. Change it to a `555-01XX` value (e.g. `+15555550100`) for consistency with
-      the `fixtures/compat/**` phones when the scaffold store is next touched (deleted with this item).
+    - [x] **Fail-closed guard so the scaffold store/key can never be silently deployed (security-auditor
+      F1) — DONE 2026-06-08 (build-time leg).** The scaffold (the hardcoded `SCAFFOLD_HMAC_KEY = [0x7b; 32]`
+      + one seeded demo member) is now gated behind a **non-default `scaffold` cargo feature** (chose the
+      compile-time option over a boot-time dev-var check — strictly stronger: a release build that forgets it
+      *fails to compile*). `server/src/lib.rs` gates `mod runtime` on `all(target_arch="wasm32",
+      feature="scaffold")` and emits a `compile_error!` on `all(target_arch="wasm32", not(feature=
+      "scaffold"))`; the **local/test** path opts in (`server/package.json` `build` = `worker-build --release
+      --features scaffold`, used by `pnpm test` locally + the CI `worker` job), while the **deploy** path
+      (`server/wrangler.toml` `[build]` = `worker-build --release`, what `wrangler deploy` runs) stays
+      featureless → a deploy build **fails closed**. Mechanically enforced by `scripts/check-worker-deploy-
+      guard.sh` (asserts a featureless wasm build fails AND fails *via* the compile_error sentinel;
+      non-vacuity covers both "guard missing" and "broke for another reason"), wired as a step in the CI
+      `worker` job (after `pnpm test`, reusing the warm release deps). Locally proven: `pnpm test` green (6
+      miniflare tests), featureless build fails with the compile_error, gate green, **two transient
+      non-vacuity checks bit** (sentinel-mismatch → "not via the guard"; build-forced-to-succeed → "guard
+      missing"), native `cargo test/clippy/fmt --workspace` green (the wasm-gated guard never fires off-wasm),
+      binding-drift unchanged (server/ not a drift input), allow-list clean (no dep change; `Cargo.lock`
+      untouched). Reviews: `reviewer` + `security-auditor` both "ship it" (0 crit/high/med). The cargo
+      feature unification escape-hatch was checked — no other crate enables `boundless-worker/scaffold`, so a
+      featureless deploy build cannot unify it in. **F3 nit folded in (DONE):** `DEMO_PHONE` `+15551230000`
+      → `+15555550100` (NANP reserved fictional `555-01XX`, consistent with `fixtures/compat/**`); no residual
+      `+15551230000` anywhere.
+    - [ ] **REAL close — delete the scaffold + retire the guard (carry-forward from the F1 build-time leg).**
+      The hardcoded key + seeded member still *exist in source* (behind the feature) until `PgAuthStore` lands.
+      When the PgAuthStore-over-Hyperdrive slice wires a real store: **delete `server/src/runtime/
+      scaffold_store.rs`**, retire the `scaffold` cargo feature + the `compile_error!` guard + `scripts/check-
+      worker-deploy-guard.sh` + its CI step (a real store compiles featureless, so the deploy path stops
+      failing closed). Residual until then (accepted, security-auditor F1 note): the guard is compile-time on
+      the *committed* deploy path — a developer who hand-edits `wrangler.toml [build]` to add `--features
+      scaffold` and runs `wrangler deploy` manually is an explicit act CI can't catch (CI never runs
+      `wrangler deploy`). Optional belt-and-suspenders *if* a window opens between "scaffold deleted" and
+      "PgAuthStore proven": a runtime boot check that refuses to serve with a dev key in a non-dev env —
+      otherwise unnecessary once the scaffold is gone. **WHEN:** the PgAuthStore-over-Hyperdrive slice.
     - **`PgDeviceStore` (device-token persistence) + APNs/FCM registration.** Needs spec-008 device-token
       at-rest encryption (the in-memory `DeviceStore` stands in until then). **WHEN:** push spec 007 / issuance 008.
     - **Turnstile** (code-guess + refresh throttle) + the **per-source refresh-rejection 429** network
