@@ -523,14 +523,24 @@
     (Edge/Server section). CI: new `worker` job. **Contract defect flagged** (see the new bullet below).
   - **REMAINING — the PG/deploy legs (need a local Postgres + a Cloudflare account, or spec-008):**
     - **Replace the scaffold store with `PgAuthStore`-over-Hyperdrive.** Drive the already-built,
-      `AuthStore`-implementing `PgAuthStore` over a `hyperdrive.connect()` `worker::Socket`. **Confirmed
-      blocker (docs-researcher 2026-06-07):** workers-rs has **no first-class Hyperdrive binding**, and
-      the Hyperdrive pooler rejects tokio-postgres's default prepared statements — so this needs a
-      **forked `tokio-postgres` (`unnamed-statement` branch)** or `query_with_param_types()`, plus the
-      wasm32 feature flags. Locally testable via `wrangler dev` Hyperdrive `localConnectionString` →
-      a local Postgres (absent in this env); real pooler behaviour needs a Cloudflare account. Record
-      the driver choice in an ADR before building. **WHEN:** a slice with a local Postgres (after the
-      forked-driver ADR).
+      `AuthStore`-implementing `PgAuthStore` over a `hyperdrive.connect()` `worker::Socket`. **Driver
+      choice DECIDED → ADR-0024 (2026-06-08):** stay on the **published `tokio-postgres` 0.7.17** and
+      issue every query via the **unnamed-statement `query_typed*` family** (`query_typed_one`/
+      `query_typed_opt`/`query_typed`/`query_typed_raw`; `simple_query`/`batch_execute` for no-param/DDL)
+      — **no fork**. (The blog-cited `unnamed-statement` *fork* is dead/404 — supply-chain risk on the
+      auth path; the published 0.7.17 already exposes the API, whose own doc names "Cloudflare Workers
+      with Hyperdrive." NB: Hyperdrive *added* named-statement support June 2024, but Cloudflare hedges
+      for non-node drivers and a fresh-`Client`-per-request gains nothing from the named cache — unnamed
+      is the prudent, account-free-decidable path. ADR-0019's Context "sharp edge" bullet wording
+      ("pooler dislikes *unnamed*") is corrected in ADR-0024 — it's the *named/persistent* statements
+      that break.) **Remaining build work
+      (now driver-unblocked):** workers-rs has **no first-class Hyperdrive binding** (use the generic
+      binding → `Socket` pattern); migrate the 9 `PgAuthStore` methods' calls from `query_one`/
+      `query_opt`/`execute` to `query_typed_one`/`query_typed_opt`/`execute_typed` (writes; all unnamed,
+      supply each `$n`'s `Type`); the wasm32 feature flags; native tests should also exercise the typed
+      family for fidelity. Locally testable via `wrangler dev`
+      Hyperdrive `localConnectionString` → a local Postgres (absent in this env); real pooler behaviour
+      needs a Cloudflare account. **WHEN:** a slice with a local Postgres + a Cloudflare account.
     - **Access-token verify path (ADR-0021; mint side DONE slice 2):** add the `access_token_hash bytea`
       column + the per-request verify lookup (re-reads family status), folded into the request's
       group-scoped RLS txn or served from `GroupHub` DO in-memory state with **write-through/evict on
@@ -677,12 +687,16 @@
       mistaken for the production storage shape.
   - **WHEN:** push spec **007** / issuance spec **008** (whichever brings device-token encryption).
 
-- [ ] **wasm32 feature flags + pooler-safe `query_raw`.** Slice A uses `tokio-postgres` with default
-      (native) features and idiomatic `query`/`execute`/`transaction`. The Worker (T07-shell-B) must
-      (i) build `tokio-postgres` for `wasm32` configured to use a `worker::Socket`, and (ii) use the
-      **pooler-safe** query path (`query_raw` / simple protocol) — the Hyperdrive pooler dislikes
-      tokio-postgres unnamed prepared statements. Native tests don't exercise this; it is an explicit
-      slice-B risk (ADR-0019).
+- [ ] **wasm32 feature flags + pooler-safe `query_typed*`.** Slice A uses `tokio-postgres` with default
+      (native) features and idiomatic `query_one`/`query_opt`/`execute`/`transaction` (the *named*-statement
+      path). The Worker (T07-shell-B) must (i) build `tokio-postgres` for `wasm32` configured to use a
+      `worker::Socket`, and (ii) issue every query via the **pooler-safe unnamed-statement `query_typed*`
+      family** (`query_typed_one`/`query_typed_opt`/`execute_typed` (writes)/`query_typed[_raw]`; `simple_query`/`batch_execute`
+      for no-param/DDL), **not** the default named-cached `query*`/`execute(&str,…)` path — **ADR-0024**.
+      (ADR-0019's Context "sharp edge" bullet said "pooler dislikes *unnamed*" — that polarity is inverted; the *named/persistent*
+      statements are the ones that break across pooled connections, and *unnamed* `query_typed*` is the
+      fix.) Native tests don't exercise the wasm/pooler path today, so they should *also* be moved/extended
+      to `query_typed*` for fidelity (slice-B follow-up).
   - **WHEN:** **T07-shell-B**.
 
 - [ ] **Real server-time `now`.** `PgAuthStore` takes `now: UnixSeconds` and binds it (no

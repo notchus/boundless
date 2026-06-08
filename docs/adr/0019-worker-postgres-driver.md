@@ -6,6 +6,7 @@
 - **Deciders:** notch
 - **Relates to:** ADR-0001, ADR-0014, ADR-0016; I3/I4; O-series; spec 001 tasks T06, T07 (T07-shell slice A)
 - **Supersedes (in part):** the tentative "`sqlx` … Postgres via Hyperdrive" line in `docs/stack-matrix.md` and the T06 deferral "adopt `sqlx::migrate!` + pin `sqlx`" in `DEFERRED.md`.
+- **Refined by:** ADR-0024 (2026-06-08) — resolves the slice-B "unnamed-prepared-statement edge" into a concrete contract (published `tokio-postgres`'s `query_typed*` family, no fork) **and corrects** this ADR's named/unnamed polarity: the pooler problem is with *named/persistent* statements; *unnamed* statements (`query_typed*`) are the fix (see the Context bullet below and the slice-B note).
 
 ## Context
 
@@ -28,6 +29,8 @@ adopt `sqlx::migrate!`. Before building the adapter we verified the runtime cons
 - A real sharp edge exists: Hyperdrive's connection pooler dislikes `tokio-postgres`'s *unnamed*
   prepared statements; the pooler-safe path is `query_raw` / simple-protocol handling. (Native
   tests against a direct Postgres are unaffected; this only bites through the pooler.)
+  *(Polarity corrected by ADR-0024: it is the **named/persistent** statements that break across pooled
+  connections; **unnamed** statements via the `query_typed*` / `execute_typed` family are the fix.)*
 
 A second forcing constraint: the `AuthStore` port trait (`core/server/src/ports.rs`) is **sync**
 (`&mut self`, infallible) — correct for the in-memory stub, but a database backend is inherently
@@ -53,7 +56,8 @@ Sequenced to respect "code without a passing test is incomplete":
    non-superuser role, fail-closed when unset).
 2. **Slice B (deferred → `DEFERRED.md`, T07-shell-B) — wasm wiring.** The workers-rs runtime
    (`#[event]`/Router/`GroupHub` DO), `hyperdrive.connect()` → `Socket` transport, the
-   `tokio-postgres` **wasm feature flags + pooler-safe `query_raw`**, access-token signing, APNs/FCM,
+   `tokio-postgres` **wasm feature flags + the pooler-safe unnamed-statement path** (specified by
+   ADR-0024 as the `query_typed*` / `execute_typed` family — *not* `query_raw`, which is named), access-token signing, APNs/FCM,
    `wrangler.toml`, and a miniflare/workerd integration harness — plus the **async-port bridge**
    (making `core/server`'s ports `async` and wiring `PgAuthStore` into `AuthService`).
 
@@ -109,8 +113,11 @@ across the "any Postgres" goal.
 - **The `AuthStore` port must become async** before the Worker can use `PgAuthStore` (the
   async-port bridge). Deferred to T07-shell-B so this slice does not async-refactor the committed,
   48-test T07-core for a consumer that does not exist yet.
-- The Hyperdrive-pooler **unnamed-prepared-statement** edge must be handled in slice B (use
-  `query_raw` / a pooler-safe pattern); native tests don't exercise it, so it is an explicit B risk.
+- The Hyperdrive-pooler prepared-statement edge must be handled in slice B; native tests don't exercise
+  it, so it is an explicit B risk. **Resolved by ADR-0024:** issue queries via the **unnamed**-statement
+  `query_typed*` family (not `query_raw`/simple as loosely worded above, and **not** "unnamed are the
+  problem" — that polarity was wrong; the *named/persistent* cached statements are what break across
+  pooled connections, and *unnamed* `query_typed*` is the fix).
 - `tokio-postgres` + `tokio` are added to the *server* dependency tree (native). MIT OR Apache-2.0,
   no trackers (allow-list clean).
 
