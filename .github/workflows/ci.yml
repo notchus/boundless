@@ -61,6 +61,14 @@ jobs:
         run: |
           bash scripts/check-wasm-no-getrandom.sh
           bash scripts/test-wasm-no-getrandom.sh
+      - name: proptest seeds gate (P9 — reproducible seeds checked into the repo)
+        # Every crate declaring a proptest dev-dep must carry a git-tracked, un-ignored
+        # proptest-regressions/ dir so a failing property's seed lands in a committed location (P9);
+        # crates are auto-discovered from core/**/Cargo.toml. `check` then its meta-test, mirroring the
+        # binding-drift + wasm-randomness gates. The scripts cd to repo root themselves.
+        run: |
+          bash scripts/check-proptest-regressions.sh
+          bash scripts/test-proptest-regressions.sh
       - name: server build + test
         # `--workspace` builds the Worker crate (native legs: the cfg-split lib + the compat harness +
         # the dependency-free static migration convention test, T06) AND the `store` crate (its

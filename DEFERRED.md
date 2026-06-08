@@ -364,14 +364,29 @@
       actual platform secure-store reads/writes of the `RefreshToken` are the UI tasks.
   - **WHEN:** **T11–T15** (the five UIs).
 
-- [ ] **P9 process: guarantee `core/<crate>/proptest-regressions/` is tracked in CI.** Noted in
-      the T05 review (applies crate-wide, predates T05): proptest writes a failing-seed file only
-      *on failure*, into `proptest-regressions/` (currently **not** gitignored — good, so the
-      commit-on-failure workflow is sound). But nothing yet *forces* the directory to be tracked,
-      so a first CI failure could write a seed to an untracked path and lose it. Add a tiny CI
-      check (or a committed `.gitkeep`) so the P9 "reproducible seeds checked into the repo"
-      guarantee is enforced rather than conventional.
-  - **WHEN:** next CI-hardening pass (not blocking; no property has failed yet).
+- [x] **P9 process: guarantee `core/<crate>/proptest-regressions/` is tracked in CI — DONE 2026-06-08.**
+      The P9 "reproducible seeds checked into the repo" guarantee is now mechanical, not conventional.
+      Did **both** the check *and* the `.gitkeep` the item offered: committed
+      `core/auth/proptest-regressions/.gitkeep` + `core/server/proptest-regressions/.gitkeep` (the two
+      crates declaring a `proptest` dev-dep — repo `.gitkeep` convention), gated by
+      `scripts/check-proptest-regressions.sh` (+ meta-test `scripts/test-proptest-regressions.sh`, the
+      `test-binding-drift.sh`/F6 pattern), wired as a step in the existing `rust-core` CI job. The gate
+      **auto-discovers** proptest crates from `core/**/Cargo.toml` (section-aware awk: a `proptest` dep
+      under a `[…dependencies]` table — inline OR dotted-section `[…dependencies.proptest]`, with header
+      comments/whitespace tolerated — but NOT under the `[workspace.dependencies]` registry, which the
+      root uses to register the version for members), so a future proptest crate is covered without
+      editing the gate; per crate it asserts the `proptest-regressions/` dir is git-tracked AND a future
+      seed is not gitignored; fail-closed + a zero-crates non-vacuity guard. Locally proven: gate green,
+      meta-test green, **two transient negative checks bit** (untracked `.gitkeep` → FAIL; gitignored dir
+      → FAIL) then reverted, binding-drift unchanged at 75 inputs (`.gitkeep` is not a drift input),
+      allow-list clean. The discovery hardening (dotted-section + commented-header false-pass vectors)
+      and the section-aware awk itself were **both flagged by the reviewer + security-auditor** (the
+      naive `grep '^proptest'` first draft wrongly matched the workspace root) and closed in-slice with
+      meta-test cases. Reviews: reviewer "fix H1 [stage the scripts] then ship" (done); security-auditor
+      "ship it" (the dangerous `.gitkeep`-tracked-but-`*.txt`-ignored trap is closed). NB: the gate's own
+      runtime non-vacuity guard only fires at **zero** crates — the *meta-test's* live-discovery
+      assertion (auth+server found, root not) is what catches a *known*-crate drop, so that list must be
+      kept current as proptest crates are added.
 
 ---
 

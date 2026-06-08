@@ -1,0 +1,2 @@
+# proptest failing-seed regressions land here on first property failure; commit them (P9:
+# reproducible seeds checked into the repo). Enforced by scripts/check-proptest-regressions.sh.
