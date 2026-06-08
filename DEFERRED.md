@@ -535,14 +535,28 @@
       for non-node drivers and a fresh-`Client`-per-request gains nothing from the named cache — unnamed
       is the prudent, account-free-decidable path. ADR-0019's Context "sharp edge" bullet wording
       ("pooler dislikes *unnamed*") is corrected in ADR-0024 — it's the *named/persistent* statements
-      that break.) **Remaining build work
-      (now driver-unblocked):** workers-rs has **no first-class Hyperdrive binding** (use the generic
-      binding → `Socket` pattern); migrate the 9 `PgAuthStore` methods' calls from `query_one`/
-      `query_opt`/`execute` to `query_typed_one`/`query_typed_opt`/`execute_typed` (writes; all unnamed,
-      supply each `$n`'s `Type`); the wasm32 feature flags; native tests should also exercise the typed
-      family for fidelity. Locally testable via `wrangler dev`
-      Hyperdrive `localConnectionString` → a local Postgres (absent in this env); real pooler behaviour
-      needs a Cloudflare account. **WHEN:** a slice with a local Postgres + a Cloudflare account.
+      that break.) **Store-side prep DONE (slice "store wasm-prep", 2026-06-08):** the 9 `PgAuthStore`
+      methods (+ `begin`'s RLS `set_config` + `ensure_least_privilege` + the advisory-lock SELECTs — 21
+      call sites) were migrated to the unnamed `query_typed_one`/`query_typed_opt`/`execute_typed` family
+      (each `$n`'s `Type` supplied inline), proven on **real PG18** (all 25 store tests green on the typed
+      path — a wrong `Type` fails loudly there), and `boundless-server-store` is now **wasm32-buildable**:
+      target-split `tokio-postgres` (wasm = `default-features=false` + `["with-uuid-1","js"]` — the
+      `runtime`-gated `rand`-using `connect` module is excluded, and `js` wires the existing getrandom
+      0.4.2 `wasm_js` backend, +1 lock line: postgres-protocol→getrandom edge, no new crate);
+      `cargo build --target wasm32 -p boundless-server-store` green + a new CI step in `server-store`. The
+      `tests/common` superuser scaffolding stays on the named path **by design** (direct, never-pooled
+      connection — named is correct there; the production methods the Worker runs ARE the typed-path
+      fidelity). **Remaining (transport / Worker wiring only):** workers-rs 0.8.3 **HAS a first-class
+      Hyperdrive binding** — `env.hyperdrive("HYPERDRIVE")? -> Hyperdrive`, `.connect()? -> Socket` (the
+      older "no first-class binding / needs a forked driver" note was **wrong**); drive `PgAuthStore` over
+      `Config::connect_raw(socket, NoTls)` (`worker::Socket` impls tokio `AsyncRead`/`AsyncWrite`),
+      spawning the `Connection` future via `wasm_bindgen_futures::spawn_local`; uncomment/wire the
+      `[[hyperdrive]]` binding in `wrangler.toml`. Locally testable with **NO account** via either
+      `@cloudflare/vitest-pool-workers` (it DOES emulate the Hyperdrive binding — official workers-sdk
+      fixture; needs a global-setup pointing at a local Postgres) OR `wrangler dev` +
+      `[[hyperdrive]] localConnectionString` → a local Postgres; real pooler behaviour needs `wrangler dev
+      --remote`/deploy (account). **WHEN:** the Worker-wiring slice (the user's `.env` Neon URL + CF token
+      feed the Hyperdrive create + deploy).
     - **Access-token verify path (ADR-0021; mint side DONE slice 2):** add the `access_token_hash bytea`
       column + the per-request verify lookup (re-reads family status), folded into the request's
       group-scoped RLS txn or served from `GroupHub` DO in-memory state with **write-through/evict on
@@ -689,17 +703,27 @@
       mistaken for the production storage shape.
   - **WHEN:** push spec **007** / issuance spec **008** (whichever brings device-token encryption).
 
-- [ ] **wasm32 feature flags + pooler-safe `query_typed*`.** Slice A uses `tokio-postgres` with default
-      (native) features and idiomatic `query_one`/`query_opt`/`execute`/`transaction` (the *named*-statement
-      path). The Worker (T07-shell-B) must (i) build `tokio-postgres` for `wasm32` configured to use a
-      `worker::Socket`, and (ii) issue every query via the **pooler-safe unnamed-statement `query_typed*`
-      family** (`query_typed_one`/`query_typed_opt`/`execute_typed` (writes)/`query_typed[_raw]`; `simple_query`/`batch_execute`
-      for no-param/DDL), **not** the default named-cached `query*`/`execute(&str,…)` path — **ADR-0024**.
-      (ADR-0019's Context "sharp edge" bullet said "pooler dislikes *unnamed*" — that polarity is inverted; the *named/persistent*
-      statements are the ones that break across pooled connections, and *unnamed* `query_typed*` is the
-      fix.) Native tests don't exercise the wasm/pooler path today, so they should *also* be moved/extended
-      to `query_typed*` for fidelity (slice-B follow-up).
-  - **WHEN:** **T07-shell-B**.
+- [~] **wasm32 feature flags + pooler-safe `query_typed*` — (ii) the query migration + the wasm feature
+      flags are DONE (slice "store wasm-prep", 2026-06-08); only (i) the `worker::Socket` *transport*
+      remains.** Originally Slice A used `tokio-postgres` default (native) features + the idiomatic *named*
+      path (`query_one`/`query_opt`/`execute(&str,…)`). Now:
+  - **(ii) DONE.** Every production query in `PgAuthStore` (the 9 port methods + `begin`'s RLS
+    `set_config` + `ensure_least_privilege` + the advisory-lock SELECTs = 21 sites) issues via the
+    **unnamed-statement `query_typed*`** family (`query_typed_one`/`query_typed_opt`/`execute_typed`,
+    each `$n`'s `Type` inline) — **ADR-0024**, no fork. Proven on **real PG18** (25 store tests green on
+    the typed path; the native tests therefore now DO exercise the typed family — the slice-B "fidelity"
+    follow-up). The `tests/common` superuser scaffolding stays named **by design** (direct, never-pooled).
+    (ADR-0019's Context "pooler dislikes *unnamed*" polarity was inverted — it's the *named/persistent*
+    statements that break across pooled connections; *unnamed* `query_typed*` is the fix.)
+  - **wasm feature flags DONE.** `server/store/Cargo.toml` target-splits `tokio-postgres`: wasm =
+    `default-features=false` + `["with-uuid-1","js"]`. `cargo build --target wasm32 -p
+    boundless-server-store` green; a CI step in `server-store` guards it.
+  - **(i) REMAINING — the transport.** The Worker (T07-shell-B) must connect via
+    `env.hyperdrive("HYPERDRIVE")?.connect()? -> worker::Socket` →
+    `tokio_postgres::Config::connect_raw(socket, NoTls)` (the Socket impls tokio
+    `AsyncRead`/`AsyncWrite`), spawning the `Connection` future with `wasm_bindgen_futures::spawn_local`.
+    The store lib needs no change for this (it takes an already-connected `Client`).
+  - **WHEN (transport):** **T07-shell-B** (the Worker-wiring slice).
 
 - [ ] **Real server-time `now`.** `PgAuthStore` takes `now: UnixSeconds` and binds it (no
       `SystemTime::now` in the lib — server-time is injected, T04/T05 carry-forward). The Worker

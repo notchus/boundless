@@ -133,12 +133,20 @@ jobs:
         run: |
           rustup show
           rustup component add rustfmt clippy
+          rustup target add wasm32-unknown-unknown
       - name: rustfmt
         working-directory: server
         run: cargo fmt --all -- --check
       - name: clippy
         working-directory: server
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # The store must stay compilable for the Worker's wasm target (ADR-0024): every query uses the
+      # unnamed `query_typed*` family + the target-split `tokio-postgres` (wasm: default-features=false
+      # + `js` → getrandom/wasm_js). This guards that portability so a future native-only dep can't
+      # silently break the PgAuthStore-over-Hyperdrive slice.
+      - name: wasm32 build (pooler-safe store compiles for the Worker)
+        working-directory: server
+        run: cargo build --locked --target wasm32-unknown-unknown -p boundless-server-store
       - name: integration tests (real Postgres)
         working-directory: server
         run: cargo test --locked -p boundless-server-store

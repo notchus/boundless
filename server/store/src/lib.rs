@@ -19,6 +19,17 @@
 //! them against a real database — single-consume under concurrency, atomic supersede-then-insert,
 //! rotate-vs-replay TOCTOU, and RLS tenant isolation — in `server/store/tests`.
 //!
+//! **Unnamed (pooler-safe) statements — ADR-0024.** Every parameterized query here uses the
+//! `tokio-postgres` **`query_typed*` / `execute_typed`** family (each `$n`'s `Type` supplied inline),
+//! NOT the default `query`/`query_one`/`query_opt`/`execute(&str, …)` path. The default path issues a
+//! named `Parse` and caches the prepared statement on the *connection*; across Cloudflare Hyperdrive's
+//! connection pooler a cached name does not survive to the next physical connection, so it breaks. The
+//! typed family sends an **unnamed** statement with explicit parameter types each time — exactly the
+//! shape Hyperdrive expects (tokio-postgres documents `query_typed*` as "suitable in environments where
+//! prepared statements aren't supported (such as Cloudflare Workers with Hyperdrive)"). The same code
+//! runs natively in tests (over a direct `TcpStream`) and on wasm32 in the Worker (over a Hyperdrive
+//! `worker::Socket`); see the target-split `tokio-postgres` features in `Cargo.toml`.
+//!
 //! **Tenant scoping (RLS).** Every method runs inside a transaction that first sets the per-request
 //! tenant GUC via `set_config('app.current_group_id', $1, true)` (the parameterized, **transaction-
 //! local** form — `SET LOCAL` cannot take a bind parameter). The T06 resolver `current_group_id()`
@@ -46,7 +57,7 @@ use boundless_server_core::{
     AdminProvisioningStore, AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow,
     RecoveryCodeRow, RefreshClassification, StoreBackend,
 };
-use tokio_postgres::{Client, Transaction};
+use tokio_postgres::{types::Type, Client, Transaction};
 use uuid::Uuid;
 
 /// Errors from the Postgres auth store. Carries **no row values** (P2): a `Db` error wraps the
@@ -159,7 +170,7 @@ fn hash_array(bytes: Vec<u8>, col: &'static str) -> Result<[u8; HASH_LEN]> {
 /// asserting non-ownership.
 pub async fn ensure_least_privilege(client: &Client) -> Result<()> {
     let row = client
-        .query_one(
+        .query_typed_one(
             "SELECT current_setting('is_superuser')::bool AS is_super, \
              COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user), false) AS bypass_rls",
             &[],
@@ -199,9 +210,9 @@ impl PgAuthStore {
     async fn begin(&mut self) -> Result<Transaction<'_>> {
         let group = self.group_id.to_string();
         let tx = self.client.transaction().await?;
-        tx.execute(
+        tx.execute_typed(
             "SELECT set_config('app.current_group_id', $1, true)",
-            &[&group],
+            &[(&group, Type::TEXT)],
         )
         .await?;
         Ok(tx)
@@ -226,9 +237,9 @@ impl AuthStore for PgAuthStore {
         let needle = hash.as_bytes().to_vec();
         let tx = self.begin().await?;
         let row = tx
-            .query_opt(
+            .query_typed_opt(
                 "SELECT id, roles::text[] AS roles FROM members WHERE phone_lookup_hash = $1",
-                &[&needle],
+                &[(&needle, Type::BYTEA)],
             )
             .await?;
         tx.commit().await?;
@@ -251,10 +262,10 @@ impl AuthStore for PgAuthStore {
         let mid = member.as_uuid();
         let tx = self.begin().await?;
         let row = tx
-            .query_opt(
+            .query_typed_opt(
                 "SELECT code_hash, expires_at, max_attempts FROM onboarding_codes \
                  WHERE member_id = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
-                &[&mid],
+                &[(&mid, Type::UUID)],
             )
             .await?;
         tx.commit().await?;
@@ -286,10 +297,10 @@ impl AuthStore for PgAuthStore {
         let now_ts = to_pg_time(now);
         let tx = self.begin().await?;
         let n = tx
-            .execute(
+            .execute_typed(
                 "UPDATE onboarding_codes SET consumed_at = $2 \
                  WHERE member_id = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
-                &[&mid, &now_ts],
+                &[(&mid, Type::UUID), (&now_ts, Type::TIMESTAMPTZ)],
             )
             .await?;
         tx.commit().await?;
@@ -317,10 +328,10 @@ impl AuthStore for PgAuthStore {
         let needle = refresh_token_hash(key, presented).as_bytes().to_vec();
         let tx = self.begin().await?;
         let row = tx
-            .query_opt(
+            .query_typed_opt(
                 "SELECT family_id, member_id, rotated_at, revoked_at \
                  FROM sessions WHERE refresh_token_hash = $1",
-                &[&needle],
+                &[(&needle, Type::BYTEA)],
             )
             .await?;
         tx.commit().await?;
@@ -382,27 +393,33 @@ impl AuthStore for PgAuthStore {
         // other; both are family-scoped and acquire it before any row lock, so there is no deadlock.
         // `hashtextextended` derives a full 64-bit key; a hash collision would only over-serialize
         // two unrelated families (a transient throughput cost) — it can never under-lock.
-        tx.execute(
+        tx.execute_typed(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            &[&fam_text],
+            &[(&fam_text, Type::TEXT)],
         )
         .await?;
         let superseded = tx
-            .query_opt(
+            .query_typed_opt(
                 "UPDATE sessions SET rotated_at = $2 \
                  WHERE family_id = $1 AND rotated_at IS NULL AND revoked_at IS NULL \
                  RETURNING id, member_id",
-                &[&fam, &now_ts],
+                &[(&fam, Type::UUID), (&now_ts, Type::TIMESTAMPTZ)],
             )
             .await?;
         let (parent_id, member_id) = match superseded {
             Some(r) => (r.get::<_, Uuid>("id"), r.get::<_, Uuid>("member_id")),
             None => return Err(StoreError::NoLiveCurrentToRotate), // tx drops → rollback
         };
-        tx.execute(
+        tx.execute_typed(
             "INSERT INTO sessions (id, group_id, member_id, family_id, refresh_token_hash, parent_id) \
              VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)",
-            &[&group, &member_id, &fam, &new_hash, &parent_id],
+            &[
+                (&group, Type::UUID),
+                (&member_id, Type::UUID),
+                (&fam, Type::UUID),
+                (&new_hash, Type::BYTEA),
+                (&parent_id, Type::UUID),
+            ],
         )
         .await?;
         tx.commit().await?;
@@ -424,14 +441,14 @@ impl AuthStore for PgAuthStore {
         // Same family lock as rotate_session (carry-forward (b)): once we hold it, any in-flight
         // rotation has either fully committed (so its new current row is visible to the UPDATE
         // below and gets revoked too) or has not started (so it will later find no live current).
-        tx.execute(
+        tx.execute_typed(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            &[&fam_text],
+            &[(&fam_text, Type::TEXT)],
         )
         .await?;
-        tx.execute(
+        tx.execute_typed(
             "UPDATE sessions SET revoked_at = $2 WHERE family_id = $1 AND revoked_at IS NULL",
-            &[&fam, &now_ts],
+            &[(&fam, Type::UUID), (&now_ts, Type::TIMESTAMPTZ)],
         )
         .await?;
         tx.commit().await?;
@@ -452,10 +469,14 @@ impl AuthStore for PgAuthStore {
         let new_hash = new_refresh_hash.as_bytes().to_vec();
         let tx = self.begin().await?;
         let row = tx
-            .query_one(
+            .query_typed_one(
                 "INSERT INTO sessions (id, group_id, member_id, family_id, refresh_token_hash) \
                  VALUES (gen_random_uuid(), $1, $2, gen_random_uuid(), $3) RETURNING family_id",
-                &[&group, &mid, &new_hash],
+                &[
+                    (&group, Type::UUID),
+                    (&mid, Type::UUID),
+                    (&new_hash, Type::BYTEA),
+                ],
             )
             .await?;
         let family_id: Uuid = row.get("family_id");
@@ -473,10 +494,10 @@ impl AuthStore for PgAuthStore {
         let mid = member.as_uuid();
         let tx = self.begin().await?;
         let row = tx
-            .query_opt(
+            .query_typed_opt(
                 "SELECT code_hash FROM recovery_codes \
                  WHERE member_id = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
-                &[&mid],
+                &[(&mid, Type::UUID)],
             )
             .await?;
         tx.commit().await?;
@@ -506,20 +527,24 @@ impl AuthStore for PgAuthStore {
         let fresh = fresh_hash.as_bytes().to_vec();
         let tx = self.begin().await?;
         let consumed = tx
-            .execute(
+            .execute_typed(
                 "UPDATE recovery_codes SET consumed_at = $2, superseded_at = $2 \
                  WHERE member_id = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
-                &[&mid, &now_ts],
+                &[(&mid, Type::UUID), (&now_ts, Type::TIMESTAMPTZ)],
             )
             .await?;
         if consumed == 0 {
             // Lost the race — drop the txn (rollback) without inserting a fresh code.
             return Ok(false);
         }
-        tx.execute(
+        tx.execute_typed(
             "INSERT INTO recovery_codes (id, group_id, member_id, code_hash) \
              VALUES (gen_random_uuid(), $1, $2, $3)",
-            &[&group, &mid, &fresh],
+            &[
+                (&group, Type::UUID),
+                (&mid, Type::UUID),
+                (&fresh, Type::BYTEA),
+            ],
         )
         .await?;
         tx.commit().await?;
@@ -548,19 +573,24 @@ impl AdminProvisioningStore for PgAuthStore {
         // The pending Admin member. RLS `WITH CHECK` requires group_id = current_group_id() (set by
         // `begin`), so this can only write into this tenant.
         let row = tx
-            .query_one(
+            .query_typed_one(
                 "INSERT INTO members (id, group_id, roles) \
                  VALUES (gen_random_uuid(), $1, ARRAY['admin']::member_role[]) RETURNING id",
-                &[&group],
+                &[(&group, Type::UUID)],
             )
             .await?;
         let admin_id: Uuid = row.get("id");
         // The invitation. The composite FK (admin_id, group_id) → members(id, group_id) is satisfied
         // by the row just inserted in this same transaction.
-        tx.execute(
+        tx.execute_typed(
             "INSERT INTO admin_invitations (id, group_id, admin_id, token_hash, expires_at) \
              VALUES (gen_random_uuid(), $1, $2, $3, $4)",
-            &[&group, &admin_id, &hash, &exp],
+            &[
+                (&group, Type::UUID),
+                (&admin_id, Type::UUID),
+                (&hash, Type::BYTEA),
+                (&exp, Type::TIMESTAMPTZ),
+            ],
         )
         .await?;
         tx.commit().await?;
@@ -591,17 +621,17 @@ impl AdminProvisioningStore for PgAuthStore {
         // this an unlucky concurrent re-issue would *error* with a unique violation instead of
         // cleanly superseding. The admin-scoped advisory xact lock makes the second re-issue see the
         // first's committed live row, so it supersedes it and succeeds. Released at commit/rollback.
-        tx.execute(
+        tx.execute_typed(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            &[&aid_text],
+            &[(&aid_text, Type::TEXT)],
         )
         .await?;
         // The admin must exist *in this tenant* and hold the Admin role (a non-admin id is a no-op,
         // never a stray invitation). RLS scopes the visibility to this group.
         let exists = tx
-            .query_opt(
+            .query_typed_opt(
                 "SELECT 1 FROM members WHERE id = $1 AND roles @> ARRAY['admin']::member_role[]",
-                &[&aid],
+                &[(&aid, Type::UUID)],
             )
             .await?
             .is_some();
@@ -609,17 +639,22 @@ impl AdminProvisioningStore for PgAuthStore {
             return Ok(false); // tx drops → rollback
         }
         // Supersede the prior live invitation(s) FIRST (frees the one-live partial index)...
-        tx.execute(
+        tx.execute_typed(
             "UPDATE admin_invitations SET consumed_at = $2 \
              WHERE admin_id = $1 AND consumed_at IS NULL",
-            &[&aid, &now_ts],
+            &[(&aid, Type::UUID), (&now_ts, Type::TIMESTAMPTZ)],
         )
         .await?;
         // ...THEN insert the fresh one.
-        tx.execute(
+        tx.execute_typed(
             "INSERT INTO admin_invitations (id, group_id, admin_id, token_hash, expires_at) \
              VALUES (gen_random_uuid(), $1, $2, $3, $4)",
-            &[&group, &aid, &hash, &exp],
+            &[
+                (&group, Type::UUID),
+                (&aid, Type::UUID),
+                (&hash, Type::BYTEA),
+                (&exp, Type::TIMESTAMPTZ),
+            ],
         )
         .await?;
         tx.commit().await?;

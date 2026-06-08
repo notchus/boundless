@@ -807,6 +807,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fallible-iterator",
+ "getrandom",
  "hmac",
  "md-5",
  "memchr",

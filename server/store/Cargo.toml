@@ -23,15 +23,31 @@ boundless-auth = { path = "../../core/auth" }
 boundless-crypto = { path = "../../core/crypto" }
 boundless-domain = { path = "../../core/domain" }
 
-# Postgres driver. `0.7` resolves to 0.7.17 in Cargo.lock (the latest published release; verified
-# 2026-06-05 via docs-researcher against crates.io/docs.rs; MIT OR Apache-2.0; lock = ground truth).
-# `with-uuid-1` is the only non-default feature needed (uuid::Uuid <-> Postgres `uuid`);
-# SystemTime<->timestamptz, bytea, and text[] are built-in. The default `runtime` feature provides
-# `NoTls`. The Worker (T07-shell-B) will revisit feature flags + the Socket transport for wasm32
-# (ADR-0019).
-tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
+# Stable IDs (uuid::Uuid <-> Postgres `uuid`, via tokio-postgres's `with-uuid-1`).
 uuid = "1"
 
+# Postgres driver — `0.7` resolves to 0.7.17 in Cargo.lock (latest published; verified via
+# docs-researcher; MIT OR Apache-2.0; lock = ground truth). Every query uses the UNNAMED `query_typed*`
+# / `execute_typed` family (ADR-0024), so no prepared-statement name caching is relied on — the
+# pooler-safe path Hyperdrive needs. `with-uuid-1` is the only type feature (uuid::Uuid <-> `uuid`);
+# SystemTime<->timestamptz, bytea, text[] are built-in. The dep is TARGET-SPLIT so the SAME store code
+# compiles for BOTH native (tests, direct TcpStream) and wasm32 (the Worker over a Hyperdrive Socket, P4
+# single-source). The lib takes an already-connected `Client` and never calls `connect`/`connect_raw`
+# itself, so its body is transport-agnostic; the Worker connects via
+# `env.hyperdrive(..)?.connect()? -> Socket` → `Config::connect_raw(socket, NoTls)` (slice 2).
+
+# Native (the `server-store` CI job + local `cargo test`): keep the default `runtime` feature — it
+# provides `tokio::net`/`time` + the `NoTls`-over-`TcpStream` that `tokio_postgres::connect` needs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
+
+# wasm32 (the deployable Worker): drop `runtime` — `tokio/net`+`time`+`socket2` are native-only, and the
+# only `rand`-using module (`connect`) is `#[cfg(feature = "runtime")]`, so it is excluded. Add `js` →
+# `getrandom/wasm_js` (the SCRAM-auth nonce) — the SAME getrandom 0.4 `wasm_js` backend core-crypto/dryoc
+# already use, so no new getrandom major enters the lock.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio-postgres = { version = "0.7", default-features = false, features = ["with-uuid-1", "js"] }
+
 [dev-dependencies]
-# Drive the tokio-postgres Connection future + spawn concurrent tasks in the integration tests.
+# Drive the tokio-postgres Connection future + spawn concurrent tasks in the integration tests (native).
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
