@@ -109,8 +109,10 @@ dependencies = [
  "boundless-crypto",
  "boundless-domain",
  "boundless-server-core",
+ "boundless-server-store",
  "serde",
  "serde_json",
+ "tokio-postgres",
  "uuid",
  "worker",
 ]

@@ -9,9 +9,11 @@
 # the core/ workspace so it never pollutes the core's wasm-portability guarantee.
 #
 # `default-members = ["."]` (the Worker only) is LOAD-BEARING: `worker-build` runs a bare
-# `cargo build --lib --target wasm32-unknown-unknown` over the default members, and the native-only
-# `store` crate (tokio-postgres → mio) cannot compile to wasm — so it must NOT be a default member.
-# `store` is still a full workspace member: it is compiled + tested by the `server-store` CI job
+# `cargo build --lib --target wasm32-unknown-unknown` over the default members. The `store` crate is
+# now wasm-buildable (T07-shell-B slice 1) and is the Worker's wasm-target DEPENDENCY (pulled
+# transitively when worker-build builds this crate), so it need not — and should not — be a default
+# member: keeping it out means worker-build builds only the Worker crate. `store` is still a full
+# workspace member, compiled + tested natively by the `server-store` CI job
 # (`cargo test -p boundless-server-store`) and linted by `cargo clippy --workspace`. Run
 # `cargo test --workspace` for the native build that exercises both crates.
 [workspace]
@@ -33,29 +35,20 @@ repository = "https://github.com/notchus/boundless"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# `scaffold` (NON-DEFAULT) opts the wasm Worker into the in-memory `runtime::ScaffoldStore` — a
-# hardcoded dev HMAC key + one seeded demo member that must NEVER reach production. It is the local
-# `wrangler dev` / miniflare-test path only (`worker-build --release --features scaffold`, wired in
-# package.json). A featureless wasm build — what `wrangler deploy` runs (wrangler.toml [build]) — hits
-# the `compile_error!` in src/lib.rs, so the scaffold cannot be silently deployed (security-auditor F1,
-# T07-shell-B). The PgAuthStore-over-Hyperdrive slice deletes the scaffold and retires this feature.
-[features]
-scaffold = []
-
 [dependencies]
 # The functional core (P4): the Worker is a thin adapter over `boundless-server-core`'s
 # `AuthService` + ports + `GroupHubState`, so server *logic* cannot drift from what the clients
 # render. All four core crates are pure + wasm32-safe (proven by the core's wasm build gates); they
 # are used only by the `#[cfg(target_arch = "wasm32")]` runtime module, so a native build compiles
-# them but links nothing from the runtime. NB: `boundless-server-store` (tokio-postgres) is
-# deliberately NOT a dependency — Postgres stays off the wasm path until the Hyperdrive slice.
+# them but links nothing from the runtime. `boundless-server-store` (tokio-postgres) is a WASM-TARGET
+# dependency (below) — the real PgAuthStore data path; it is wasm-buildable since T07-shell-B slice 1.
 boundless-server-core = { path = "../core/server" }
 boundless-auth = { path = "../core/auth" }
 boundless-crypto = { path = "../core/crypto" }
 boundless-domain = { path = "../core/domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Parse-only (the seeded scaffold member id); no `v4`/`rng` feature → no getrandom on the wasm path.
+# Parse-only (the GROUP_ID env var → tenant Uuid); no `v4`/`rng` feature → no getrandom on the wasm path.
 uuid = { version = "1", default-features = false }
 
 # workers-rs runtime — WASM TARGET ONLY (the crate is wasm-only and does not build natively). The
@@ -65,6 +58,14 @@ uuid = { version = "1", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `queue` feature gates `Env::queue` (the ADMIN_ALERTS fanout, §10-E).
 worker = { version = "0.8.3", features = ["queue"] }
+# The real Postgres data path (T07-shell-B PgAuthStore slice). The Worker drives `PgAuthStore` over a
+# Hyperdrive `worker::Socket` and names `tokio_postgres::{Config, NoTls, Client}` directly for the
+# transport (`Config::connect_raw`). Both are WASM-TARGET ONLY: `boundless-server-store` is native +
+# wasm via its own target-split (slice 1); the Worker only ever uses it on wasm. `js` wires getrandom's
+# wasm_js backend for tokio-postgres's SCRAM nonce (the same getrandom 0.4 backend core-crypto/dryoc
+# already use — no new getrandom major); `with-uuid-1` matches the store's set (Cargo unifies anyway).
+boundless-server-store = { path = "store" }
+tokio-postgres = { version = "0.7", default-features = false, features = ["with-uuid-1", "js"] }
 
 [dev-dependencies]
 # T08 — the N-2 compatibility replay harness (AC9, `tests/compat/`). It replays the frozen

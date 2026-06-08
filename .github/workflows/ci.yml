@@ -152,8 +152,27 @@ jobs:
         run: cargo test --locked -p boundless-server-store
 
   worker:
-    name: Worker (workers-rs skeleton — wasm build + miniflare — spec 001 T07-shell-B)
+    name: Worker (workers-rs — wasm build + miniflare over real Postgres/Hyperdrive — spec 001 T07-shell-B)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boundless_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The Worker connects over the emulated Hyperdrive Socket as the non-superuser app role (so the
+      # W2 guard accepts it + RLS applies); the vitest harness injects this via miniflare.hyperdrives.
+      # CI uses the service on :5432 (local default is the dev container on :55432).
+      WORKER_TEST_PG: postgresql://boundless_app:boundless_app@localhost:5432/boundless_test
+      WORKER_TEST_SUPERUSER_URL: postgres://postgres:postgres@localhost:5432/boundless_test
     defaults:
       run:
         working-directory: server
@@ -165,6 +184,11 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - name: Install worker-build (the Rust→wasm bundler)
         run: cargo install worker-build --version 0.8.3 --locked
+      - name: Provision the worker test DB (app role + migrations + grants — no seeding)
+        # ubuntu-latest ships psql; the script creates the non-superuser LOGIN role the Worker connects
+        # as, applies the T06 migrations into public, and grants DML. Self-locating → run from repo root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/setup-worker-test-db.sh
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -173,19 +197,12 @@ jobs:
           cache-dependency-path: server/pnpm-lock.yaml
       - name: Install harness (frozen lockfile)
         run: pnpm install --frozen-lockfile
-      - name: Build (worker-build → wasm) + miniflare tests (vitest-pool-workers, no account)
-        # `pnpm test` = `worker-build --release --features scaffold` (downloads wasm-opt on first run)
-        # then `vitest run`, which boots workerd via miniflare and exercises the Router + GroupHub DO +
-        # KV + Queues bindings fully locally. The `scaffold` feature is what wires the in-memory store;
-        # a deploy build is featureless (see the guard step below). GitHub-only / not gated by other jobs.
+      - name: Build (worker-build → wasm) + miniflare tests over real Postgres via Hyperdrive (no account)
+        # `pnpm test` = `worker-build --release` (downloads wasm-opt on first run) then `vitest run`,
+        # which boots workerd via miniflare and drives the Router + the real AuthService::sign_in over
+        # PgAuthStore through a Hyperdrive Socket to the service Postgres (account-free), plus the W2
+        # guard, the GroupHub DO, and the KV + Queues bindings. GitHub-only / not gated by other jobs.
         run: pnpm test
-      - name: Fail-closed deploy guard (scaffold can never be silently deployed — sec-audit F1)
-        # A featureless wasm build (the `wrangler deploy` path) MUST fail via the compile_error! in
-        # src/lib.rs — the scaffold's hardcoded dev HMAC key + seeded demo member must never deploy.
-        # Runs after `pnpm test` so the release deps are already compiled (only boundless-worker
-        # recompiles featureless → fast-fails at the macro). The script self-locates; run from repo root.
-        working-directory: ${{ github.workspace }}
-        run: bash scripts/check-worker-deploy-guard.sh
 
   web:
     name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15/T16)

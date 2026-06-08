@@ -546,29 +546,39 @@
       `cargo build --target wasm32 -p boundless-server-store` green + a new CI step in `server-store`. The
       `tests/common` superuser scaffolding stays on the named path **by design** (direct, never-pooled
       connection — named is correct there; the production methods the Worker runs ARE the typed-path
-      fidelity). **Remaining (transport / Worker wiring only):** workers-rs 0.8.3 **HAS a first-class
-      Hyperdrive binding** — `env.hyperdrive("HYPERDRIVE")? -> Hyperdrive`, `.connect()? -> Socket` (the
-      older "no first-class binding / needs a forked driver" note was **wrong**); drive `PgAuthStore` over
-      `Config::connect_raw(socket, NoTls)` (`worker::Socket` impls tokio `AsyncRead`/`AsyncWrite`),
-      spawning the `Connection` future via `wasm_bindgen_futures::spawn_local`; uncomment/wire the
-      `[[hyperdrive]]` binding in `wrangler.toml`. Locally testable with **NO account** via either
-      `@cloudflare/vitest-pool-workers` (it DOES emulate the Hyperdrive binding — official workers-sdk
-      fixture; needs a global-setup pointing at a local Postgres) OR `wrangler dev` +
-      `[[hyperdrive]] localConnectionString` → a local Postgres; real pooler behaviour needs `wrangler dev
-      --remote`/deploy (account). **WHEN:** the Worker-wiring slice (the user's `.env` Neon URL + CF token
-      feed the Hyperdrive create + deploy).
+      fidelity). **TRANSPORT DONE (2026-06-08, PgAuthStore-over-Hyperdrive slice).** `server/src/runtime/
+      pg.rs`: `connect_pg` drives `PgAuthStore` over `env.hyperdrive("HYPERDRIVE")?.connect()? ->
+      worker::Socket` → `tokio_postgres::Config::from_str(connection_string).connect_raw(socket, NoTls)`
+      with the `Connection` future spawned via `worker::wasm_bindgen_futures::spawn_local` (workers-rs
+      0.8.3 HAS a first-class Hyperdrive binding — the "needs a forked driver" note was wrong, corrected in
+      `wrangler.toml`). Sign-in now runs the real `AuthService::sign_in` over `PgAuthStore` (+ an in-memory
+      `DeviceStore` half mirroring `service_pg.rs`); `HMAC_KEY`/`GROUP_ID` load from Worker bindings.
+      **Proven account-free** via `@cloudflare/vitest-pool-workers` (it DOES emulate the Hyperdrive
+      binding) against the local PG18: `/readyz` `db:ok` (connect_raw + spawn_local + W2 guard in workerd)
+      + sign-in `phone_not_on_file` over the real store/transport (`scripts/setup-worker-test-db.sh`
+      provisions the non-superuser app role + migrations; the CI `worker` job gains a `postgres:18`
+      service). **Remaining = the deploy legs only** (the `wrangler deploy` bullet below): the real
+      Hyperdrive `id` (`wrangler hyperdrive create` against the user's Neon URL) + `wrangler secret put
+      HMAC_KEY` + the real `GROUP_ID` + `wrangler deploy` — the human gate (Cloudflare MCP is read-only).
     - **Access-token verify path (ADR-0021; mint side DONE slice 2):** add the `access_token_hash bytea`
       column + the per-request verify lookup (re-reads family status), folded into the request's
       group-scoped RLS txn or served from `GroupHub` DO in-memory state with **write-through/evict on
       revoke** (authoritative-on-revoke, not TTL). **WHEN:** with the PgAuthStore slice.
-    - **W2 boot-guard call site (guard fn DONE slice 2):** call `ensure_least_privilege(&client)` right
-      after `hyperdrive.connect()`, fail closed (+ CI smoke). **WHEN:** with the PgAuthStore slice + infra role.
+    - [x] **W2 boot-guard call site — DONE 2026-06-08 (PgAuthStore slice).** `build_service`
+      (`server/src/runtime/mod.rs`) calls `ensure_least_privilege(&client)` after `connect_pg`, before any
+      `PgAuthStore` query, and fails closed (generic 500); `/readyz` reports `db:"role_too_privileged"` on
+      reject. The miniflare `db:ok` test proves the guard accepts the non-superuser app role in workerd.
+      **Remaining (infra/deploy):** provision the real non-superuser / non-`BYPASSRLS` Neon app role (the
+      guard rejects Neon's default `neondb_owner`, which has `BYPASSRLS`) + the deployed-edge cross-tenant
+      smoke as that role — the live analog of `rls_isolates_reads_by_tenant`, the single highest-impact
+      pre-GA proof (sec-audit F5). **WHEN:** the deploy slice + infra role.
     - **Route the sign-in below-min alert dedup through the `GroupHub` DO** (reviewer H1, slice 1). The
-      §10-E once-per-day dedup (`GroupHubState.should_alert`) lives in `AuthService.hub`, which the
-      skeleton's `build_service()` re-creates **per request** — so on the sign-in path the dedup does not
-      persist (every below-min sign-in re-enqueues a `BelowMinVersion` alert; harmless in the skeleton,
-      an R12 alert-flood in production). The bind path already persists via the DO; sign-in must too once
-      `AuthService` is hosted in / fronted by the DO. **WHEN:** the PgAuthStore slice (when sign-in runs in the DO).
+      §10-E once-per-day dedup (`GroupHubState.should_alert`) lives in `AuthService.hub`, which
+      `build_service()` re-creates **per request** — so on the sign-in path the dedup does not persist
+      (every below-min sign-in re-enqueues a `BelowMinVersion` alert; harmless today, an R12 alert-flood in
+      production). The bind path already persists via the DO; sign-in must too once `AuthService` is hosted
+      in / fronted by the DO. **WHEN:** the DO-fronting (bind-device) slice — still per-request after the
+      PgAuthStore slice.
     - [x] **Fail-closed guard so the scaffold store/key can never be silently deployed (security-auditor
       F1) — DONE 2026-06-08 (build-time leg).** The scaffold (the hardcoded `SCAFFOLD_HMAC_KEY = [0x7b; 32]`
       + one seeded demo member) is now gated behind a **non-default `scaffold` cargo feature** (chose the
@@ -591,17 +601,15 @@
       featureless deploy build cannot unify it in. **F3 nit folded in (DONE):** `DEMO_PHONE` `+15551230000`
       → `+15555550100` (NANP reserved fictional `555-01XX`, consistent with `fixtures/compat/**`); no residual
       `+15551230000` anywhere.
-    - [ ] **REAL close — delete the scaffold + retire the guard (carry-forward from the F1 build-time leg).**
-      The hardcoded key + seeded member still *exist in source* (behind the feature) until `PgAuthStore` lands.
-      When the PgAuthStore-over-Hyperdrive slice wires a real store: **delete `server/src/runtime/
-      scaffold_store.rs`**, retire the `scaffold` cargo feature + the `compile_error!` guard + `scripts/check-
-      worker-deploy-guard.sh` + its CI step (a real store compiles featureless, so the deploy path stops
-      failing closed). Residual until then (accepted, security-auditor F1 note): the guard is compile-time on
-      the *committed* deploy path — a developer who hand-edits `wrangler.toml [build]` to add `--features
-      scaffold` and runs `wrangler deploy` manually is an explicit act CI can't catch (CI never runs
-      `wrangler deploy`). Optional belt-and-suspenders *if* a window opens between "scaffold deleted" and
-      "PgAuthStore proven": a runtime boot check that refuses to serve with a dev key in a non-dev env —
-      otherwise unnecessary once the scaffold is gone. **WHEN:** the PgAuthStore-over-Hyperdrive slice.
+    - [x] **REAL close — delete the scaffold + retire the guard — DONE 2026-06-08 (PgAuthStore slice).**
+      Deleted `server/src/runtime/scaffold_store.rs` (the hardcoded `SCAFFOLD_HMAC_KEY` + seeded member) and
+      `scripts/check-worker-deploy-guard.sh` + its CI step; retired the `scaffold` cargo feature + the
+      `compile_error!` (`server/src/lib.rs` now gates `mod runtime` on plain `cfg(target_arch="wasm32")`;
+      `package.json` / `wrangler.toml` build is featureless). A real store compiles featureless, so the
+      deploy path no longer fails closed at compile time — **fail-closed moved to RUNTIME**: the W2 guard
+      rejects a superuser/`BYPASSRLS` role, and a missing `HMAC_KEY`/`GROUP_ID`/`HYPERDRIVE` binding errors
+      the request. No residual hardcoded auth key on the deploy path (security-auditor verified via `git
+      grep`; the only `from_bytes([0x42;32])` is test-only in `store/tests/common`).
     - **`PgDeviceStore` (device-token persistence) + APNs/FCM registration.** Needs spec-008 device-token
       at-rest encryption (the in-memory `DeviceStore` stands in until then). **WHEN:** push spec 007 / issuance 008.
     - **Turnstile** (code-guess + refresh throttle) + the **per-source refresh-rejection 429** network
@@ -619,6 +627,31 @@
     - **`wrangler deploy` + the live deployed-edge contract-conformance E2E** (replay the golden fixtures
       against the deployed Worker through the real Hyperdrive pooler). **Needs a Cloudflare account.**
       **WHEN:** the deploy-hardening pass.
+    - **Rate-limit / Access-gate the `/readyz` DB probe** (reviewer M1 / sec-audit F2, PgAuthStore slice).
+      `/readyz` opens a per-call Hyperdrive connection; an unauth caller can drive DB connects (a cheap
+      pooler-amplification vector). `/healthz` is now dependency-free (liveness); `/readyz` carries the DB
+      probe. Rate-limit it or put it behind Cloudflare Access, and add a deployed-edge assertion that the
+      `db` field never contains a substring of the connection string. **WHEN:** the deploy-hardening pass.
+    - **`PgService` drift gate** (reviewer M2, PgAuthStore slice). `server/src/runtime/pg.rs::PgService`
+      is a verbatim copy of `server/store/tests/service_pg.rs::PgService` (real `PgAuthStore` + in-memory
+      `DeviceStore` half), guarded only by a comment. Low real risk (the `AuthStore` half is pure
+      pass-through; the in-memory device half is transitional). When `PgDeviceStore` lands (spec 008) the
+      two diverge **by design** and this concern dissolves; until then, if a third consumer appears,
+      extract the shared shape into a `boundless-server-store` module both import. **WHEN:** spec 008 /
+      `PgDeviceStore` (or sooner if a third copy appears).
+    - **Worker-layer coverage of the `signin_wire` `MemberMatched` branch** (reviewer L4, PgAuthStore
+      slice). The slice dropped the member_matched miniflare assertion (the DB is unseeded; matched is
+      proven in `service_pg.rs` + the web `oneOf` contract test), so `signin_wire`'s matched JSON shape
+      (`next_step`/`manifest_pointer`) is no longer Worker-integration-tested — a key-name typo there would
+      pass CI. Restore by seeding one member (a Rust-computed `phone_lookup_hash` matching the test
+      `HMAC_KEY`) when the bind-device slice adds seeding for its bind tests, or add a wasm unit test of
+      `signin_wire`. **WHEN:** the bind-device slice (which seeds the worker test DB).
+    - **`wrangler.toml` committed-credential grep gate** (sec-audit F1, optional hardening). `wrangler.toml`
+      carries a LOCAL TEST `localConnectionString` (`boundless_app:boundless_app@localhost`) — inert at
+      deploy (deploy uses the real Hyperdrive `id`), consistent with the committed `postgres:postgres` in
+      `store/tests/common`. Optional: extend the secret/allow-list scan to assert `wrangler.toml` never
+      gains a real Hyperdrive `id` (UUID) or a non-`localhost` connection string, so a real Neon URL can't
+      be committed here. **WHEN:** a CI-hardening pass / the deploy slice.
 
 - [x] **OpenAPI auth-request ↔ I3 contract defect — RESOLVED 2026-06-07 (ADR-0023).** The frozen
       `api/openapi.yaml` carried a client-computed **`phone_lookup_hash`** on all three auth requests
@@ -703,10 +736,10 @@
       mistaken for the production storage shape.
   - **WHEN:** push spec **007** / issuance spec **008** (whichever brings device-token encryption).
 
-- [~] **wasm32 feature flags + pooler-safe `query_typed*` — (ii) the query migration + the wasm feature
-      flags are DONE (slice "store wasm-prep", 2026-06-08); only (i) the `worker::Socket` *transport*
-      remains.** Originally Slice A used `tokio-postgres` default (native) features + the idiomatic *named*
-      path (`query_one`/`query_opt`/`execute(&str,…)`). Now:
+- [x] **wasm32 feature flags + pooler-safe `query_typed*` + the `worker::Socket` transport — DONE.**
+      (ii) the query migration + wasm feature flags: slice "store wasm-prep" 2026-06-08; (i) the transport:
+      the PgAuthStore-over-Hyperdrive slice 2026-06-08. Originally Slice A used `tokio-postgres` default
+      (native) features + the idiomatic *named* path (`query_one`/`query_opt`/`execute(&str,…)`). Now:
   - **(ii) DONE.** Every production query in `PgAuthStore` (the 9 port methods + `begin`'s RLS
     `set_config` + `ensure_least_privilege` + the advisory-lock SELECTs = 21 sites) issues via the
     **unnamed-statement `query_typed*`** family (`query_typed_one`/`query_typed_opt`/`execute_typed`,
@@ -718,12 +751,11 @@
   - **wasm feature flags DONE.** `server/store/Cargo.toml` target-splits `tokio-postgres`: wasm =
     `default-features=false` + `["with-uuid-1","js"]`. `cargo build --target wasm32 -p
     boundless-server-store` green; a CI step in `server-store` guards it.
-  - **(i) REMAINING — the transport.** The Worker (T07-shell-B) must connect via
+  - **(i) DONE (2026-06-08, PgAuthStore slice).** `server/src/runtime/pg.rs::connect_pg` connects via
     `env.hyperdrive("HYPERDRIVE")?.connect()? -> worker::Socket` →
-    `tokio_postgres::Config::connect_raw(socket, NoTls)` (the Socket impls tokio
-    `AsyncRead`/`AsyncWrite`), spawning the `Connection` future with `wasm_bindgen_futures::spawn_local`.
-    The store lib needs no change for this (it takes an already-connected `Client`).
-  - **WHEN (transport):** **T07-shell-B** (the Worker-wiring slice).
+    `tokio_postgres::Config::from_str(connection_string).connect_raw(socket, NoTls)`, spawning the
+    `Connection` future with `worker::wasm_bindgen_futures::spawn_local`. The store lib needed no change
+    (it takes an already-connected `Client`). Proven account-free via vitest-pool-workers against PG18.
 
 - [ ] **Real server-time `now`.** `PgAuthStore` takes `now: UnixSeconds` and binds it (no
       `SystemTime::now` in the lib — server-time is injected, T04/T05 carry-forward). The Worker

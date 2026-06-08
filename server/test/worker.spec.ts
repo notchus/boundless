@@ -1,11 +1,16 @@
-// Miniflare integration tests for the boundless-worker skeleton (spec 001 T07-shell-B slice 1).
+// Miniflare integration tests for the boundless-worker (spec 001 T07-shell-B, PgAuthStore slice).
 //
-// Runs the real Rust→wasm Worker in workerd via @cloudflare/vitest-pool-workers — KV / Durable
-// Objects / Queues all emulated in-process, NO Cloudflare account. Proves the plumbing the slice
-// stands up: the Router + version handshake (AC7/O4), the real core sign-in over the scaffold store
-// (matched / not-on-file / below-min wire shapes, no existence leak), the KV binding, the Queue
-// binding (the below-min alert fanout, §10-E), and the GroupHub Durable Object's state.storage()
-// round-trip + §10-E rate-limit window (AC17).
+// Runs the real Rust→wasm Worker in workerd via @cloudflare/vitest-pool-workers, with KV / Durable
+// Objects / Queues AND a real **Hyperdrive → Postgres** binding all emulated in-process — NO
+// Cloudflare account. The Hyperdrive Socket connects to the local Postgres provisioned by
+// scripts/setup-worker-test-db.sh (the non-superuser `boundless_app` role; see vitest.config.ts).
+//
+// What this proves that slice 1 could not: the **transport** — `connect_raw` over the wasm
+// `worker::Socket` + the `spawn_local` connection driver + the W2 least-privilege guard + a real
+// query, end-to-end inside workerd — and that the real `AuthService::sign_in` runs over the real
+// `PgAuthStore` (RLS-scoped). Business-logic correctness over real Postgres (member_matched,
+// onboarding consume, rotate-vs-replay, …) is proven natively in server/store/tests/service_pg.rs;
+// here the DB is UNSEEDED, so sign-in returns phone_not_on_file through the real store/transport.
 
 import { env, SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -14,7 +19,6 @@ import { describe, expect, it } from 'vitest';
 // drift between the Worker's wire shape and the frozen contract fails CI, not a hand-copied literal.
 import belowMinVersion from '../../fixtures/auth/below_min_version.json';
 import phoneNotOnFile from '../../fixtures/auth/phone_not_on_file.json';
-import signinOk from '../../fixtures/auth/signin_ok.json';
 
 const BASE = 'https://worker.example';
 
@@ -27,7 +31,7 @@ async function signin(phone: string, app_version: string, platform = 'ios') {
 	return { res, body: (await res.json()) as Record<string, unknown> };
 }
 
-describe('boundless-worker skeleton (T07-shell-B slice 1)', () => {
+describe('boundless-worker (T07-shell-B, PgAuthStore over Hyperdrive)', () => {
 	it('GET /healthz carries the version handshake on every response (AC7/O4)', async () => {
 		const res = await SELF.fetch(`${BASE}/healthz`);
 		expect(res.status).toBe(200);
@@ -35,6 +39,16 @@ describe('boundless-worker skeleton (T07-shell-B slice 1)', () => {
 		expect(body.status).toBe('ok');
 		expect(body.client_min_version).toBe('1.0.0');
 		expect(body.client_recommended_version).toBe('1.2.0');
+	});
+
+	it('GET /readyz probes Postgres over Hyperdrive → db:ok (connect_raw + spawn_local + W2 guard)', async () => {
+		// "ok" means: the Worker got a `worker::Socket` from the Hyperdrive binding, drove a
+		// tokio-postgres `connect_raw` connection via spawn_local, and the W2 least-privilege guard
+		// ran a real query and accepted the non-superuser role. The whole transport, inside workerd.
+		// (Liveness `/healthz` is dependency-free; the DB probe is on readiness `/readyz`.)
+		const res = await SELF.fetch(`${BASE}/readyz`);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.db).toBe('ok');
 	});
 
 	it('KV MANIFEST binding round-trips and /healthz reflects it', async () => {
@@ -46,13 +60,9 @@ describe('boundless-worker skeleton (T07-shell-B slice 1)', () => {
 		expect(body.manifest_present).toBe(true);
 	});
 
-	it('sign-in → member_matched for the seeded phone, matching the golden fixture byte-for-byte', async () => {
-		const { res, body } = await signin('+15555550100', '1.2.0');
-		expect(res.status).toBe(200);
-		expect(body).toEqual(signinOk);
-	});
-
-	it('sign-in → phone_not_on_file for an unknown phone (no existence leak), matching the fixture', async () => {
+	it('sign-in → phone_not_on_file via the real PgAuthStore over Hyperdrive (empty db, no existence leak)', async () => {
+		// The real AuthService::sign_in runs find_member_by_phone in an RLS-scoped transaction over the
+		// real Postgres; the db is unseeded so any phone misses, matching the golden fixture exactly.
 		const { res, body } = await signin('+15559999999', '1.2.0');
 		expect(res.status).toBe(200);
 		expect(body).toEqual(phoneNotOnFile);

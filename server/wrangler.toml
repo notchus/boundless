@@ -4,19 +4,20 @@
 # (`@cloudflare/vitest-pool-workers` → miniflare), which reads the bindings from this file and
 # emulates KV / Durable Objects / Queues in-process — NO Cloudflare account required.
 #
-# `wrangler deploy` (which DOES need an account) is out of scope for this slice (DEFERRED.md →
-# T07-shell-B): real KV namespace ids, the Hyperdrive binding, and Queues consumers are wired then.
+# `wrangler deploy` (which DOES need an account) is the human gate (DEFERRED.md → T07-shell-B): the
+# real KV namespace id, the Hyperdrive config id, the HMAC_KEY secret, and the Queues consumer are set
+# there. The Hyperdrive BINDING + the auth data path are wired (below); only the deploy remains.
 name = "boundless-worker"
 main = "build/worker/shim.mjs"
 # Pinned (not Date.now()) — bump deliberately. Recent stable compat date as of 2026-06.
 compatibility_date = "2026-06-05"
 
-# DEPLOY path. Kept featureless ON PURPOSE: the only store wired today is the in-memory ScaffoldStore
-# (a hardcoded dev HMAC key + one seeded demo member), build-gated behind the non-default `scaffold`
-# cargo feature. A featureless wasm build hits a `compile_error!` (src/lib.rs), so `wrangler deploy`
-# FAILS CLOSED until PgAuthStore-over-Hyperdrive is wired (security-auditor F1, DEFERRED.md →
-# T07-shell-B). The local miniflare tests build via package.json's `build` script (which DOES pass
-# `--features scaffold`), NOT this command — see vitest.config.ts.
+# Build command for BOTH `wrangler deploy` and `worker-build`. The real `PgAuthStore` over Hyperdrive
+# is the only store now, so this is featureless — the old `scaffold`-feature `compile_error!` deploy
+# guard is RETIRED (no hardcoded key / seeded member exists to protect against). Fail-closed moved to
+# runtime: the W2 least-privilege guard rejects a superuser/BYPASSRLS DB role, and a missing
+# HMAC_KEY/GROUP_ID/HYPERDRIVE binding errors the request. The local miniflare tests build via
+# package.json's `build` script (same command) before `vitest run` — see vitest.config.ts.
 [build]
 command = "worker-build --release"
 
@@ -43,10 +44,20 @@ id = "manifest_local_placeholder"
 binding = "ADMIN_ALERTS"
 queue = "boundless-admin-alerts"
 
-# Hyperdrive → Postgres is DEFERRED (T07-shell-B PgAuthStore slice): workers-rs has no first-class
-# Hyperdrive binding yet and the pooler needs a forked tokio-postgres (docs-researcher 2026-06-07).
-# Local dev would point it at a local Postgres via `localConnectionString`:
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = "hyperdrive_placeholder"
-# localConnectionString = "postgresql://boundless_app@localhost:5432/boundless"
+# This install's single Group id (glossary: one install = one Group) — the tenant every PgAuthStore
+# query is RLS-scoped to. Committed default for local/CI; set the real id at deploy. NB: the HMAC_KEY
+# (I3 per-instance secret) is NOT here — it is a `wrangler secret` at deploy and a test value injected
+# by the vitest harness (`miniflare.bindings`); `env.var("HMAC_KEY")` reads either as plaintext.
+[vars]
+GROUP_ID = "00000000-0000-0000-0000-000000000001"
+
+# Hyperdrive → Postgres (T07-shell-B PgAuthStore slice). workers-rs 0.8.3 HAS a first-class binding
+# (`env.hyperdrive("HYPERDRIVE")?.connect()? -> Socket`), and the published tokio-postgres drives it
+# over that Socket via the unnamed `query_typed*` family (ADR-0024 — NO fork; the earlier "needs a
+# forked driver" note was wrong). `localConnectionString` is the LOCAL `wrangler dev` target; the
+# vitest harness overrides it per-environment via `miniflare.hyperdrives` (see vitest.config.ts). The
+# real `id` (a `wrangler hyperdrive create` against Neon) is set at deploy — the human gate.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "hyperdrive_local_placeholder"
+localConnectionString = "postgresql://boundless_app:boundless_app@localhost:55432/boundless_test"

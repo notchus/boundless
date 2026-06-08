@@ -9,38 +9,22 @@
 //!
 //! ## Functional core, imperative shell
 //!
-//! Scaffolded by spec 001 task **T01**. The deployable Worker **skeleton** — the `#[event(fetch)]`
-//! entry, the `worker::Router`, the [`GroupHub`](runtime::GroupHub) Durable Object, and the KV +
-//! Queues bindings — lands in **T07-shell-B slice 1**. It is `#[cfg(target_arch = "wasm32")]`: a
-//! native `cargo build`/`test` compiles only the (cfg-empty) lib + the `[[test]] compat` harness,
-//! so the store member + compat suite stay green; the wasm build (`worker-build`) compiles the full
-//! runtime. The runtime composes the core's [`AuthService`] over a **scaffold in-memory store**
-//! ([`runtime::ScaffoldStore`]) — a clearly-labelled `wrangler dev`/test stand-in to be replaced by
-//! the Postgres-over-Hyperdrive `PgAuthStore` in a later slice (see `DEFERRED.md` → T07-shell-B).
+//! Scaffolded by spec 001 task **T01**; the deployable Worker skeleton landed in **T07-shell-B slice
+//! 1** and the real **PgAuthStore-over-Hyperdrive** data path in the **T07-shell-B PgAuthStore
+//! slice**. The runtime is `#[cfg(target_arch = "wasm32")]`: a native `cargo build`/`test` compiles
+//! only the (cfg-empty) lib + the `[[test]] compat` harness, so the `store` member + compat suite
+//! stay green with plain cargo; the wasm build (`worker-build`) compiles the full runtime, which
+//! composes the core's [`AuthService`] over the real [`PgAuthStore`](runtime) (P4).
 //!
 //! [`AuthService`]: boundless_server_core::AuthService
 
 // The deployable Worker runtime is wasm-only (the `worker` crate does not build natively). Gating it
 // keeps the native compat harness (`tests/compat/`) + the `store` member buildable with plain cargo.
 //
-// It is ALSO gated on the non-default `scaffold` feature (security-auditor F1, T07-shell-B): the only
-// store wired today is the in-memory `runtime::ScaffoldStore` — a hardcoded dev HMAC key + one seeded
-// demo member that must NEVER reach production. The local/test path opts in (`worker-build --release
-// --features scaffold`, server/package.json); the deploy path (`wrangler deploy` → wrangler.toml
-// [build] = `worker-build --release`) stays featureless and hits the `compile_error!` below — so the
-// scaffold cannot be silently deployed. The PgAuthStore-over-Hyperdrive slice deletes the scaffold and
-// retires this feature (DEFERRED.md → T07-shell-B).
-#[cfg(all(target_arch = "wasm32", feature = "scaffold"))]
+// The old `scaffold`-feature `compile_error!` deploy guard (security-auditor F1) is RETIRED: the only
+// store is now the real `PgAuthStore` over Hyperdrive, so a featureless `wrangler deploy` build is
+// correct (no hardcoded key / seeded member exists to protect against). Fail-closed moved to RUNTIME
+// — the W2 `ensure_least_privilege` guard refuses a superuser/BYPASSRLS DB role, and a missing
+// `HMAC_KEY`/`GROUP_ID`/`HYPERDRIVE` binding errors the request (see `runtime`). DEFERRED.md → T07-shell-B.
+#[cfg(target_arch = "wasm32")]
 mod runtime;
-
-// Fail-closed deploy guard (security-auditor F1): a featureless wasm build — what `wrangler deploy`
-// runs — has no store wired, so fail the build LOUDLY rather than ship an empty Worker (or, worse, the
-// scaffold). Both this and `mod runtime` are wasm32-gated, so a native build (pre-push / the `server`
-// CI job) never trips it. The sentinel line is asserted by scripts/check-worker-deploy-guard.sh.
-#[cfg(all(target_arch = "wasm32", not(feature = "scaffold")))]
-compile_error!(
-    "boundless-worker has no production store yet: build with `--features scaffold` for local \
-     miniflare/dev (the in-memory ScaffoldStore — a hardcoded dev HMAC key + one seeded demo member, \
-     which must never be deployed). A production `wrangler deploy` must first wire PgAuthStore over \
-     Hyperdrive — see DEFERRED.md → T07-shell-B (PgAuthStore slice)."
-);
