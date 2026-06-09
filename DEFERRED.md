@@ -598,12 +598,23 @@
       pre-flight accepts superuser-OR-CREATEROLE; the meta-test gained a **negative** proving the verify refuses
       a pre-existing BYPASSRLS role; and the runbook's ADMIN-option remedy now leads with DROP-and-recreate (the
       only Neon-runnable path — Neon has no superuser login, so the prior `GRANT … WITH ADMIN OPTION` advice was
-      a dead end). **Remaining (the runtime half of the verify gap):** mirror the **REPLICATION** check in the
-      Rust boot guard `boundless_server_store::ensure_least_privilege` (`server/store/src/lib.rs`) — it currently
-      checks only `is_superuser` + `rolbypassrls`; a `boundless_app` that *drifts* to REPLICATION *after*
-      provisioning would pass the runtime guard. Add `rolreplication` to that query (a direct attribute, so the
-      `current_user`-scoped check stays complete) + a store test leg. **WHEN:** alongside the W2 guard / next
-      `server/store` slice (it's a Rust + store-test change, out of this scripts/docs slice).
+      a dead end). **The runtime half of the verify gap — DONE 2026-06-10.** The Rust boot guard
+      `boundless_server_store::ensure_least_privilege` (`server/store/src/lib.rs`) now also checks **`rolreplication`**
+      (added `COALESCE((SELECT rolreplication FROM pg_roles WHERE rolname = current_user), false)` to the probe + a
+      third `PrivilegeTooHigh("current_user has REPLICATION")` reject) — so a `boundless_app` that *drifts* to
+      REPLICATION *after* provisioning is now refused at boot, not silently accepted (REPLICATION can stream the WAL =
+      all-tenant PII, bypassing RLS, even on a NOSUPERUSER NOBYPASSRLS role). The guard now mirrors the three *direct*
+      RLS-bypass attributes the provisioner verifies (superuser/BYPASSRLS/REPLICATION); it deliberately does **not**
+      also reject CREATEROLE/CREATEDB (those are *escalation* vectors, enforced at provisioning, not a way to read
+      another tenant's rows on the live connection — the boot guard's job is the narrower "refuse a connection that
+      bypasses RLS *now*", documented in the fn). New store test leg
+      `least_privilege.rs::ensure_least_privilege_rejects_replication_role` (mints a NOLOGIN NOSUPERUSER NOBYPASSRLS
+      **REPLICATION** role, `SET ROLE`s into it, asserts the guard rejects it) — proven on real **PG18** (26 store
+      tests green; a transient non-vacuity check confirmed the new leg bites — guard returns `Ok(())` without the
+      check); clippy `-D warnings` / fmt / wasm32 build all green; no new dependency. **Out of scope (still
+      deferred):** the sec-audit F5 **live deployed-edge cross-tenant isolation** smoke as the real `boundless_app`
+      role (needs ≥2 seeded Groups → spec 008) — that proves RLS isolation end-to-end on the deployed Worker; this
+      guard only proves the role *cannot bypass* RLS, the necessary precondition.
     - **FIRST LIVE DEPLOY DONE (2026-06-09).** The operator ran the full runbook end-to-end against their
       real Neon DB + Cloudflare account. Step 0 (Neon provisioning) was run by the agent directly on
       explicit user authorization (the one sanctioned DB mutation — `provision-neon.sh` against the real

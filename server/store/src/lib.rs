@@ -71,9 +71,10 @@ pub enum StoreError {
     NoLiveCurrentToRotate,
     /// A stored `bytea`/`uuid` column had an unexpected shape (schema drift / corruption).
     MalformedColumn(&'static str),
-    /// The runtime DB role has privilege that **bypasses RLS** (superuser or `BYPASSRLS`), so the
-    /// per-Group tenant isolation would not actually apply. [`ensure_least_privilege`] returns this
-    /// and the Worker must refuse to start. The payload names the condition (no PII).
+    /// The runtime DB role has privilege that **bypasses RLS** (superuser, `BYPASSRLS`, or
+    /// `REPLICATION`), so the per-Group tenant isolation would not actually apply.
+    /// [`ensure_least_privilege`] returns this and the Worker must refuse to start. The payload
+    /// names the condition (no PII).
     PrivilegeTooHigh(&'static str),
 }
 
@@ -151,28 +152,39 @@ fn hash_array(bytes: Vec<u8>, col: &'static str) -> Result<[u8; HASH_LEN]> {
 /// highest-impact way the privacy model fails in production (T06 carry-forward; sec-audit W2).
 ///
 /// Every `PgAuthStore` method scopes tenant access with RLS (`app.current_group_id`). But
-/// `FORCE ROW LEVEL SECURITY` is itself bypassed by a **superuser** or any role with the
-/// **`BYPASSRLS`** attribute — and Neon's default `postgres` role typically *is* a superuser. If the
-/// Worker connected as such a role, RLS would silently not apply and one tenant could read/write
-/// another's PII. This is invisible to ordinary tests (which drop privilege via `SET ROLE`), so it
-/// must be asserted at boot: the Worker (T07-shell-B) calls this immediately after connecting,
-/// before constructing any [`PgAuthStore`], and **fails closed** on `Err`.
+/// `FORCE ROW LEVEL SECURITY` is itself bypassed by a **superuser**, any role with the
+/// **`BYPASSRLS`** attribute, or — just as effectively, if less obviously — any role with
+/// **`REPLICATION`** (which can open a replication connection and stream the WAL, i.e. every
+/// tenant's rows, with RLS never consulted). Neon's default `neondb_owner` belongs to
+/// `neon_superuser`, which carries `BYPASSRLS`, `REPLICATION`, `CREATEROLE`, and `CREATEDB` (per
+/// Neon's role docs, <https://neon.com/docs/manage/roles>) — so the Worker must connect as a
+/// dedicated locked-down app role, never the default owner. If it connected as such a role, RLS
+/// would silently not apply and one tenant could read/write another's PII. This is
+/// invisible to ordinary tests (which drop privilege via `SET ROLE`), so it must be asserted at
+/// boot: the Worker (T07-shell-B) calls this immediately after connecting, before constructing any
+/// [`PgAuthStore`], and **fails closed** on `Err`.
 ///
 /// `is_superuser` reflects the *effective* role (so it is correct after `SET ROLE`); `rolbypassrls`
-/// is the connected role's own attribute. The check is a single read-only query and runs unscoped
-/// (it is a role-attribute probe, not tenant data), so it needs no transaction.
+/// and `rolreplication` are read for the connected role (`current_user`, which `SET ROLE` updates).
+/// The check is a single read-only query and runs unscoped (it is a role-attribute probe, not
+/// tenant data), so it needs no transaction.
 ///
-/// **Scope:** this catches the two *role-attribute* RLS bypasses (superuser, `BYPASSRLS`). The third
-/// Postgres bypass — a table's **owner** is exempt unless the table has `FORCE ROW LEVEL SECURITY` —
-/// is covered separately by T06: every PII table is created `... ENABLE ROW LEVEL SECURITY` **and**
-/// `... FORCE ROW LEVEL SECURITY`, asserted by `server/tests/migrations.rs`. So this guard +
-/// FORCE-RLS-on-every-table together close all three; do not read "least privilege" as also
-/// asserting non-ownership.
+/// **Scope:** this catches the three *role-attribute* RLS bypasses (superuser, `BYPASSRLS`,
+/// `REPLICATION`). It deliberately does **not** also reject `CREATEROLE`/`CREATEDB`: those are
+/// *escalation* attributes (a role could grant itself more), not a way to read another tenant's
+/// rows on the current connection — `scripts/provision-neon.sh` enforces their absence when minting
+/// the role, but the boot guard's job is narrower (refuse a connection that bypasses RLS *now*). The
+/// fourth Postgres bypass — a table's **owner** is exempt unless the table has `FORCE ROW LEVEL
+/// SECURITY` — is covered separately by T06: every PII table is created `... ENABLE ROW LEVEL
+/// SECURITY` **and** `... FORCE ROW LEVEL SECURITY`, asserted by `server/tests/migrations.rs`. So
+/// this guard + FORCE-RLS-on-every-table together close all the bypasses; do not read "least
+/// privilege" as also asserting non-ownership or non-escalation.
 pub async fn ensure_least_privilege(client: &Client) -> Result<()> {
     let row = client
         .query_typed_one(
             "SELECT current_setting('is_superuser')::bool AS is_super, \
-             COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user), false) AS bypass_rls",
+             COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user), false) AS bypass_rls, \
+             COALESCE((SELECT rolreplication FROM pg_roles WHERE rolname = current_user), false) AS replication",
             &[],
         )
         .await?;
@@ -181,6 +193,9 @@ pub async fn ensure_least_privilege(client: &Client) -> Result<()> {
     }
     if row.get::<_, bool>("bypass_rls") {
         return Err(StoreError::PrivilegeTooHigh("current_user has BYPASSRLS"));
+    }
+    if row.get::<_, bool>("replication") {
+        return Err(StoreError::PrivilegeTooHigh("current_user has REPLICATION"));
     }
     Ok(())
 }
