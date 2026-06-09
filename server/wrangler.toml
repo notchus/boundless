@@ -31,9 +31,13 @@ command = "worker-build --release"
 name = "GROUP_HUB"
 class_name = "GroupHub"
 
+# SQLite-backed Durable Objects (the current default; REQUIRED on the Workers Free plan, and
+# recommended on Paid too). The `state.storage()` KV API GroupHub uses works identically on the
+# SQLite backend. Use `new_sqlite_classes` (not `new_classes`, which is the legacy KV-backed,
+# paid-only form).
 [[migrations]]
 tag = "v1"
-new_classes = ["GroupHub"]
+new_sqlite_classes = ["GroupHub"]
 
 # Signed-manifest KV (ADR-0014 / O2). This slice only READS a manifest index key (the serving +
 # signing pipeline is deferred). The id is a placeholder — miniflare keys on the binding name, so it
@@ -41,7 +45,7 @@ new_classes = ["GroupHub"]
 # → docs/runbooks/deploy-worker.md step 2 (`wrangler kv namespace create MANIFEST`).
 [[kv_namespaces]]
 binding = "MANIFEST"
-id = "REPLACE_AT_DEPLOY_kv_namespace_id"
+id = "74f7d2cabc984788b1ab59fd0aeed82e"
 
 # Admin-alert fanout (§10-E): the below-min / notifications-declined PII-free alerts are produced
 # here and consumed by a separate notifier Worker (the consumer is deferred to the push spec).
@@ -66,5 +70,5 @@ GROUP_ID = "00000000-0000-0000-0000-000000000001"
 # → docs/runbooks/deploy-worker.md steps 0–1 (`provision-neon.sh` → `wrangler hyperdrive create`).
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REPLACE_AT_DEPLOY_hyperdrive_id"
+id = "93c3329a661446719e20083de648dc21"
 localConnectionString = "postgresql://boundless_app:boundless_app@localhost:55432/boundless_test"

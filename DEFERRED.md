@@ -604,6 +604,35 @@
       provisioning would pass the runtime guard. Add `rolreplication` to that query (a direct attribute, so the
       `current_user`-scoped check stays complete) + a store test leg. **WHEN:** alongside the W2 guard / next
       `server/store` slice (it's a Rust + store-test change, out of this scripts/docs slice).
+    - **FIRST LIVE DEPLOY DONE (2026-06-09).** The operator ran the full runbook end-to-end against their
+      real Neon DB + Cloudflare account. Step 0 (Neon provisioning) was run by the agent directly on
+      explicit user authorization (the one sanctioned DB mutation — `provision-neon.sh` against the real
+      `neondb_owner` DIRECT endpoint: minted the locked-down `boundless_app`, applied the 8 migrations,
+      granted least privilege, verified NOSUPERUSER/NOBYPASSRLS/NOREPLICATION/…); steps 1–7 were the
+      operator's `wrangler` commands (`hyperdrive create` → `kv namespace create MANIFEST` → `queues
+      create boundless-admin-alerts` → `secret put HMAC_KEY` → `deploy`), with the agent pasting the
+      returned resource ids into `server/wrangler.toml`. **Two `wrangler.toml` changes the live deploy
+      forced:** (a) `new_classes` → **`new_sqlite_classes`** for the `GroupHub` DO (SQLite-backed DOs are
+      REQUIRED on the Workers Free plan + recommended on Paid; the `state.storage()` KV API is unchanged
+      across backends) — a real correctness fix for ANY deployer, committed; (b) the real Hyperdrive +
+      KV ids pasted over the `REPLACE_AT_DEPLOY_*` placeholders. Worker live at
+      `https://boundless-worker.notchus.workers.dev`; **`scripts/smoke-deployed-edge.sh` GREEN against the
+      live edge**: `/healthz` ok · **`/readyz db:ok`** (the W2 `ensure_least_privilege` guard passes LIVE
+      → `boundless_app` is locked down and RLS is actually enforced in production over the real
+      Hyperdrive→Neon path) · sign-in `phone_not_on_file` · no credential leak. **What this proves vs
+      doesn't:** it proves the live connect + the least-privilege guard + the sign-in wire shape end to
+      end; it does **not** yet prove (i) **cross-tenant RLS isolation** as the live role (no seeded
+      multi-tenant data exists — needs ≥2 Groups → **spec 008** issuance, or a manual seed) nor (ii) the
+      **golden-fixture contract-conformance replay** against the deployed Worker. **Follow-ups surfaced by
+      the live deploy:** (1) **genericize the committed `wrangler.toml` resource ids back to
+      `REPLACE_AT_DEPLOY_*` placeholders before the repo is made public** — they are account identifiers,
+      not secrets, and committing them on the current private single-instance repo keeps the tree clean +
+      redeploys frictionless, but an open-source repo should not carry one instance's ids (WHEN: before
+      open-sourcing). (2) **`preview_urls = false`** in `server/wrangler.toml` (privacy: `workers.dev` +
+      preview URLs default to ON, so every deployed version gets its own public URL; keep `workers_dev`
+      until a custom domain exists, but a privacy-by-design product should disable per-version preview
+      URLs — WHEN: a deploy-hardening pass). (3) the wrangler first-run telemetry notice printed despite
+      `send_metrics = false` — benign (a one-time CLI notice; the setting still disables telemetry).
     - **Two review backstops tracked here** (3-lens review of the deploy-prep slice; both latent, no live
       break): (i) **`provision-neon.sh`'s `GRANT … ON ALL TABLES` is point-in-time** — when migration 0009+
       lands, a re-run on an already-migrated DB hits the "8/8 → skip" path and the new table is neither
@@ -629,10 +658,14 @@
       against local PG18 — the **account-free analog of the deployed-edge cross-tenant proof** (it acts as
       the *real* `boundless_app` LOGIN role over `public`, a strictly stronger RLS proof than the Rust
       harness's `SET ROLE`-on-superuser/per-test-schema `rls_isolates_reads_by_tenant`: role-locked · single
-      table owner · least-privilege SQL both-false · RLS isolates cross-tenant · fail-closed). **Remaining
-      (operator/infra):** run `provision-neon.sh` against the real Neon owner URL, and the **live**
-      deployed-edge cross-tenant smoke as that role against the deployed Worker (sec-audit F5, the single
-      highest-impact pre-GA proof). **WHEN:** the operator's deploy (runbook: `docs/runbooks/deploy-worker.md`).
+      table owner · least-privilege SQL both-false · RLS isolates cross-tenant · fail-closed). **Provision
+      + deploy DONE 2026-06-09** (see "FIRST LIVE DEPLOY DONE" above): `provision-neon.sh` was run against
+      the real Neon owner URL, and the live `/readyz db:ok` proves the guard accepts the provisioned
+      `boundless_app` role **in production**. **Remaining (the single highest-impact pre-GA proof,
+      sec-audit F5):** the **live deployed-edge cross-tenant *isolation* smoke** as that role — assert a
+      request scoped to Group A cannot read Group B's rows on the deployed Worker. It needs ≥2 seeded
+      Groups, which do not exist until issuance. **WHEN:** **spec 008** (issuance seeds multi-tenant data),
+      or a one-off manual seed against the deployed edge before GA.
     - **Route the sign-in below-min alert dedup through the `GroupHub` DO** (reviewer H1, slice 1). The
       §10-E once-per-day dedup (`GroupHubState.should_alert`) lives in `AuthService.hub`, which
       `build_service()` re-creates **per request** — so on the sign-in path the dedup does not persist
@@ -685,9 +718,11 @@
       substring of the submitted phone** (the testable form of ADR-0023's "hash, use, drop" obligation,
       which also covers the AC3 "drops/never-logged" leg the core constant-time test doesn't). **WHEN:** this same shell track.
     - **Real signed-manifest KV serving** (ADR-0014; the skeleton only reads a manifest index key). **WHEN:** the manifest-service spec.
-    - **`wrangler deploy` + the live deployed-edge contract-conformance E2E** (replay the golden fixtures
-      against the deployed Worker through the real Hyperdrive pooler). **Needs a Cloudflare account.**
-      **WHEN:** the deploy-hardening pass.
+    - **`wrangler deploy` DONE 2026-06-09** (first live deploy — see "FIRST LIVE DEPLOY DONE" above:
+      Worker live at `boundless-worker.notchus.workers.dev`, `smoke-deployed-edge.sh` green). **Remaining
+      = the live deployed-edge *contract-conformance* E2E** (replay the golden `fixtures/auth/*` against
+      the deployed Worker through the real Hyperdrive pooler — the smoke checks `/healthz` + `/readyz` +
+      one sign-in shape + no-leak, not the full fixture matrix). **WHEN:** the deploy-hardening pass.
     - **Rate-limit / Access-gate the `/readyz` DB probe** (reviewer M1 / sec-audit F2, PgAuthStore slice).
       `/readyz` opens a per-call Hyperdrive connection; an unauth caller can drive DB connects (a cheap
       pooler-amplification vector). `/healthz` is now dependency-free (liveness); `/readyz` carries the DB
