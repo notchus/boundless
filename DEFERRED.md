@@ -570,6 +570,40 @@
       + `scripts/smoke-deployed-edge.sh`** round-trip (real HTTP → Worker → local PG over the Hyperdrive
       socket: `/readyz db:ok`, sign-in `phone_not_on_file`, no credential leak). So the operator's remaining
       work is exactly: run `provision-neon.sh` once, then the runbook's `wrangler` commands.
+    - **Neon-owner fix (2026-06-09, surfaced during the operator's first live run).** The provisioner +
+      meta-test were corrected for the real Neon privilege boundary that the local-superuser meta-test had
+      masked: Neon's `neondb_owner` is a `neon_superuser` member with `CREATEROLE`+`BYPASSRLS` but is **NOT a
+      true superuser**, so `ALTER ROLE boundless_app … NOSUPERUSER NOBYPASSRLS` is **rejected** ("only roles
+      with the SUPERUSER attribute may change the SUPERUSER attribute"). Fix: `provision-neon.sh` now creates
+      the role with the safe **defaults** (NOSUPERUSER/NOBYPASSRLS are the defaults), re-asserts only LOGIN +
+      password, and **verifies** `rolsuper=f / rolbypassrls=f / rolcanlogin=t` (fail-closed if drifted — only
+      a superuser could fix a drifted privileged role, same posture as the W2 guard). It also gained a
+      **pre-flight** (connectivity + a `CREATEROLE`-on-`current_user` check that rejects the limited
+      `authenticator` role with a clear message) and a non-fatal **`-pooler` warning** (DDL wants Neon's
+      DIRECT/unpooled endpoint). The **meta-test** now runs the provisioner **AS `neon_owner_sim`** — a
+      CREATEROLE/NOSUPERUSER/BYPASSRLS role that mirrors `neondb_owner` (the superuser only bootstraps: mints
+      the BYPASSRLS sim, transfers DB+`public` ownership to it, grants it `ADMIN OPTION` on `boundless_app`
+      since **PG16+ requires CREATEROLE + ADMIN OPTION on the target role to ALTER it**, and seeds the two
+      tenants). Proven both ways on real PG18: green as the non-super owner; **red with the bad `ALTER`**
+      (reproduces the operator's exact error — the regression guard the old superuser-run test couldn't
+      provide). `docs/runbooks/deploy-worker.md` gained a "Troubleshooting step 0" section for the three
+      role/permission errors + the direct-endpoint guidance. (NB the user's own `neondb_owner` flow is
+      unaffected by the PG16 admin-option rule — it *created* `boundless_app`, so it already holds admin on it.)
+      A 3-lens review (reviewer ship / security + operator fix-then-ship) hardened the slice before commit:
+      the **P2 owner-password leak** the old `${OWNER_URL%%@*}` log produced is fixed (log a redacted
+      `scheme://host/db`, never userinfo) + guarded by a meta-test stderr no-leak assert; the `-pooler` check
+      is now **fatal** (was a warning — a re-run skips migrations, so a pooled host could have ridden silently
+      into `wrangler hyperdrive create`; `ALLOW_POOLER=1` overrides); the verify now also rejects
+      **REPLICATION/CREATEROLE/CREATEDB** (REPLICATION can stream the WAL = all-tenant PII, bypassing RLS); the
+      pre-flight accepts superuser-OR-CREATEROLE; the meta-test gained a **negative** proving the verify refuses
+      a pre-existing BYPASSRLS role; and the runbook's ADMIN-option remedy now leads with DROP-and-recreate (the
+      only Neon-runnable path — Neon has no superuser login, so the prior `GRANT … WITH ADMIN OPTION` advice was
+      a dead end). **Remaining (the runtime half of the verify gap):** mirror the **REPLICATION** check in the
+      Rust boot guard `boundless_server_store::ensure_least_privilege` (`server/store/src/lib.rs`) — it currently
+      checks only `is_superuser` + `rolbypassrls`; a `boundless_app` that *drifts* to REPLICATION *after*
+      provisioning would pass the runtime guard. Add `rolreplication` to that query (a direct attribute, so the
+      `current_user`-scoped check stays complete) + a store test leg. **WHEN:** alongside the W2 guard / next
+      `server/store` slice (it's a Rust + store-test change, out of this scripts/docs slice).
     - **Two review backstops tracked here** (3-lens review of the deploy-prep slice; both latent, no live
       break): (i) **`provision-neon.sh`'s `GRANT … ON ALL TABLES` is point-in-time** — when migration 0009+
       lands, a re-run on an already-migrated DB hits the "8/8 → skip" path and the new table is neither

@@ -7,10 +7,13 @@
 # (`DROP SCHEMA public CASCADE`) and must never touch a real DB.
 #
 # What it does (all as the owner):
-#   * creates/repairs the runtime app role `boundless_app` — **LOGIN NOSUPERUSER NOBYPASSRLS** so the
-#     W2 `boundless_server_store::ensure_least_privilege` guard ACCEPTS it and RLS actually applies
-#     (Neon's default `neondb_owner` has BYPASSRLS and is correctly REJECTED — DEFERRED.md → T07-shell-B,
-#     sec-audit W2/R3);
+#   * creates/repairs the runtime app role `boundless_app` with the safe DEFAULTS (NOSUPERUSER
+#     NOBYPASSRLS) and then VERIFIES it is unprivileged — so the W2 `ensure_least_privilege` guard
+#     ACCEPTS it and RLS actually applies. It deliberately does NOT `ALTER … NOSUPERUSER/NOBYPASSRLS`:
+#     only a true superuser may change those, and the owner that runs this (Neon's `neondb_owner`) is a
+#     CREATEROLE role, NOT a superuser, so naming them is rejected. (Neon's `neondb_owner` itself has
+#     BYPASSRLS and is correctly REJECTED by the Worker's boot guard — DEFERRED.md → T07-shell-B,
+#     sec-audit W2/R3 — which is why this script mints a separate, locked-down role.)
 #   * applies the T06 migrations 0001..0008 **only if the schema is empty** (0 of the 8 tables present);
 #     if all 8 are present it skips; a PARTIAL schema makes it fail loudly (it never DROPs / never guesses);
 #   * grants the app role CONNECT + USAGE + table DML (the proven server/store/tests/common/mod.rs set;
@@ -57,19 +60,69 @@ EXPECTED_COUNT=8
 
 # All human-facing output goes to stderr; STDOUT is reserved for the one connection-string line.
 log() { echo "$@" >&2; }
-log "→ provisioning ${OWNER_URL%%@*}@… as the database owner (app role=${APP_ROLE})"
+# A redacted scheme://host/db for logging — NEVER the userinfo (P2: the owner password must not reach
+# logs/stderr). The greedy `.*@` strips ALL userinfo (robust even if the password contains '@'); then drop
+# any `?query`. (`%%@*` would have kept `scheme://user:PW` — a password leak.)
+safe_url="$(printf '%s' "$OWNER_URL" | sed -E 's#^(postgres(ql)?://).*@#\1#; s#\?.*$##')"
+log "→ provisioning ${safe_url} as the database owner (app role=${APP_ROLE})"
+
+# --- 0. pre-flight: reject a pooled host, then connect, then require an owner that can create roles --
+# Neon's pooled endpoint (-pooler) blocks the SET/prepared statements migrations need AND must never be the
+# Hyperdrive origin (Hyperdrive pools itself) — a pooled host here would silently ride into `wrangler
+# hyperdrive create` (step 1). FATAL, checked first (string-only, no connection); matched on the redacted
+# host so a '-pooler' in the password can't trip it. Set ALLOW_POOLER=1 to override a non-Neon pooler.
+case "$safe_url" in
+  *-pooler.*)
+    if [ "${ALLOW_POOLER:-}" != "1" ]; then
+      log "✗ this is a POOLED endpoint ('-pooler' in the host). Use the DIRECT (unpooled) endpoint —"
+      log "  Neon dashboard → Connection Details → turn Connection pooling OFF (host without '-pooler')."
+      log "  DDL needs it, and Hyperdrive (step 1) must point at the direct host. Set ALLOW_POOLER=1 to override."
+      exit 1
+    fi
+    log "⚠ ALLOW_POOLER=1 — provisioning via a POOLED endpoint; migrations may fail and the printed host is"
+    log "  NOT suitable for 'wrangler hyperdrive create'." ;;
+esac
+# Connect (fail clearly instead of surfacing a raw psql error mid-run).
+if ! $PSQL "$OWNER_URL" -tAc 'SELECT 1' >/dev/null 2>&1; then
+  log "✗ cannot connect with the given owner URL."
+  log "  Check host/role/password, and use the DIRECT (unpooled) endpoint (host WITHOUT '-pooler')."
+  exit 1
+fi
+# Accept a true superuser OR a CREATEROLE owner (a superuser can create roles even with rolcreaterole=f).
+if [ "$($PSQL "$OWNER_URL" -tAc 'SELECT (rolsuper OR rolcreaterole) FROM pg_roles WHERE rolname = current_user' 2>/dev/null | tr -d '[:space:]')" != "t" ]; then
+  log "✗ the connection role can't create roles (needs the database OWNER/CREATEROLE, or superuser)."
+  log "  On Neon connect as 'neondb_owner' (NOT 'authenticator', the limited pooler/Authorize role):"
+  log "  Neon dashboard → Connection Details → role = neondb_owner."
+  exit 1
+fi
 
 # --- 1. app role (UNCONDITIONAL — re-asserted every run) ---------------------------------------
-# Idempotent create (swallow the duplicate-at-create races), then ALTER to re-assert the exact
-# least-privilege attributes + password so a stale role can never drift privileged.
+# Create with the safe DEFAULTS (NOSUPERUSER NOBYPASSRLS are the defaults for any CREATEROLE-created
+# role) and re-assert only LOGIN + password. We deliberately do NOT name SUPERUSER/BYPASSRLS in ALTER:
+# changing those requires the EXECUTOR to be a true superuser, and the owner that runs this (Neon's
+# `neondb_owner`) is a CREATEROLE role, not a superuser — naming them is rejected ("only roles with the
+# SUPERUSER attribute may change the SUPERUSER attribute"). The verify step below ENFORCES least
+# privilege (a drifted privileged role can only be fixed by a superuser, so we detect + refuse here).
 $PSQL "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<SQL
 DO \$\$ BEGIN
-  CREATE ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}' NOSUPERUSER NOBYPASSRLS;
+  CREATE ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}';
 EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
 END \$\$;
-ALTER ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}' NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}';
 SQL
-log "✓ app role ${APP_ROLE} (LOGIN NOSUPERUSER NOBYPASSRLS)"
+
+# Verify it landed unprivileged. SUPERUSER/BYPASSRLS bypass every RLS policy; REPLICATION can stream the
+# whole WAL (all tenants' PII, bypassing RLS); CREATEROLE/CREATEDB are role/db escalation. A re-run or a
+# pre-existing role preserves whatever attributes it already had (the CREATE is swallowed, the ALTER touches
+# only LOGIN+password), so check them all and fail loudly — only a superuser could reset a drifted role.
+attr() { $PSQL "$OWNER_URL" -tAc "SELECT $1 FROM pg_roles WHERE rolname='${APP_ROLE}'" | tr -d '[:space:]'; }
+[ "$(attr rolsuper)"       = "f" ] || { log "✗ ${APP_ROLE} is SUPERUSER — a superuser must run:  ALTER ROLE ${APP_ROLE} NOSUPERUSER;"; exit 1; }
+[ "$(attr rolbypassrls)"   = "f" ] || { log "✗ ${APP_ROLE} has BYPASSRLS — a superuser must run:  ALTER ROLE ${APP_ROLE} NOBYPASSRLS;"; exit 1; }
+[ "$(attr rolreplication)" = "f" ] || { log "✗ ${APP_ROLE} has REPLICATION (can stream all tenants' data, bypassing RLS) — a superuser must run:  ALTER ROLE ${APP_ROLE} NOREPLICATION;"; exit 1; }
+[ "$(attr rolcreaterole)"  = "f" ] || { log "✗ ${APP_ROLE} has CREATEROLE — run:  ALTER ROLE ${APP_ROLE} NOCREATEROLE;"; exit 1; }
+[ "$(attr rolcreatedb)"    = "f" ] || { log "✗ ${APP_ROLE} has CREATEDB — run:  ALTER ROLE ${APP_ROLE} NOCREATEDB;"; exit 1; }
+[ "$(attr rolcanlogin)"    = "t" ] || { log "✗ ${APP_ROLE} cannot LOGIN —  run:  ALTER ROLE ${APP_ROLE} LOGIN;"; exit 1; }
+log "✓ app role ${APP_ROLE} (LOGIN · verified NOSUPERUSER · NOBYPASSRLS · NOREPLICATION · NOCREATEROLE · NOCREATEDB)"
 
 # --- 2. migrations (CONDITIONAL — never destructive) -------------------------------------------
 # Count how many of the 8 tables already exist, then: 0 → apply all; 8 → skip; partial → refuse.

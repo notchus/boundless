@@ -6,10 +6,12 @@
 # superuser connection, the way server/store/tests/common/mod.rs does) — proves the lock-down holds.
 # This is a STRICTLY STRONGER RLS proof than the Rust harness: it is the account-free analog of the
 # sec-audit F5 "deployed-edge cross-tenant smoke as the real app role" (DEFERRED.md → T07-shell-B).
-# Fidelity note: locally the OWNER is a true superuser (the seed bypasses RLS via superuser semantics),
-# whereas Neon's real owner `neondb_owner` is a non-superuser WITH BYPASSRLS — a different bypass path.
-# The load-bearing assertions are all AS the `boundless_app` app role; the production-faithful proof is
-# still the live deployed-edge cross-tenant smoke (DEFERRED.md → T07-shell-B, sec-audit F5).
+# Fidelity: provision runs AS `neon_owner_sim` — a CREATEROLE / NOSUPERUSER / BYPASSRLS role that
+# mirrors Neon's `neondb_owner` exactly (NOT a true superuser). This reproduces the privilege boundary a
+# true-superuser owner would mask — e.g. a regression that does `ALTER ROLE … NOSUPERUSER` (which only a
+# real superuser may do) fails here, as it does on Neon. The superuser-only bootstrap (creating the
+# BYPASSRLS role, transferring DB/schema ownership, seeding) uses SU_URL. The production-faithful proof
+# is still the live deployed-edge cross-tenant smoke (DEFERRED.md → T07-shell-B, sec-audit F5).
 #
 # Asserts, as boundless_app over the freshly-provisioned `public`:
 #   role attrs (NOSUPERUSER/NOBYPASSRLS/LOGIN) · 8 tables · single uniform table owner (catches a Neon
@@ -34,6 +36,8 @@ PSQL="${PSQL:-psql}"
 SU_URL="${WORKER_TEST_SUPERUSER_URL:-postgres://postgres:postgres@localhost:55432/boundless_test}"
 PROV_DB="boundless_provision_test"   # name matches provision-neon.sh's nothing-destructive; safe throwaway
 APP_PW="boundless_app"               # pin (shared cluster-global role — see header)
+SIM="neon_owner_sim"                 # the Neon-like non-superuser owner provision runs AS (cluster-global)
+SIM_PW="s1m_0wner_pw_n0_leak"        # distinctive (≠ any role/db name) so the stderr no-leak assert is meaningful
 
 fail() { echo "❌ META-TEST FAILED: $1" >&2; exit 1; }
 # A scalar query, whitespace-trimmed. $1=url $2=sql
@@ -45,10 +49,12 @@ if ! $PSQL "$SU_URL" -tAc 'SELECT 1' >/dev/null 2>&1; then
   exit 0
 fi
 
-# Derive the throwaway-DB URLs from SU_URL (swap the trailing /db; for the app URL also swap userinfo).
+# Derive the throwaway-DB URLs from SU_URL (swap the trailing /db; swap userinfo for the sim/app roles).
 SU_PREFIX="${SU_URL%/*}"                                   # …@host:port  (drop /db)
-OWNER_TARGET="${SU_PREFIX}/${PROV_DB}"                     # superuser → throwaway DB
-APP_TARGET="$(printf '%s' "$OWNER_TARGET" | sed -E "s#^(postgres(ql)?://)[^/]*@#\1boundless_app:${APP_PW}@#")"
+SU_TARGET="${SU_PREFIX}/${PROV_DB}"                        # superuser → throwaway DB (bootstrap + seed only)
+SIM_TARGET="$(printf '%s' "$SU_TARGET" | sed -E "s#^(postgres(ql)?://)[^/]*@#\1${SIM}:${SIM_PW}@#")"
+OWNER_TARGET="$SIM_TARGET"                                 # the NON-superuser Neon-like owner provision runs AS
+APP_TARGET="$(printf '%s' "$SU_TARGET" | sed -E "s#^(postgres(ql)?://)[^/]*@#\1boundless_app:${APP_PW}@#")"
 
 # 8 tables the migrations create.
 TABLES="groups members onboarding_codes recovery_codes device_tokens sessions admin_webauthn_credentials admin_invitations"
@@ -59,12 +65,42 @@ GA="10000000-0000-0000-0000-000000000000"; MA="1a000000-0000-0000-0000-000000000
 GB="20000000-0000-0000-0000-000000000000"; MB="2b000000-0000-0000-0000-000000000000"
 GC="30000000-0000-0000-0000-000000000000"   # the DML-probe group
 
-# --- 1. fresh throwaway DB (DROP/CREATE in autocommit — can't be in a txn; WITH FORCE = PG13+) ----
+# --- 1. a Neon-like NON-SUPERUSER owner + a fresh throwaway DB it owns ------------------------------
+# `neon_owner_sim` = CREATEROLE NOSUPERUSER BYPASSRLS (neondb_owner's shape). Creating a BYPASSRLS role
+# and transferring ownership both need the superuser bootstrap (SU_URL). Then provision runs AS the sim
+# owner, so a regression that touches the SUPERUSER attribute fails exactly as it does on Neon.
+$PSQL "$SU_URL" -v ON_ERROR_STOP=1 -q <<SQL
+DO \$\$ BEGIN
+  CREATE ROLE ${SIM} LOGIN PASSWORD '${SIM_PW}' CREATEROLE NOSUPERUSER BYPASSRLS;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+END \$\$;
+ALTER ROLE ${SIM} LOGIN PASSWORD '${SIM_PW}' CREATEROLE NOSUPERUSER BYPASSRLS;
+-- boundless_app is a shared cluster-global role; a prior run may have created it under a DIFFERENT role,
+-- and PG16 requires CREATEROLE + ADMIN OPTION on the target role to ALTER it. On Neon the owner CREATEs
+-- boundless_app and gets that admin automatically; here, ensure it exists and grant the sim owner admin —
+-- faithfully modelling the NORMAL flow ("the owner administers its own app role") without masking the
+-- SUPERUSER-attribute regression (which fails for the sim regardless of admin option). NB: the "created
+-- by a DIFFERENT role" case a real operator might hit recovers via the runbook's DROP-and-recreate (a real
+-- Neon operator has no superuser to issue this GRANT) — that recovery path is documented, not asserted here.
+DO \$\$ BEGIN
+  CREATE ROLE boundless_app LOGIN PASSWORD '${APP_PW}';
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+END \$\$;
+GRANT boundless_app TO ${SIM} WITH ADMIN OPTION;
+SQL
+# Fresh DB (DROP/CREATE in autocommit — can't be in a txn; WITH FORCE = PG13+), then hand it + `public`
+# to the sim owner (Neon's neondb_owner owns both) so it can create+own tables and GRANT on them.
 $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "DROP DATABASE IF EXISTS ${PROV_DB} WITH (FORCE)" >/dev/null
 $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "CREATE DATABASE ${PROV_DB}" >/dev/null
+$PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "ALTER DATABASE ${PROV_DB} OWNER TO ${SIM}" >/dev/null
+$PSQL "$SU_TARGET" -v ON_ERROR_STOP=1 -tAc "ALTER SCHEMA public OWNER TO ${SIM}" >/dev/null
 
-# --- 2. provision it exactly as the runbook provisions Neon; capture the printed conn string -------
-CONN="$(BOUNDLESS_APP_DB_PASSWORD="$APP_PW" PSQL="$PSQL" bash scripts/provision-neon.sh "$OWNER_TARGET" | tail -1)"
+# --- 2. provision exactly as the runbook provisions Neon; capture the conn string (stdout) AND assert
+# the OWNER password never reaches stderr (P2 — the testable form of "no secret in logs" for this script). --
+prov_err="$(mktemp)"
+CONN="$(BOUNDLESS_APP_DB_PASSWORD="$APP_PW" PSQL="$PSQL" bash scripts/provision-neon.sh "$OWNER_TARGET" 2>"$prov_err" | tail -1)"
+if grep -qF "$SIM_PW" "$prov_err"; then rm -f "$prov_err"; fail "provision-neon.sh leaked the OWNER password to stderr (P2)"; fi
+rm -f "$prov_err"
 
 # --- 3. connection-string shape (pure string assert; bare — sslmode is the wrangler --sslmode flag) ---
 echo "$CONN" | grep -Eq "^postgres(ql)?://boundless_app:${APP_PW}@.*/${PROV_DB}$" \
@@ -90,13 +126,13 @@ fi
 # --- 6. the W2 guard, as the app role (load-bearing) + its negative (superuser) --------------------
 [ "$(q "$APP_TARGET"   "SELECT current_setting('is_superuser')::bool")" = "f" ] || fail "ensure_least_privilege: app role must be is_superuser=false"
 [ "$(q "$APP_TARGET"   "SELECT COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname=current_user),false)")" = "f" ] || fail "ensure_least_privilege: app role must be rolbypassrls=false"
-[ "$(q "$OWNER_TARGET" "SELECT current_setting('is_superuser')::bool")" = "t" ] || fail "negative check: the superuser owner must report is_superuser=true (guard would reject it)"
+[ "$(q "$SU_TARGET" "SELECT current_setting('is_superuser')::bool")" = "t" ] || fail "negative check: a true superuser must report is_superuser=true (the guard would reject it)"
 
 # --- 7. PUBLIC-EXECUTE: current_group_id() runs as the app role (errors if EXECUTE were revoked) ----
 [ "$(q "$APP_TARGET" "SELECT current_group_id() IS NULL")" = "t" ] || fail "app role must be able to SELECT current_group_id()"
 
-# --- 8. seed two tenants as superuser (bypasses RLS), then prove isolation AS the app role ---------
-$PSQL "$OWNER_TARGET" -v ON_ERROR_STOP=1 -q <<SQL
+# --- 8. seed two tenants as the superuser (bypasses RLS + ownership), then prove isolation AS the app role
+$PSQL "$SU_TARGET" -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO groups (id, name) VALUES ('${GA}','A'), ('${GB}','B');
 INSERT INTO members (id, group_id, roles, phone_lookup_hash) VALUES
   ('${MA}','${GA}','{rider}'::member_role[], '\x01'),
@@ -132,4 +168,15 @@ echo "$dml" | grep -q '^C=1$' || fail "app role must be able to INSERT+SELECT un
 # Fail-closed: a fresh app session with NO GUC set sees zero rows (current_group_id() → NULL → deny).
 [ "$(q "$APP_TARGET" "SELECT count(*) FROM members")" = "0" ] || fail "unset tenant must see zero rows (fail-closed RLS)"
 
-echo "✓ provision-neon meta-test passed (role-locked · 8 tables · single-owner · least-privilege+negative · public-execute · DML · RLS isolates · fail-closed · conn-string · rejects-unsafe-password)."
+# --- 9. NEGATIVE: the verify REFUSES a privileged pre-existing app role (non-vacuity for the verify) ----
+# A superuser flips boundless_app to BYPASSRLS — a privileged drift the idempotent CREATE would PRESERVE
+# (CREATE swallowed, ALTER touches only LOGIN+password). Re-run provision AS the sim owner; it must EXIT
+# NON-ZERO (the verify catches it — a BYPASSRLS app role bypasses every RLS policy). Restore NOBYPASSRLS
+# afterwards regardless (cluster-global role must not be left privileged).
+$PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "ALTER ROLE boundless_app BYPASSRLS" >/dev/null
+neg_rc=0
+BOUNDLESS_APP_DB_PASSWORD="$APP_PW" PSQL="$PSQL" bash scripts/provision-neon.sh "$OWNER_TARGET" >/dev/null 2>&1 || neg_rc=$?
+$PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "ALTER ROLE boundless_app NOBYPASSRLS" >/dev/null
+[ "$neg_rc" -ne 0 ] || fail "provision-neon.sh must REFUSE a pre-existing BYPASSRLS app role (verify must fail-closed)"
+
+echo "✓ provision-neon meta-test passed AS a Neon-like non-superuser owner (role-locked · 8 tables · single-owner · least-privilege+negative · public-execute · DML · RLS isolates · fail-closed · conn-string · rejects-unsafe-password · refuses-privileged-role · no-stderr-leak)."

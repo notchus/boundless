@@ -19,13 +19,19 @@
   re-check at deploy time, plan gating changes). If you'd rather not provision a queue at all, you can
   temporarily comment out the `[[queues.producers]]` block in `server/wrangler.toml` (the below-min
   admin alert is non-critical for a first deploy).
-- **A Neon Postgres database** and its **owner** connection string (Neon's `neondb_owner`). You will
-  *not* deploy with that role — it is a `neon_superuser` member with `BYPASSRLS`, which the Worker's
-  boot guard correctly **rejects** (see [Why the app role](#why-a-dedicated-app-role)). Step 0 mints a
-  dedicated locked-down role.
+- **A Neon Postgres database** and its **owner** connection string — role **`neondb_owner`** (NOT
+  `authenticator`, the limited pooler/Authorize role, which lacks `CREATEROLE` and so cannot create the app
+  role), on the **DIRECT (unpooled) endpoint** — the host **without** `-pooler` (Neon dashboard →
+  *Connection Details* → role `neondb_owner`, **Connection pooling OFF**). The pooler blocks the
+  `SET`/prepared statements the migrations use, and Hyperdrive (step 1) needs the direct host too —
+  `provision-neon.sh` **refuses** a `-pooler` host (set `ALLOW_POOLER=1` only for a non-Neon pooler you've
+  verified). You will *not* deploy with `neondb_owner` — it is a `neon_superuser` member with `BYPASSRLS`,
+  which the Worker's boot guard correctly **rejects** (see [Why the app role](#why-a-dedicated-app-role)).
+  Step 0 mints a dedicated locked-down role. (If step 0 errors, see [Troubleshooting step 0](#troubleshooting-step-0).)
 - **A local Postgres client (`psql`)** and **`openssl`** on your PATH — step 0 shells out to `psql`
-  (against the Neon owner URL) and `openssl rand`, and step 4 uses `openssl rand`. (No `psql`? You can
-  run step 0's SQL via the Neon console instead, or set `PSQL=` to a containerized client.)
+  (against the Neon owner URL) and `openssl rand`, and step 4 uses `openssl rand`. (No `psql` on the host?
+  `provision-neon.sh` is a bash script — not a paste-able SQL block — so point it at a containerized client
+  with `PSQL="docker exec -i <container> psql"`.)
 - `wrangler` is pinned in `server/package.json` (4.98.0); run it via `npx wrangler` from `server/`.
 - Authenticate once: `cd server && npx wrangler login` (or set `CLOUDFLARE_API_TOKEN`).
 
@@ -70,6 +76,7 @@ schema migrations only if the database is empty, grants least privilege, and pri
 connection string** you need for step 1.
 
 ```bash
+# HOST = the DIRECT (unpooled) Neon host — no `-pooler` (the script refuses a pooled host); role neondb_owner.
 bash scripts/provision-neon.sh "postgresql://neondb_owner:PW@HOST/neondb?sslmode=require"
 ```
 
@@ -82,7 +89,9 @@ postgresql://boundless_app:<generated-password>@HOST/neondb
 Copy it. (To capture just that line: `bash scripts/provision-neon.sh "$NEON_OWNER_URL" | tail -1`. To
 pin the password instead of generating one, set a URL/SQL-safe `BOUNDLESS_APP_DB_PASSWORD` first —
 `[A-Za-z0-9._~-]` only.) The string is intentionally **bare** (no `?sslmode=…`) — TLS is set by the
-`--sslmode require` flag in the next step.
+`--sslmode require` flag in the next step. **Re-running** with no `BOUNDLESS_APP_DB_PASSWORD` set generates
+a *new* password and resets the role to it — so if you have already created the Hyperdrive config (step 1),
+either pin `BOUNDLESS_APP_DB_PASSWORD` to the original value or update the config (`wrangler hyperdrive update`).
 
 ### 1 — Create the Hyperdrive config
 
@@ -94,9 +103,11 @@ npx wrangler hyperdrive create boundless-pg \
 ```
 
 `--sslmode require` is how Hyperdrive does TLS to Neon (the documented `--connection-string` carries no
-query — don't also put `?sslmode=` in it). It validates connectivity from Cloudflare's network at
-create time (Neon allows this by default) and prints an `id`. Paste it into `server/wrangler.toml` →
-`[[hyperdrive]] id` (replacing `REPLACE_AT_DEPLOY_hyperdrive_id`).
+query — don't also put `?sslmode=` in it). The `HOST` in the string must be the **direct** endpoint (no
+`-pooler`) — Hyperdrive does its own pooling and the Worker's query path requires the direct host (ADR-0024);
+step 0's printed string already is direct if you provisioned against the direct owner URL. It validates
+connectivity from Cloudflare's network at create time (Neon allows this by default) and prints an `id`.
+Paste it into `server/wrangler.toml` → `[[hyperdrive]] id` (replacing `REPLACE_AT_DEPLOY_hyperdrive_id`).
 
 ### 2 — Create the KV namespace
 
@@ -154,6 +165,33 @@ no response leaks a connection string.
 > **What's still empty:** there are no Groups or members until issuance (spec 008). So a correct first
 > deploy answers every sign-in with `AUTH_PHONE_NOT_ON_FILE` — exactly what the smoke checks. That is
 > the Worker + transport + RLS working, not a bug.
+
+---
+
+## Troubleshooting step 0
+
+`provision-neon.sh` is idempotent and non-destructive — fix the cause and re-run.
+
+- **`permission denied to create role` / `Only roles with the CREATEROLE attribute may create roles`** —
+  you connected as a role without `CREATEROLE` (e.g. Neon's `authenticator`). Use the **`neondb_owner`**
+  connection string. (The script's pre-flight now catches this with a clearer message.)
+- **`permission denied to alter role` / `Only roles with the SUPERUSER attribute may change the SUPERUSER
+  attribute`** — an old provisioner bug (it re-asserted `NOSUPERUSER`, which only a *true* superuser may do;
+  Neon's `neondb_owner` is a `neon_superuser` member but not a real superuser). **Fixed** — `git pull` and
+  re-run. The role is now created with the safe defaults and *verified* unprivileged instead.
+- **`permission denied to alter role` / `the ADMIN option on role "boundless_app"`** — `boundless_app`
+  already exists but was created by a *different* role, so the current owner can't alter it (PostgreSQL 16+
+  requires `CREATEROLE` **and** `ADMIN OPTION` on the target role). On Neon — which has **no superuser
+  login**, and where `neondb_owner` cannot self-grant `ADMIN OPTION` on a role it didn't create — the
+  remedy is to **re-create** the role: as `neondb_owner`, `DROP ROLE boundless_app;` then re-run
+  `provision-neon.sh` (the owner re-creates it and automatically holds admin). If `DROP ROLE` reports the
+  role "cannot be dropped because some objects depend on it / has privileges", first run `DROP OWNED BY
+  boundless_app; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM boundless_app;` then drop. (On a *self-hosted*
+  cluster with a real superuser you can instead `GRANT boundless_app TO neondb_owner WITH ADMIN OPTION;`.) In
+  the normal flow this never happens — the owner that *creates* `boundless_app` holds admin on it automatically.
+- **`✗ this is a POOLED endpoint`** — you passed the `-pooler` host; the script refuses it (the migrations
+  need the direct endpoint, and step 1's Hyperdrive origin must be the direct host too). Re-run with the
+  **direct** host (no `-pooler`). `ALLOW_POOLER=1` overrides only for a non-Neon pooler you've verified.
 
 ---
 
