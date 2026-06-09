@@ -639,10 +639,15 @@
       `REPLACE_AT_DEPLOY_*` placeholders before the repo is made public** — they are account identifiers,
       not secrets, and committing them on the current private single-instance repo keeps the tree clean +
       redeploys frictionless, but an open-source repo should not carry one instance's ids (WHEN: before
-      open-sourcing). (2) **`preview_urls = false`** in `server/wrangler.toml` (privacy: `workers.dev` +
-      preview URLs default to ON, so every deployed version gets its own public URL; keep `workers_dev`
-      until a custom domain exists, but a privacy-by-design product should disable per-version preview
-      URLs — WHEN: a deploy-hardening pass). (3) the wrangler first-run telemetry notice printed despite
+      open-sourcing). (2) **`preview_urls = false`** in `server/wrangler.toml` — **DONE-in-config 2026-06-10
+      (commit pending), takes effect at the next `wrangler deploy`.** Privacy: every deployed *version*
+      otherwise gets its own public `<preview>-boundless-worker.<sub>.workers.dev` URL. Verified via
+      docs-researcher/Cloudflare-docs: wrangler **≥ 4.44.0** defaults `preview_urls` to *match* the
+      `workers_dev` setting (which is on → preview URLs on), so it MUST be set explicitly to `false`; the
+      stable `workers.dev` route stays on (`workers_dev` unset) for the single canonical URL. `wrangler
+      deploy --dry-run` accepts the key (account-free). **Remaining:** the operator's next `wrangler
+      deploy` actually applies it (human gate) — until then the live Worker still serves per-version
+      preview URLs. (3) the wrangler first-run telemetry notice printed despite
       `send_metrics = false` — benign (a one-time CLI notice; the setting still disables telemetry).
     - **Two review backstops tracked here** (3-lens review of the deploy-prep slice; both latent, no live
       break): (i) **`provision-neon.sh`'s `GRANT … ON ALL TABLES` is point-in-time** — when migration 0009+

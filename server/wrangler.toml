@@ -16,6 +16,15 @@ compatibility_date = "2026-06-05"
 # *CLI* setting only — it does not change anything about the deployed Worker's own behavior.
 send_metrics = false
 
+# Privacy: do NOT expose a per-deployed-version preview URL
+# (`<preview>-boundless-worker.<subdomain>.workers.dev`). We keep the stable `workers.dev` route on
+# (`workers_dev` unset → defaults enabled) for the single canonical URL, but every *version* getting
+# its own public URL is needless attack/exposure surface for a privacy-by-design product. This MUST
+# be explicit: wrangler ≥ 4.44.0 otherwise defaults `preview_urls` to match the `workers.dev` setting
+# (= enabled here). Takes effect at the next `wrangler deploy`.
+# (developers.cloudflare.com/changelog/2025-10-23-preview-url-default-behavior/)
+preview_urls = false
+
 # Build command for BOTH `wrangler deploy` and `worker-build`. The real `PgAuthStore` over Hyperdrive
 # is the only store now, so this is featureless — the old `scaffold`-feature `compile_error!` deploy
 # guard is RETIRED (no hardcoded key / seeded member exists to protect against). Fail-closed moved to
