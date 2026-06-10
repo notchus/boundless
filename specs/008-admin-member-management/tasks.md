@@ -117,6 +117,9 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** T02. **Parallel:** with the early part of T05.
 
 ### T05 — `core/server` `MemberService` + ports + projections + audit decision
+- **Status:** ✅ DONE 2026-06-10 — commit `7cb2e83` (reviewer + security-auditor + platform-parity:
+  0 crit/high; security + parity "ship", reviewer "fix-then-ship" — all findings applied). 4-lens
+  design panel + 3-lens review panel (each adversarially verified).
 - **What:** The pure issuance/edit/regenerate orchestration behind new `MemberStore`/`AuditStore`/
   `DelegatedKeyStore` ports; the `MemberSummary`/two-type-`MemberDetail` projections; the audit decision.
 - **Touches:** `core/server/src/member.rs` (NEW), `core/server/src/ports.rs`,
@@ -128,15 +131,30 @@ T09 is in flight, but its e2e needs T09's Worker.
   `AuditField` enum / `&'static str` (names, never values). Reject `Role::Admin` at issuance (I11).
   Optimistic-concurrency *decision* on `updated_at`. `SecretSource::fresh_onboarding_code`.
 - **Closes:** AC1, AC4, AC8, AC11 (decision), AC13; partial AC5/AC6 (mint decision), AC10 (admin-role
-  reject), AC12 (fail-closed path uses T04).
-- **Tests:** `member_service_issues_rider_and_driver`, `member_service_accepts_multi_role_set`,
-  `member_service_edit_reencrypts_and_recomputes_phone_hash`, `member_service_stale_edit_rejected`,
-  `member_service_rejects_admin_role_on_issuance`, `member_service_mints_one_live_onboarding_code`,
-  `member_summary_holds_no_tainted_type`, `member_list_emits_no_audit_event`,
-  `audit_entry_carries_field_names_ts_admin_member_request`; props
-  `prop_member_summary_never_carries_pii`, `prop_every_pii_detail_read_emits_audit`,
-  `prop_phone_change_recomputes_matching_hash`.
-- **After:** regenerate `api/.bindings.lock`. **Blockers:** T02 (T04 for the fail-closed leg).
+  reject), AC12 (fail-closed path reuses T04's `GroupKeyMissing` gate).
+- **Decisions (4-lens panel; see `DEFERRED.md` → T05 register):** (A) Admin is **unrepresentable** at
+  issuance — `IssuableRole {Rider,Driver}` + `issuable_roles(Vec<Role>)` → `AdminRoleForbidden` →
+  **`ADMIN_MEMBER_ROLE_FORBIDDEN`** (6th issuance code). (B) audit WRITE folded into
+  `read_member_detail_audited` (one txn, I5/§7); `AuditStore` read-only. (C) `DelegatedKeyStore`
+  returns **wrapped bytes**; the service holds the `Kek` + reuses T04 `load_group_key`. (D) phone
+  normalized **in-core**. (E) duplicate-phone is a first-class `IssueMemberOutcome::DuplicatePhone`
+  (name-only, audited). **Module placement** (like T04): the 3 ports live in `member.rs`, not `ports.rs`.
+- **Tests (all green):** the 12 named below + **panel-added**: `member_service_stores_phone_hash_and_ciphertext`
+  (AC4), `member_service_rejects_invalid_phone_and_address`, `member_service_rejects_empty_roles` +
+  `member_service_edit_to_empty_roles_rejected` (AC13 — the reviewer-found empty-roles gap → new
+  **`ADMIN_MEMBER_ROLES_REQUIRED`** code, 7th), `member_service_duplicate_phone_links_existing_and_audits`,
+  `member_service_regenerate_supersedes_decision`, `member_service_edit_role_only_needs_no_group_key`,
+  `member_service_issuance_fails_closed_without_group_key`, the audit/casing/two-type-split asserts +
+  `member_detail_view_wire_keys_are_pinned`. Named: `member_service_issues_rider_and_driver`,
+  `member_service_accepts_multi_role_set`, `member_service_edit_reencrypts_and_recomputes_phone_hash`,
+  `member_service_stale_edit_rejected`, `member_service_rejects_admin_role_on_issuance` (exercises
+  `issuable_roles`), `member_service_mints_one_live_onboarding_code`, `member_summary_holds_no_tainted_type`
+  (compile assert), `member_list_emits_no_audit_event`,
+  `audit_entry_carries_field_names_ts_admin_member_request`; props `prop_member_summary_never_carries_pii`,
+  `prop_every_pii_detail_read_emits_audit`, `prop_phone_change_recomputes_matching_hash`.
+- **After:** regenerated `api/.bindings.lock` (80 inputs). **Blockers:** T02 + T04 (both done).
+- **Two new codes** beyond T01's five (both required by P12 for their emitting types, both ship this PR):
+  `ADMIN_MEMBER_ROLE_FORBIDDEN` (AC10 admin-role reject) + `ADMIN_MEMBER_ROLES_REQUIRED` (AC13 ≥1-role).
 
 ### T06 — `#[require_audit]` compile-time gate (I5)
 - **What:** Make "a function returning a tainted-carrying type cannot be wired without producing an
@@ -235,19 +253,19 @@ T09 is in flight, but its e2e needs T09's Worker.
 
 | AC | Covered by | Status |
 |---|---|---|
-| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | pending |
+| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓ (core decision); T07 DB + T09 shell pending |
 | AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓ (crypto + column); T07 DB pending |
-| AC3 name encrypted at rest | T02, T03, T05 | T02·T03 ✓ (crypto + column); T05 pending |
-| AC4 phone two-fold (I3) | T05, T07 | pending |
-| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | pending |
-| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | pending |
-| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | pending |
-| AC8 `MemberSummary` no tainted type | T05 (compile assert) | pending |
-| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05/T07/T08 pending |
-| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | pending |
-| AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | pending |
-| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓ (crypto + column + bootstrap/fail-closed decision); T07 DB pending |
-| AC13 roles[] at issuance, swap out of scope | T05, T07 | pending |
+| AC3 name encrypted at rest | T02, T03, T05 | T02·T03 ✓ (crypto + column); T05 ✓ (encrypt-on-issue + plain-String projection); T07 DB pending |
+| AC4 phone two-fold (I3) | T05, T07 | T05 ✓ (core: lookup hash + ciphertext, in-core normalize); T07 DB pending |
+| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓ (mint decision + TTL); T07 DB ("one live" index) + T09 shell pending |
+| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓ (regenerate decision); T07 DB (atomic) + T09 shell pending |
+| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓ (audit-emit decision); T06 compile + T07 DB + T08 coverage + T09 shell pending |
+| AC8 `MemberSummary` no tainted type | T05 (compile assert) | T05 ✓ (compile assert + no-PII prop) |
+| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05 ✓ (read decision, names-only); T07/T08 pending |
+| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); T08 no-path + T10 shell UI pending |
+| AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓ (re-encrypt + recompute + concurrency decision); T07 DB pending |
+| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓ (crypto + column + bootstrap); T05 ✓ (issuance reuses the fail-closed gate); T07 DB pending |
+| AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓ (roles[] at issuance + ≥1-role enforced); T07 DB pending |
 | AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | pending |
 | AC15 i18n + pseudo-locale | T10, T01-catalog | pending |
 | AC16 cross-tenant deployed-edge proof (F5) | T11 [shell], T07 (host precursor) | pending |
