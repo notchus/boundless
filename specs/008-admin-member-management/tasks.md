@@ -182,6 +182,14 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** T05 (the ports/`AuditEntry`/tainted-carrying types exist) — done. **Parallel:** with T07/T08.
 
 ### T07 — `PgMemberStore` / `PgAuditStore` / `PgDelegatedKeyStore` (real PG18)
+- **Status:** ✅ DONE 2026-06-11 — commit `fd3a4e1` (reviewer + security-auditor + platform-parity:
+  **0 confirmed findings**; one doc-citation nit fixed in-slice). One struct `PgMemberStore` implements
+  all three ports (`server/store/src/members.rs`). 16 new tests green on real PG18 + the harness
+  migration-count fix (8→11) that unblocked the previously-red existing store suites. All via `begin()`
+  (RLS), unnamed `query_typed*` (ADR-0024), no raw `Client`; clippy/fmt/wasm32 clean. Plan §10 named
+  all 12 tests; **added** `pg_member_store_onboarding_status_derivation`,
+  `…_edit_recomputes_phone_lookup`, and `…_concurrent_regenerate_keeps_one_live` (the advisory-lock
+  concurrency proof). See `DEFERRED.md` → "Server / store — `PgMemberStore` (spec 008 T07)".
 - **What:** The Postgres adapters for the T05 ports. All via `begin()` RLS scoping, `query_typed*`
   (ADR-0024), **no raw `Client` accessor**.
 - **Touches:** `server/store/src/` (new store modules), `server/store/tests/` (new `members.rs`,
@@ -268,22 +276,22 @@ T09 is in flight, but its e2e needs T09's Worker.
 
 | AC | Covered by | Status |
 |---|---|---|
-| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓ (core decision); T07 DB + T09 shell pending |
-| AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓ (crypto + column); T07 DB pending |
-| AC3 name encrypted at rest | T02, T03, T05 | T02·T03 ✓ (crypto + column); T05 ✓ (encrypt-on-issue + plain-String projection); T07 DB pending |
-| AC4 phone two-fold (I3) | T05, T07 | T05 ✓ (core: lookup hash + ciphertext, in-core normalize); T07 DB pending |
-| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓ (mint decision + TTL); T07 DB ("one live" index) + T09 shell pending |
-| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓ (regenerate decision); T07 DB (atomic) + T09 shell pending |
-| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓ (audit-emit decision); T06 ✓ (compile gate: sealed `AuditedResponse` + un-forgeable `PiiDisclosure`); T07 DB + T08 coverage + T09 shell emit pending |
+| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…persists_member_with_roles_and_created_by`, RLS-scoped insert); T09 shell pending |
+| AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓; **T07 ✓ DB** (`…address_encrypted_round_trip`: ciphertext≠plaintext, decrypt via Group key) |
+| AC3 name encrypted at rest | T02, T03, T05, T07 | T02·T03 ✓; T05 ✓; **T07 ✓ DB** (name ciphertext round-trips through `name_encrypted bytea`) |
+| AC4 phone two-fold (I3) | T05, T07 | T05 ✓; **T07 ✓ DB** (`…phone_two_fold`: lookup hash + ciphertext; `PgAuthStore::find_member_by_phone` then matches — issuance feeds sign-in) |
+| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…issue_is_atomic`: one member + one live code, one txn); T09 shell pending |
+| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); T09 shell pending |
+| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); T08 coverage + T09 shell emit pending |
 | AC8 `MemberSummary` no tainted type | T05 (compile assert) | T05 ✓ (compile assert + no-PII prop) |
-| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05 ✓ (read decision, names-only); T07/T08 pending |
+| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); T08 pending |
 | AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); T08 no-path + T10 shell UI pending |
-| AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓ (re-encrypt + recompute + concurrency decision); T07 DB pending |
-| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓ (crypto + column + bootstrap); T05 ✓ (issuance reuses the fail-closed gate); T07 DB pending |
-| AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓ (roles[] at issuance + ≥1-role enforced); T07 DB pending |
+| AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓; **T07 ✓ DB** (`…optimistic_concurrency_stale_reject` whole-second token + `…edit_recomputes_phone_lookup`) |
+| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓; T05 ✓; **T07 ✓ DB** (`pg_delegated_key_store_persists_only_wrapped`: wrapped-only, `None`→fail-closed) |
+| AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓; **T07 ✓ DB** (`…roles_array_round_trip`: multi-role set through `member_role[]`) |
 | AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | pending |
 | AC15 i18n + pseudo-locale | T10, T01-catalog | pending |
-| AC16 cross-tenant deployed-edge proof (F5) | T11 [shell], T07 (host precursor) | pending |
+| AC16 cross-tenant deployed-edge proof (F5) | T11 [shell], T07 (host precursor) | **T07 ✓ host precursor** (`rls_isolates_member_reads_by_tenant` + `prop_rls_isolates_random_two_group_configs`); T11 live deployed-edge proof pending |
 
 Every task maps to ≥1 AC; no task introduces behavior absent from `spec.md`. Out-of-scope items (geocoding,
 deletion/I12, device-token encryption, role-swap workflow, remote-only, O5/O7, matching, bulk import)

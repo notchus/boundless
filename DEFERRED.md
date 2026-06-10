@@ -2008,6 +2008,50 @@
       hardening if a per-handler attribute is ever wanted.
   - **WHEN:** only if a literal attribute-macro form is later desired (not required).
 
+## Server / store — `PgMemberStore` (spec 008 T07 — out-of-scope register)
+
+> T07 shipped **`PgMemberStore`** (`server/store/src/members.rs`) — the Postgres adapter implementing
+> all three T05 member ports (`MemberStore` + `AuditStore` + `DelegatedKeyStore`) on one struct,
+> against real PG18 (migrations 0009–0011). 16 new integration tests (13 member — incl. the
+> `prop_rls_isolates_random_two_group_configs` proptest + a concurrent-regenerate advisory-lock proof —
+> 2 audit, 1 delegated-key) + the harness migration-count fix (8→11) that unblocked the previously-red
+> existing store suites (T03 added 0009–0011 but `server/store/tests/common/mod.rs::setup()` still
+> asserted 8). All via `begin()` (RLS), unnamed `query_typed*` (ADR-0024), no raw `Client`; the store
+> handles only `bytea`/keyed-hashes/ids — no PII reaches it (P2). `proptest` added as a `server/store`
+> dev-dep (its `proptest-regressions/` is committed manually — outside `core/**`, so the
+> auto-discovery gate doesn't cover it). A 3-lens adversarial review (reviewer + security-auditor +
+> platform-parity) returned **0 confirmed findings** (one doc-citation nit, fixed in-slice). Everything
+> below was deliberately left out; each carries a WHEN.
+
+- [ ] **The deployable `/api/admin/members/*` Worker endpoints (T09).** T07 is the store layer only;
+      composing `MemberService` over `PgMemberStore`, loading the KEK from Secrets Store, caching the
+      unwrapped `GroupKey` in the `GroupHub` DO, injecting the live CSPRNG, and the miniflare+PG worker
+      tests (`worker_issue_member_round_trip`, …) are **T09**. The `MemberService`-over-`PgMemberStore`
+      end-to-end (issue → encrypt → store → read_detail → decrypt over real PG) is effectively proven
+      there: T05 proves the orchestration in-memory, T07 proves the store, T09 wires them. The
+      `build_service` analog that constructs `MemberService<PgMemberStore, RngSecretSource, …>` with the
+      KEK/HMAC `MemberConfig` mirrors `server/src/runtime/pg.rs::PgService`.
+  - **WHEN:** **T09**.
+
+- [ ] **`onboarding_status` TTL nuance.** The derived `STATUS_CASE` (`members.rs`) is **TTL-agnostic**
+      (consistent with the `onboarding_consume_ignores_ttl` discipline): a live-but-past-TTL Onboarding
+      Code still reads `IssuedNotOnboarded`, never `CodeExpiredOrLost`. The precise "expired (past TTL)
+      vs lost (superseded/consumed-without-bind)" distinction needs server time, which the
+      `list_members` / `read_member_detail_audited` ports don't pass today. Refine when the status UI
+      (T10) or a status spec needs it (the derivation would take a `now` then).
+  - **WHEN:** **T10** (status UI) / a status spec.
+
+- [ ] **`edit_member` into a duplicate phone is an opaque `StoreError`, not a calm outcome (T05
+      carry-forward).** T07's `edit_member` UPDATE trusts the store: moving a member's phone onto a
+      number already enrolled in the Group hits the `members_group_phone_lookup_key` unique index → a
+      `tokio_postgres` unique-violation → `StoreError::Db` (a 500-class failure), NOT the calm
+      `ADMIN_MEMBER_DUPLICATE_PHONE`. (The in-memory `MemMemberStore` instead silently overwrites its
+      phone index — the documented Pg/in-memory divergence from the T05 register.) T07 deliberately does
+      NOT special-case it (the store is the wrong layer to mint a user-facing code). The clean mapping
+      (catch the unique violation → an `EditMemberOutcome` conflict arm, audited like issuance, or a
+      documented calm reject) + a `pg_member_store_edit_into_duplicate_phone` regression test is T09's.
+  - **WHEN:** **T09** (the user-facing/audited edit-conflict mapping).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a
