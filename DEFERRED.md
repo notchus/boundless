@@ -1856,6 +1856,21 @@
   - **WHEN:** (a) **T05/T09** (the decrypt boundary) — decision recorded now; (b) **T09** (deployed
     field-encrypting endpoint); (c) **T05/T08** (the projection + contract test).
 
+- [ ] **Carry-forward from the T04 review (reviewer L1): preserve the key-load failure *reason* on
+      the operator path.** `core/server::load_group_key` collapses both failure modes — `wrapped ==
+      None` (Group never bootstrapped) and an `unwrap_group_key` `Err` (wrong KEK / corrupt or
+      tampered blob) — into one opaque `GroupKeyMissing` → `ADMIN_GROUP_KEY_MISSING`. That is the
+      correct **wire/client** posture (revealing which is a needless signal; it denies an attacker an
+      oracle at zero cost — security-auditor confirmed). But the two have **different runbook
+      remedies** (`docs/runbooks/key-management.md`: "run the bootstrap" vs "fix the KEK binding"), so
+      the deployable Worker that loads the KEK and calls `load_group_key` should log the underlying
+      `SecretboxError` variant (`Malformed`/`Decrypt` — PII/key-free by construction, `secretbox.rs`)
+      via the scrubbed `boundless::logging::emit()` path, so an operator can distinguish "never
+      provisioned" from "wrong KEK / corrupt blob". The collapse must stay on the response; only the
+      *log* gains the variant.
+  - **WHEN:** **T09** (the Worker KEK-load + GroupKey-cache path) — rides the same `emit()` sink the
+    spec-008 issuance I10 fixture needs.
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

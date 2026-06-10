@@ -16,8 +16,8 @@ use boundless_auth::{
 };
 use boundless_crypto::{
     onboarding_code_hash, phone_lookup_hash, recovery_code_hash, refresh_token_hash,
-    refresh_token_matches, AdminInvitationTokenHash, CodeHash, HmacKey, Nonce, PhoneLookupHash,
-    RefreshTokenHash, HASH_LEN, NONCE_LEN,
+    refresh_token_matches, AdminInvitationTokenHash, CodeHash, GroupKey, HmacKey, Nonce,
+    PhoneLookupHash, RefreshTokenHash, HASH_LEN, KEY_LEN, NONCE_LEN,
 };
 use boundless_domain::{
     AccessToken, AdminInvitationToken, AppVersion, ClientVersion, DeviceToken, MemberId,
@@ -174,6 +174,15 @@ impl SecretSource for SeqSecrets {
         let mut bytes = [0u8; NONCE_LEN];
         bytes[..8].copy_from_slice(&self.n.to_le_bytes());
         Nonce::from_bytes(bytes)
+    }
+    fn fresh_group_key(&mut self) -> GroupKey {
+        // Deterministic but distinct per call (the counter in the low bytes); production draws a
+        // CSPRNG key (RngSecretSource). The test double never wraps a real Group, so this is purely
+        // a distinct-key stand-in.
+        self.n += 1;
+        let mut bytes = [0u8; KEY_LEN];
+        bytes[..8].copy_from_slice(&self.n.to_le_bytes());
+        GroupKey::from_bytes(bytes)
     }
 }
 

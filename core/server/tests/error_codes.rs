@@ -5,7 +5,7 @@ mod common;
 
 use boundless_auth::{OnboardingCodeVerdict, RecoveryCodeVerdict, RefreshVerdict};
 use boundless_domain::AppVersion;
-use boundless_server_core::AdminAlert;
+use boundless_server_core::{AdminAlert, GroupKeyMissing};
 use common::member_id;
 use std::path::Path;
 
@@ -97,4 +97,18 @@ fn admin_member_issuance_codes_registered() {
             "spec-008 issuance code {code} is not registered as a code cell in docs/error-codes.md (P12)"
         );
     }
+}
+
+/// The first spec-008 *emitting type* (T04's Group-bootstrap fail-closed gate) must surface a
+/// **registered** code: ties `GroupKeyMissing::error_code()` to the literal and to the registry, so a
+/// future typo in either the constant or the doc fails CI (the stronger form of the forward-looking
+/// `admin_member_issuance_codes_registered` check, now that the type exists).
+#[test]
+fn group_key_missing_error_code_registered() {
+    let code = GroupKeyMissing.error_code();
+    assert_eq!(code, "ADMIN_GROUP_KEY_MISSING");
+    assert!(
+        registry().contains(&format!("`{code}`")),
+        "GroupKeyMissing's code {code} is not registered as a code cell in docs/error-codes.md (P12)"
+    );
 }

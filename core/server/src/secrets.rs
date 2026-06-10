@@ -14,9 +14,10 @@
 //! never parsed, so base64-vs-hex is immaterial). Verification is a constant-time keyed-HMAC store
 //! lookup (`boundless_crypto::access_token_hash` / `refresh_token_hash`), not parsing.
 
-use boundless_crypto::{Nonce, NONCE_LEN};
+use boundless_crypto::{GroupKey, Nonce, KEY_LEN, NONCE_LEN};
 use boundless_domain::{AccessToken, AdminInvitationToken, RecoveryCode, RefreshToken};
 use rand_core::{CryptoRng, RngCore};
+use zeroize::Zeroizing;
 
 use crate::ports::SecretSource;
 
@@ -80,6 +81,20 @@ impl<R: RngCore + CryptoRng> SecretSource for RngSecretSource<R> {
         let mut bytes = [0u8; NONCE_LEN];
         self.rng.fill_bytes(&mut bytes);
         Nonce::from_bytes(bytes)
+    }
+
+    fn fresh_group_key(&mut self) -> GroupKey {
+        // 32 key bytes straight from the injected CSPRNG (NOT hex — the key is raw bytes, KEK-wrapped
+        // at rest). `Zeroizing` wipes the *local* source buffer on drop; the `*bytes` move into
+        // `GroupKey::from_bytes` is a by-`Copy` of `[u8; KEY_LEN]`, so a short-lived argument
+        // temporary still holds the key until the frame unwinds (the unavoidable cost of moving an
+        // array by value in safe Rust — same residual as `unwrap_group_key`). The load-bearing wipe
+        // is `GroupKey`'s own `Drop` (R2, ADR-0025), which covers the bytes that live for the key's
+        // lifetime; this `Zeroizing` is a best-effort wipe of the source draw. Unlike `fresh_nonce`,
+        // the nonce is not secret — a key is, hence the wipe here at all.
+        let mut bytes = Zeroizing::new([0u8; KEY_LEN]);
+        self.rng.fill_bytes(&mut *bytes);
+        GroupKey::from_bytes(*bytes)
     }
 }
 

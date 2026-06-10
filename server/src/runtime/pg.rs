@@ -31,7 +31,7 @@
 use std::str::FromStr;
 
 use boundless_auth::{Clock, DeviceBinding, Session, UnixSeconds};
-use boundless_crypto::{CodeHash, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash};
+use boundless_crypto::{CodeHash, GroupKey, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash};
 use boundless_domain::{
     AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken,
     SessionFamilyId,
@@ -311,6 +311,12 @@ impl SecretSource for PlaceholderSecrets {
     }
     fn fresh_nonce(&mut self) -> Nonce {
         unreachable!("sign-in encrypts no fields; RngSecretSource lands with the issuance slice")
+    }
+    fn fresh_group_key(&mut self) -> GroupKey {
+        // Group bootstrap is operator-run provisioning (plan §13.4), never a Worker request path —
+        // and even the issuance slice injects `RngSecretSource` over a CSPRNG. So this never fires;
+        // it panics rather than ever minting a fixed/fake key.
+        unreachable!("Group bootstrap is operator-run provisioning, never a Worker path (spec 008)")
     }
 }
 

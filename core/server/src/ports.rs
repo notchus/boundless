@@ -21,7 +21,7 @@ use boundless_auth::{
     DeviceBinding, RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds,
 };
 use boundless_crypto::{
-    AdminInvitationTokenHash, CodeHash, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash,
+    AdminInvitationTokenHash, CodeHash, GroupKey, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash,
 };
 use boundless_domain::{
     AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken, Role,
@@ -288,6 +288,12 @@ pub trait SecretSource {
     /// so it is a CSPRNG draw, never counter/time-derived (a pooled multi-isolate Worker fleet has no
     /// shared counter). Used by `MemberService` to encrypt address/name at rest (spec 008 T05/T09).
     fn fresh_nonce(&mut self) -> Nonce;
+    /// A fresh per-Group secretbox **key** (the DEK), 32 bytes from the injected CSPRNG (I1 /
+    /// ADR-0025; spec 008 T04). Minted **once** per Group at bootstrap (`generate_group_key`), then
+    /// KEK-wrapped for at-rest storage (`delegated_keys.wrapped_key`); the plaintext key lives only
+    /// in `GroupHub` DO memory, never persisted. Like every secret here it must be a CSPRNG draw —
+    /// never derived/constant — so two independently-bootstrapped Groups never share a key.
+    fn fresh_group_key(&mut self) -> GroupKey;
 }
 
 /// The persistence boundary for **developer-driven Admin provisioning** (I11 / ADR-0015; AC16) —

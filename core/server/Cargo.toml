@@ -20,6 +20,10 @@ serde = { workspace = true, features = ["derive"] }
 # core; stays wasm32-safe) — same discipline as the injected Clock. ADR-0021. The Worker supplies a
 # getrandom-backed CSPRNG; tests supply a seeded one.
 rand_core.workspace = true
+# zeroize — wipe the transient plaintext per-Group key buffer in `RngSecretSource::fresh_group_key`
+# (R2, ADR-0025). `default-features = false` (pinned in core/Cargo.toml) → wasm32-safe, no getrandom,
+# and no NEW crate version (zeroize 1.8.2 already resolves transitively; this adds only the edge).
+zeroize.workspace = true
 
 [dev-dependencies]
 # rand_chacha — seeded `ChaCha20Rng` (CryptoRng) so the `RngSecretSource` tests are reproducible.

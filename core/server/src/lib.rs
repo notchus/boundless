@@ -52,6 +52,7 @@
 mod admin;
 mod alerts;
 mod bind;
+mod bootstrap;
 mod hub;
 mod phone;
 mod ports;
@@ -67,6 +68,9 @@ pub use admin::{
 };
 pub use alerts::{AdminAlert, AlertKind};
 pub use bind::{BindOutcome, BindRequest, BindResponse};
+pub use bootstrap::{
+    generate_group_key, load_group_key, GroupKeyBootstrap, GroupKeyMissing, INITIAL_KEK_VERSION,
+};
 pub use hub::{GroupHubState, CODE_ATTEMPT_WINDOW_SECS};
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{
