@@ -129,10 +129,12 @@ dependencies = [
  "dryoc",
  "getrandom 0.4.2",
  "hmac",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",
  "static_assertions",
+ "zeroize",
 ]
 
 [[package]]

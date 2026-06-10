@@ -31,7 +31,7 @@
 use std::str::FromStr;
 
 use boundless_auth::{Clock, DeviceBinding, Session, UnixSeconds};
-use boundless_crypto::{CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash};
+use boundless_crypto::{CodeHash, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash};
 use boundless_domain::{
     AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken,
     SessionFamilyId,
@@ -308,6 +308,9 @@ impl SecretSource for PlaceholderSecrets {
     }
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
         unreachable!("sign-in mints no secrets; RngSecretSource lands with the bind-device slice")
+    }
+    fn fresh_nonce(&mut self) -> Nonce {
+        unreachable!("sign-in encrypts no fields; RngSecretSource lands with the issuance slice")
     }
 }
 

@@ -71,6 +71,18 @@ boundless-auth = { path = "auth" }
 # manifest serialization that the Ed25519 signature covers (normal dep of core/crypto, T03).
 serde_json = "1"
 
+# Zeroize the per-Group field-encryption keys on drop (spec 008 T02, ADR-0025 R2): GroupKey/Kek
+# wipe their 32 bytes in `impl Drop`. Unlike the process-lifetime HmacKey, the Group key is
+# unwrapped per-DO-init, so the threat is a DO memory snapshot — zeroize is load-bearing here.
+# We do NOT enable the `derive` feature ourselves — the hand-rolled `impl Drop { self.0.zeroize() }`
+# needs only the bare crate, and `[u8; 32]: Zeroize` is in core. (`zeroize_derive` is nonetheless
+# already in Cargo.lock because other deps enable zeroize's derive feature; feature unification means
+# `default-features = false` only trims OUR edge, it does not remove that crate from the graph.) The
+# load-bearing fact: this adds NO new crate version — both `zeroize` 1.8.2 and `zeroize_derive`
+# predate T02 (resolved transitively, e.g. via block-buffer); we add only the dependency edge.
+# Pure-Rust, wasm32-safe, no getrandom. MIT OR Apache-2.0. Pinned spec 008 T02; lock = ground truth.
+zeroize = { version = "1", default-features = false }
+
 # Test-only. insta — serialization + redacted-summary snapshots (`json` feature required
 # for assert_json_snapshot!). static_assertions — compile-time proof that the tainted /
 # key / hash types expose no Debug/Display. base64 — decode the manifest fixtures' detached

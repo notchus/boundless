@@ -15,16 +15,19 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boundless_crypto::{
     access_token_hash, access_token_matches, admin_invitation_token_hash,
-    admin_invitation_token_matches, canonical_manifest_bytes, decide_manifest,
-    onboarding_code_hash, onboarding_code_matches, phone_lookup_hash, phone_lookup_matches,
-    recovery_code_hash, recovery_code_matches, refresh_token_hash, refresh_token_matches,
-    AccessTokenHash, AdminInvitationTokenHash, CodeHash, FetchedManifest, HmacKey, ManifestCache,
-    ManifestDecision, ManifestErrorCode, PhoneLookupHash, RefreshTokenHash, Signature,
-    VerifyingKey,
+    admin_invitation_token_matches, canonical_manifest_bytes, decide_manifest, decrypt_field,
+    encrypt_field, onboarding_code_hash, onboarding_code_matches, phone_lookup_hash,
+    phone_lookup_matches, recovery_code_hash, recovery_code_matches, refresh_token_hash,
+    refresh_token_matches, unwrap_group_key, wrap_group_key, AccessTokenHash,
+    AdminInvitationTokenHash, CodeHash, FetchedManifest, GroupKey, HmacKey, Kek, ManifestCache,
+    ManifestDecision, ManifestErrorCode, Nonce, PhoneLookupHash, RefreshTokenHash, SecretboxError,
+    Signature, VerifyingKey, KEY_LEN, MAC_LEN, NONCE_LEN,
 };
 use boundless_domain::{
-    AccessToken, AdminInvitationToken, OnboardingCode, PhoneNumber, RecoveryCode, RefreshToken,
+    AccessToken, Address, AdminInvitationToken, MemberName, OnboardingCode, PhoneNumber,
+    RecoveryCode, RefreshToken,
 };
+use proptest::prelude::*;
 use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
 use serde_json::Value;
 
@@ -583,4 +586,161 @@ mod no_formatter {
     assert_not_impl_any!(RefreshTokenHash: core::cmp::PartialEq);
     assert_not_impl_any!(AccessTokenHash: core::cmp::PartialEq);
     assert_not_impl_any!(AdminInvitationTokenHash: core::cmp::PartialEq);
+
+    // The per-Group field-encryption keys (spec 008 T02, ADR-0025 R2) are unloggable by design:
+    // no formatter, not serializable. (They also expose no byte accessor — enforced by API, not a
+    // trait — and zeroize on drop.)
+    assert_not_impl_any!(GroupKey: core::fmt::Debug, core::fmt::Display, serde::Serialize);
+    assert_not_impl_any!(Kek: core::fmt::Debug, core::fmt::Display, serde::Serialize);
+}
+
+// === I1 — field-level PII encryption (secretbox, ADR-0025; spec 008 T02) ===========
+
+/// AC2: a created member's **address is encrypted at rest** with the per-Group secretbox key — the
+/// stored blob is `nonce ‖ ciphertext` (ciphertext ≠ plaintext), the round-trip requires the
+/// **unwrapped** `GroupKey`, a wrong key yields `Err` (not garbage), and a tampered byte yields `Err`.
+#[test]
+fn i1_addresses_encrypted() {
+    let key = GroupKey::from_bytes([0x11; KEY_LEN]);
+    let nonce = Nonce::from_bytes([0x22; NONCE_LEN]);
+    let address = Address::new("742 Evergreen Terrace");
+
+    let stored = encrypt_field(address.expose_secret().as_bytes(), &key, &nonce);
+
+    // Stored shape: nonce ‖ MAC ‖ ciphertext; the nonce is carried alongside.
+    assert_eq!(&stored[..NONCE_LEN], nonce.as_bytes());
+    assert_eq!(
+        stored.len(),
+        NONCE_LEN + MAC_LEN + address.expose_secret().len()
+    );
+    // Ciphertext region differs from plaintext — it is genuinely encrypted, not stored in clear.
+    assert_ne!(
+        &stored[NONCE_LEN + MAC_LEN..],
+        address.expose_secret().as_bytes()
+    );
+
+    // Round-trip requires the (unwrapped) GroupKey — I1's `from_db(bytes, &GroupKey)` shape. The
+    // decrypted bytes are re-wrapped into the tainted `Address` at the boundary.
+    let recovered = Address::new(
+        String::from_utf8(decrypt_field(&stored, &key).expect("decrypt with the correct key"))
+            .expect("address round-trips as UTF-8"),
+    );
+    assert_eq!(recovered.expose_secret(), address.expose_secret());
+
+    // A wrong key fails the Poly1305 check (an Err, never garbage / never a panic).
+    let wrong = GroupKey::from_bytes([0x99; KEY_LEN]);
+    assert_eq!(decrypt_field(&stored, &wrong), Err(SecretboxError::Decrypt));
+
+    // Tampering any ciphertext byte fails authentication.
+    let mut tampered = stored.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x01;
+    assert_eq!(decrypt_field(&tampered, &key), Err(SecretboxError::Decrypt));
+
+    // A truncated blob is rejected as malformed (not a panic).
+    assert_eq!(
+        decrypt_field(&stored[..NONCE_LEN], &key),
+        Err(SecretboxError::Malformed)
+    );
+}
+
+/// AC3: a created member's **name is encrypted at rest** under the same per-Group key.
+#[test]
+fn i1_name_encrypted() {
+    let key = GroupKey::from_bytes([0x33; KEY_LEN]);
+    let nonce = Nonce::from_bytes([0x44; NONCE_LEN]);
+    let name = MemberName::new("Maria Sánchez");
+
+    let stored = encrypt_field(name.expose_secret().as_bytes(), &key, &nonce);
+
+    assert_eq!(&stored[..NONCE_LEN], nonce.as_bytes());
+    assert_ne!(
+        &stored[NONCE_LEN + MAC_LEN..],
+        name.expose_secret().as_bytes()
+    );
+
+    let recovered = MemberName::new(
+        String::from_utf8(decrypt_field(&stored, &key).expect("decrypt with the correct key"))
+            .expect("name round-trips as UTF-8"),
+    );
+    assert_eq!(recovered.expose_secret(), name.expose_secret());
+
+    let wrong = GroupKey::from_bytes([0x55; KEY_LEN]);
+    assert_eq!(decrypt_field(&stored, &wrong), Err(SecretboxError::Decrypt));
+}
+
+proptest! {
+    /// Encrypt→decrypt round-trips for any plaintext; the stored blob is `nonce ‖ ciphertext` of the
+    /// expected length with the nonce prepended; the ciphertext differs from the plaintext; and the
+    /// same plaintext under a different nonce yields a different ciphertext (semantic security — the
+    /// nonce is actually used). The footgun this guards is nonce reuse (R1).
+    #[test]
+    fn prop_secretbox_round_trip_and_ciphertext_differs(
+        key_bytes in proptest::array::uniform32(any::<u8>()),
+        n1 in proptest::array::uniform24(any::<u8>()),
+        n2 in proptest::array::uniform24(any::<u8>()),
+        plaintext in proptest::collection::vec(any::<u8>(), 0..256),
+    ) {
+        let key = GroupKey::from_bytes(key_bytes);
+        let stored = encrypt_field(&plaintext, &key, &Nonce::from_bytes(n1));
+
+        prop_assert_eq!(stored.len(), NONCE_LEN + MAC_LEN + plaintext.len());
+        prop_assert_eq!(&stored[..NONCE_LEN], &n1[..]);
+        if !plaintext.is_empty() {
+            prop_assert_ne!(&stored[NONCE_LEN + MAC_LEN..], &plaintext[..]);
+        }
+        prop_assert_eq!(decrypt_field(&stored, &key).unwrap(), plaintext.clone());
+
+        // Same plaintext, a different nonce → a different ciphertext region (the nonce matters).
+        prop_assume!(n1 != n2);
+        let stored2 = encrypt_field(&plaintext, &key, &Nonce::from_bytes(n2));
+        prop_assert_ne!(&stored[NONCE_LEN..], &stored2[NONCE_LEN..]);
+    }
+
+    /// Decrypting with the wrong key always fails authentication (never returns garbage plaintext).
+    #[test]
+    fn prop_decrypt_wrong_key_fails(
+        k1 in proptest::array::uniform32(any::<u8>()),
+        k2 in proptest::array::uniform32(any::<u8>()),
+        nonce in proptest::array::uniform24(any::<u8>()),
+        plaintext in proptest::collection::vec(any::<u8>(), 1..256),
+    ) {
+        prop_assume!(k1 != k2);
+        let stored = encrypt_field(&plaintext, &GroupKey::from_bytes(k1), &Nonce::from_bytes(nonce));
+        prop_assert_eq!(
+            decrypt_field(&stored, &GroupKey::from_bytes(k2)),
+            Err(SecretboxError::Decrypt)
+        );
+    }
+
+    /// KEK wrap→unwrap recovers the per-Group key: a field encrypted with the original key decrypts
+    /// with the unwrapped key (functional key equality, without exposing key bytes). A wrong KEK
+    /// fails to unwrap.
+    #[test]
+    fn prop_kek_wrap_unwrap_round_trips(
+        group_key_bytes in proptest::array::uniform32(any::<u8>()),
+        kek_bytes in proptest::array::uniform32(any::<u8>()),
+        wrap_nonce in proptest::array::uniform24(any::<u8>()),
+        field_nonce in proptest::array::uniform24(any::<u8>()),
+        plaintext in proptest::collection::vec(any::<u8>(), 0..128),
+    ) {
+        let group_key = GroupKey::from_bytes(group_key_bytes);
+        let kek = Kek::from_bytes(kek_bytes);
+
+        let ciphertext = encrypt_field(&plaintext, &group_key, &Nonce::from_bytes(field_nonce));
+        let wrapped = wrap_group_key(&group_key, &kek, &Nonce::from_bytes(wrap_nonce));
+        prop_assert_eq!(wrapped.len(), NONCE_LEN + MAC_LEN + KEY_LEN);
+
+        let unwrapped = unwrap_group_key(&wrapped, &kek).expect("unwrap with the correct KEK");
+        prop_assert_eq!(decrypt_field(&ciphertext, &unwrapped).unwrap(), plaintext);
+
+        // A wrong KEK cannot unwrap the key. (`matches!`, not `prop_assert_eq!`: GroupKey
+        // deliberately has no Debug/PartialEq, so the Ok arm can't be formatted/compared.)
+        let mut other = kek_bytes;
+        other[0] ^= 0x01;
+        prop_assert!(matches!(
+            unwrap_group_key(&wrapped, &Kek::from_bytes(other)),
+            Err(SecretboxError::Decrypt)
+        ));
+    }
 }

@@ -97,6 +97,25 @@ tainted_secret!(
     AdminInvitationToken
 );
 
+tainted_secret!(
+    /// A member's home street address — the most sensitive field the product holds (with the name).
+    /// Encrypted at rest with the per-Group secretbox key (I1, ADR-0025; spec 008): the persisted
+    /// column is `address_encrypted bytea`, and recovering the plaintext requires the **unwrapped**
+    /// `GroupKey` (`boundless_crypto::decrypt_field`, the `from_db(bytes, &GroupKey)` shape). It is
+    /// dropped from memory after matching computes the pickup (P3/I2, a later spec). Plaintext only
+    /// crosses the crypto boundary via `expose_secret`; the wire `MemberDetail` is a separate
+    /// serializable DTO built at the audited boundary (spec 008 T05).
+    Address
+);
+
+tainted_secret!(
+    /// A member's name. Encrypted at rest with the per-Group secretbox key alongside the address
+    /// (`name_encrypted bytea`, I1/ADR-0025). It is decrypted into the plain-`String` display field
+    /// of the non-tainted `MemberSummary`/`MemberDetail` projections at the boundary, never persisted
+    /// in clear (spec 008 AC3).
+    MemberName
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +130,8 @@ mod tests {
     assert_not_impl_any!(AccessToken: core::fmt::Debug, core::fmt::Display);
     assert_not_impl_any!(RefreshToken: core::fmt::Debug, core::fmt::Display);
     assert_not_impl_any!(AdminInvitationToken: core::fmt::Debug, core::fmt::Display);
+    assert_not_impl_any!(Address: core::fmt::Debug, core::fmt::Display);
+    assert_not_impl_any!(MemberName: core::fmt::Debug, core::fmt::Display);
 
     // Defense in depth: they must not be serde-serializable either (I3 — plaintext never
     // crosses the wire implicitly).
@@ -121,6 +142,9 @@ mod tests {
     assert_not_impl_any!(AccessToken: serde::Serialize, serde::de::DeserializeOwned);
     assert_not_impl_any!(RefreshToken: serde::Serialize, serde::de::DeserializeOwned);
     assert_not_impl_any!(AdminInvitationToken: serde::Serialize, serde::de::DeserializeOwned);
+    // Address/MemberName (I1) are encrypted at rest, never serialized in clear (spec 008 AC2/AC3).
+    assert_not_impl_any!(Address: serde::Serialize, serde::de::DeserializeOwned);
+    assert_not_impl_any!(MemberName: serde::Serialize, serde::de::DeserializeOwned);
 
     #[test]
     fn redacted_summary_never_leaks_and_expose_secret_round_trips() {
@@ -152,5 +176,7 @@ mod tests {
         check!(AccessToken);
         check!(RefreshToken);
         check!(AdminInvitationToken);
+        check!(Address);
+        check!(MemberName);
     }
 }

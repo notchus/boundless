@@ -14,6 +14,7 @@
 //! never parsed, so base64-vs-hex is immaterial). Verification is a constant-time keyed-HMAC store
 //! lookup (`boundless_crypto::access_token_hash` / `refresh_token_hash`), not parsing.
 
+use boundless_crypto::{Nonce, NONCE_LEN};
 use boundless_domain::{AccessToken, AdminInvitationToken, RecoveryCode, RefreshToken};
 use rand_core::{CryptoRng, RngCore};
 
@@ -71,6 +72,15 @@ impl<R: RngCore + CryptoRng> SecretSource for RngSecretSource<R> {
         // the tokens. Single-use + server-TTL are enforced by the store/orchestration, not here.
         AdminInvitationToken::new(self.fresh_opaque())
     }
+
+    fn fresh_nonce(&mut self) -> Nonce {
+        // A 24-byte secretbox nonce drawn straight from the injected CSPRNG (NOT hex-encoded — the
+        // nonce is raw bytes prepended to the ciphertext). Uniqueness is the only guard against the
+        // XSalsa20-Poly1305 nonce-reuse footgun (R1, ADR-0025), so it must be a fresh CSPRNG draw.
+        let mut bytes = [0u8; NONCE_LEN];
+        self.rng.fill_bytes(&mut bytes);
+        Nonce::from_bytes(bytes)
+    }
 }
 
 /// Lowercase-hex-encode bytes (dependency-free; the token is opaque, so the encoding is immaterial).
@@ -86,7 +96,12 @@ fn to_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::to_hex;
+    use super::{to_hex, RngSecretSource};
+    use crate::ports::SecretSource;
+    use proptest::prelude::*;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+    use std::collections::HashSet;
 
     #[test]
     fn to_hex_is_lossless_full_width_lowercase() {
@@ -103,5 +118,49 @@ mod tests {
             .bytes()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         assert!(hex.starts_with("000102") && hex.ends_with("fdfeff"));
+    }
+
+    proptest! {
+        /// The secretbox nonce-reuse footgun (R1, ADR-0025): every `fresh_nonce` draw must be
+        /// distinct. Driving the production `RngSecretSource` over a seeded CSPRNG, 1000 consecutive
+        /// nonces are all unique (a collision would be a catastrophic key-stream reuse).
+        #[test]
+        fn prop_secretbox_nonce_unique_across_calls(seed: u64) {
+            let mut src = RngSecretSource::new(ChaCha20Rng::seed_from_u64(seed));
+            let mut seen = HashSet::new();
+            for _ in 0..1000 {
+                let nonce = src.fresh_nonce();
+                prop_assert!(
+                    seen.insert(*nonce.as_bytes()),
+                    "fresh_nonce collided within 1000 draws"
+                );
+            }
+        }
+
+        /// The *actual* R1 threat the docs name (ports.rs / secretbox.rs): a pooled, multi-isolate
+        /// Worker fleet has no shared counter, so nonces drawn from **independent** `RngSecretSource`
+        /// instances must not collide either. Two independently-seeded sources produce distinct first
+        /// nonces and a collision-free combined stream — this would FAIL for a per-instance counter
+        /// seeded at 0 (the forbidden deterministic pattern), which the single-stream test above would
+        /// not catch.
+        #[test]
+        fn prop_secretbox_nonce_unique_across_isolates(seed_a: u64, seed_b: u64) {
+            prop_assume!(seed_a != seed_b);
+            let mut a = RngSecretSource::new(ChaCha20Rng::seed_from_u64(seed_a));
+            let mut b = RngSecretSource::new(ChaCha20Rng::seed_from_u64(seed_b));
+
+            let mut seen = HashSet::new();
+            let first_a = *a.fresh_nonce().as_bytes();
+            let first_b = *b.fresh_nonce().as_bytes();
+            // Distinct seeds → distinct first nonces (a counter-from-0 impl would tie here).
+            prop_assert_ne!(first_a, first_b);
+            prop_assert!(seen.insert(first_a));
+            prop_assert!(seen.insert(first_b));
+            // The two independent streams never collide with each other.
+            for _ in 0..500 {
+                prop_assert!(seen.insert(*a.fresh_nonce().as_bytes()), "cross-isolate nonce collision");
+                prop_assert!(seen.insert(*b.fresh_nonce().as_bytes()), "cross-isolate nonce collision");
+            }
+        }
     }
 }

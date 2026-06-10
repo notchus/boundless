@@ -1831,6 +1831,24 @@
       regression).
   - **WHEN:** (a) **T10** (catalog copy); (b) **T06** (`#[require_audit]` gate) + **T08** (contract test).
 
+- [ ] **Carry-forwards from the T02 review (security-auditor + platform-parity):**
+      (a) **Decrypted-PII zeroization (MED).** `core/crypto::decrypt_field` returns a plain `Vec<u8>`;
+      wiping only that transient buffer would not close the DO-memory-snapshot threat because the
+      boundary re-wraps the bytes into a tainted `Address`/`MemberName` whose inner `String` is not
+      zeroized (true of *every* `tainted_secret!` type today). Decide at the consuming task whether the
+      tainted types should own a zeroizing buffer (so decrypted PII is wiped on drop, P3/I2) — a
+      cross-cutting change to the `tainted_secret!` macro. The non-`Zeroizing` return is documented as
+      intentional in `secretbox.rs`. (b) **Production-RNG guard (LOW).** `SecretSource::fresh_nonce`'s
+      "no deterministic nonce" rule is enforced by docs + the convention that `RngSecretSource` is the
+      only non-test impl, not by the type system. When the issuance path is wired, add an integration
+      assertion that a field-encrypting endpoint constructs `RngSecretSource` (not a placeholder/seq
+      impl) — mirroring the `PlaceholderSecrets::fresh_nonce` → `unreachable!` fail-closed guard.
+      (c) **Wire-projection parity watch (LOW).** Keep `Address`/`MemberName` off the UniFFI/wasm
+      bindings at T05; build the wire `MemberSummary`/`MemberDetail` DTOs with a fixture-vs-`api/openapi.yaml`
+      contract test (the same core↔wire seam that bit the spec-001 T10 `ManifestPointer`).
+  - **WHEN:** (a) **T05/T09** (the decrypt boundary) — decision recorded now; (b) **T09** (deployed
+    field-encrypting endpoint); (c) **T05/T08** (the projection + contract test).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

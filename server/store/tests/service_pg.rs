@@ -18,7 +18,7 @@ use boundless_auth::{
     DeviceBinding, FixedClock, OnboardingCodeVerdict, RecoveryCodeVerdict, RefreshVerdict, Session,
     SignInResult, UnixSeconds, VersionRequirement,
 };
-use boundless_crypto::{CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash};
+use boundless_crypto::{CodeHash, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash, NONCE_LEN};
 use boundless_domain::{
     AccessToken, AdminInvitationToken, AppVersion, ClientVersion, DeviceToken, MemberId,
     OnboardingCode, Platform, RecoveryCode, RefreshToken, SessionFamilyId,
@@ -73,6 +73,13 @@ impl SecretSource for SeqSecrets {
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
         self.n += 1;
         AdminInvitationToken::new(format!("admin-invite-{}", self.n))
+    }
+    fn fresh_nonce(&mut self) -> Nonce {
+        // Deterministic, distinct per call (so a test never reuses a nonce); prod uses a CSPRNG.
+        self.n += 1;
+        let mut bytes = [0u8; NONCE_LEN];
+        bytes[..8].copy_from_slice(&self.n.to_le_bytes());
+        Nonce::from_bytes(bytes)
     }
 }
 

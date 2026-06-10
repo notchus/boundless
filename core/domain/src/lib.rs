@@ -26,7 +26,7 @@ pub use ids::{MemberId, SessionFamilyId};
 pub use platform::Platform;
 pub use role::Role;
 pub use tainted::{
-    AccessToken, AdminInvitationToken, DeviceToken, OnboardingCode, PhoneNumber, RecoveryCode,
-    RefreshToken,
+    AccessToken, Address, AdminInvitationToken, DeviceToken, MemberName, OnboardingCode,
+    PhoneNumber, RecoveryCode, RefreshToken,
 };
 pub use version::{AppVersion, AppVersionParseError, ClientVersion};

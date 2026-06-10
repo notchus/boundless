@@ -21,7 +21,7 @@ use boundless_auth::{
     DeviceBinding, RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds,
 };
 use boundless_crypto::{
-    AdminInvitationTokenHash, CodeHash, HmacKey, PhoneLookupHash, RefreshTokenHash,
+    AdminInvitationTokenHash, CodeHash, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash,
 };
 use boundless_domain::{
     AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken, Role,
@@ -283,6 +283,11 @@ pub trait SecretSource {
     fn fresh_recovery_code(&mut self) -> RecoveryCode;
     /// A fresh Admin registration-invitation token (single-use, opaque, no PII — ADR-0015 / AC16).
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken;
+    /// A fresh, single-use random secretbox **nonce** for one field encryption (I1 / R1, ADR-0025;
+    /// spec 008). MUST be unique per encryption — a reused XSalsa20-Poly1305 nonce is catastrophic —
+    /// so it is a CSPRNG draw, never counter/time-derived (a pooled multi-isolate Worker fleet has no
+    /// shared counter). Used by `MemberService` to encrypt address/name at rest (spec 008 T05/T09).
+    fn fresh_nonce(&mut self) -> Nonce;
 }
 
 /// The persistence boundary for **developer-driven Admin provisioning** (I11 / ADR-0015; AC16) —
