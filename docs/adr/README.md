@@ -33,6 +33,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 ## Currently-active ADRs
 
 - [ADR-0001](./0001-rust-core.md) — Single shared Rust core for domain types and business logic
+- [ADR-0006](./0006-role-swaps.md) — Role swaps allowed: a Member's role is a set (`roles member_role[]`), not a scalar; issuance (spec 008) sets the initial set, the per-Gathering swap *workflow* is a sibling spec
 - [ADR-0013](./0013-license.md) — AGPL-3.0 for the entire repository (+ App Store §7 exception)
 - [ADR-0014](./0014-server-driven-config.md) — Server-Driven Configuration via Cloudflare KV (supports P13 / O1–O8)
 - [ADR-0015](./0015-admin-invitation-channel.md) — Admin invitation channel; narrows I11 to permit a developer-minted single-use Email Workers registration link
@@ -44,6 +45,8 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0021](./0021-access-token-wire-format.md) — Access-token wire format = opaque-random 32-byte bearer verified by a constant-time keyed-HMAC store lookup (not EdDSA-JWT); resolves the plan §10-D open item; honors the time-independent, family-status-gated revocation model with zero new key-management infra
 - [ADR-0022](./0022-uniffi-binding-mirror-types.md) — UniFFI binding crates (`core/ffi-swift`, later `core/ffi-kotlin`) mirror the core's enums with `#[derive(uniffi::Enum)]` + exhaustive `From` conversions instead of annotating the core, because the core must stay `uniffi`-free to keep compiling to `wasm32`; the exhaustive `match` is a compile-checked parity guard (not a hand-rolled duplicate, P4)
 - [ADR-0023](./0023-auth-request-phone-on-wire.md) — Auth requests carry the plaintext `phone` (E.164, over TLS), not a client-computed `phone_lookup_hash`: that hash is HMAC-SHA256 keyed by a per-instance server secret (I3/ADR-0018) a client cannot hold, so the server hashes the received phone and drops the plaintext (P2 tainted type); reconciles the frozen OpenAPI/spec/fixtures with the as-built engine. Rejects a client keyless pre-hash (unsalted low-entropy hash is brute-forceable + violates P4 single-source normalization)
+- [ADR-0024](./0024-hyperdrive-unnamed-statements.md) — Worker→Postgres uses `tokio-postgres`'s unnamed-statement `query_typed*` family (no driver fork); refines ADR-0019 and corrects its named/unnamed polarity
+- [ADR-0025](./0025-per-group-key-lifecycle.md) — Per-Group field-encryption key lifecycle: a symmetric secretbox key, KEK-wrapped in Cloudflare Secrets Store, generated at Group bootstrap (spec 008), rotation runbook-driven (I1)
 
 ## Suggested early ADRs to author (stubs)
 
@@ -53,7 +56,7 @@ These were decided during the planning chats and should be formalized:
 - ADR-0003 — Cloudflare edge as the server tier (Workers + DOs + Hyperdrive)
 - ADR-0004 — Neon Postgres with PostGIS via Hyperdrive for the primary store
 - ADR-0005 — OpenAPI 3.1 + Protocol Buffers as API contract source of truth
-- ADR-0006 — Role swaps allowed (a person may be Rider in one context, Driver in another)
+- ADR-0006 — Role swaps allowed (a person may be Rider in one context, Driver in another) — **authored 2026-06-10 (spec 008); see the active list above**
 - ADR-0007 — Silent reassignment (no "your driver changed" notification)
 - ADR-0008 — ETA matrix computed batch on admin updates, not in request path
 - ADR-0009 — Closed-group privacy model (no self-signup, admins issued by developer only)

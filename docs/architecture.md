@@ -203,6 +203,13 @@ The ETA matrix is computed by a scheduled Worker on admin address updates:
     receives the new address only at the moment of admin update)
 ```
 
+> **Implementation ownership (spec 008 `/clarify`, 2026-06-10):** the geocode/ETA Workflow
+> above is owned by the **matching spec** (004+), not by issuance. Spec 008 (admin
+> member-management) persists the encrypted address only and does **not** fire the
+> Nominatim/OSRM Workflow; the trigger still *originates* at the admin address-update
+> surface (`/api/admin/members/{id}`) and is wired when matching lands. See ADR-0008
+> (stub) and `specs/008-admin-member-management/spec.md` (Out of scope).
+
 ---
 
 ## Trust boundaries

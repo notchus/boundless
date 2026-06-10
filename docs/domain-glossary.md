@@ -14,7 +14,7 @@ A group member who needs transportation to the **Gathering**. Riders are **in by
 ### Driver
 A group member with a car and capacity, who has flipped their **Seat Toggle** on for tonight.
 - Code type: `Driver`.
-- A Driver may **also** be a Rider in another context (role swaps supported, see ADR-006-role-swaps).
+- A Driver may **also** be a Rider in another context (role swaps supported, see ADR-0006).
 
 ### Admin
 A trusted member who manages **Group** membership, addresses, and role swaps. Admin accounts are issued **only** by the developer; admins cannot self-onboard, and they cannot create other admins.
