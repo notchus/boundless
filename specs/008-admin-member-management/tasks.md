@@ -156,15 +156,30 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Two new codes** beyond T01's five (both required by P12 for their emitting types, both ship this PR):
   `ADMIN_MEMBER_ROLE_FORBIDDEN` (AC10 admin-role reject) + `ADMIN_MEMBER_ROLES_REQUIRED` (AC13 ≥1-role).
 
-### T06 — `#[require_audit]` compile-time gate (I5)
+### T06 — I5 require-audit compile gate (sealed `AuditedResponse` / `PiiDisclosure`)
+- **Status:** ✅ DONE 2026-06-10 — commit `c8d1b79` (reviewer + platform-parity "ship";
+  security-auditor "ship-with-fixes" — all findings applied: the no-`Debug` pin on the PII carrier,
+  the doc-scope tightening, the register heading). A 3-mechanism design panel + adversarial stress
+  picked the plan §7 sealed-trait gate and **hardened** it; a 3-lens review followed (0 crit/high).
 - **What:** Make "a function returning a tainted-carrying type cannot be wired without producing an
   `AuditEntry`" a **compile error** (sealed-trait bound on router registration acceptable; literal
   proc-macro is the stretch). Plan §7/§14 — this is dictated by I5; do **not** weaken to test-only.
-- **Touches:** `core/server` (or a new `core/macros` crate); `core/server/tests/compile-fail/`.
+- **Shipped (not a `#[require_audit]` attribute macro — the proc-macro stretch was NOT built):** the
+  un-forgeable `PiiDisclosure<T>` carrier (`pub(crate)` ctor, delegating `Serialize`, no `Debug`/`Display`)
+  + the **sealed** `AuditedResponse` bound + the `admin_response_body` send-seam + a hand-curated PII-free
+  allowlist (`MemberSummary`/`Vec<MemberSummary>`/`Vec<AuditEntry>`), and `MemberDetailView` hardened
+  (private fields + `pub(crate) to_wire`, keeps `Serialize` only for the disclosure's delegation).
+  `DetailRead::Detail` now carries `Box<PiiDisclosure<MemberDetailView>>`. The residual `expose_secret`/
+  hand-rolled-`json!` egress is the plan-sanctioned scope boundary → T08 OpenAPI-coverage + T09 lint
+  (`DEFERRED.md` → T06). `core/server/src/audited.rs`; `serde_json` promoted dev→runtime; `trybuild` 1.0.116 (dev).
+- **Touches:** `core/server/src/{audited.rs (NEW),member.rs,lib.rs}`; `core/server/tests/{audit.rs,no_formatter.rs}`;
+  NEW `tests/require_audit.rs` + `tests/member_summary_compile.rs` + `tests/ui/**` (3 compile-fail + 1 pass fixture + `.stderr`).
 - **Closes:** AC7 (compile leg).
-- **Tests:** `require_audit_compile_fail` (a PII-returning handler/type lacking the obligation **fails to
-  build**); `member_summary_rejects_tainted_field` (trybuild). Pin `trybuild` (dev) from the lock.
-- **Blockers:** T05 (the ports/`AuditEntry`/tainted-carrying types exist). **Parallel:** with T07/T08.
+- **Tests (green):** `require_audit_compile_fail` (forge `PiiDisclosure` → E0624; send a non-`AuditedResponse`
+  body → E0277; pass fixture compiles) + `member_summary_rejects_tainted_field` (tainted field in a
+  `Serialize` projection → E0277); `no_formatter.rs` pins `PiiDisclosure<MemberDetailView>`/`MemberDetailView`
+  as `!Debug`/`!Display`; `audit.rs` trait-membership asserts. `trybuild` pinned from the lock (1.0.116).
+- **Blockers:** T05 (the ports/`AuditEntry`/tainted-carrying types exist) — done. **Parallel:** with T07/T08.
 
 ### T07 — `PgMemberStore` / `PgAuditStore` / `PgDelegatedKeyStore` (real PG18)
 - **What:** The Postgres adapters for the T05 ports. All via `begin()` RLS scoping, `query_typed*`
@@ -259,7 +274,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 | AC4 phone two-fold (I3) | T05, T07 | T05 ✓ (core: lookup hash + ciphertext, in-core normalize); T07 DB pending |
 | AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓ (mint decision + TTL); T07 DB ("one live" index) + T09 shell pending |
 | AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓ (regenerate decision); T07 DB (atomic) + T09 shell pending |
-| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓ (audit-emit decision); T06 compile + T07 DB + T08 coverage + T09 shell pending |
+| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓ (audit-emit decision); T06 ✓ (compile gate: sealed `AuditedResponse` + un-forgeable `PiiDisclosure`); T07 DB + T08 coverage + T09 shell emit pending |
 | AC8 `MemberSummary` no tainted type | T05 (compile assert) | T05 ✓ (compile assert + no-PII prop) |
 | AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05 ✓ (read decision, names-only); T07/T08 pending |
 | AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); T08 no-path + T10 shell UI pending |
