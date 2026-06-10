@@ -96,13 +96,24 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** none (shapes decided in the plan). **Parallel:** T01, T02.
 
 ### T04 — Group bootstrap + per-Group key generation (core decision + injected RNG)
+- **Status:** ✅ DONE 2026-06-10 — commit `55813e0` (reviewer + security-auditor + platform-parity:
+  0 crit/high; security-auditor "ship it", parity clean).
 - **What:** The bootstrap *decision* that mints the Group key from the injected CSPRNG, wraps it with the
-  KEK, and shapes the `groups` + `delegated_keys` write; issuance fails closed without a key.
-- **Touches:** `core/server/src/member.rs` (or a `bootstrap` module) + `ports.rs`.
+  KEK, and shapes the `delegated_keys` write; issuance fails closed without a key.
+- **Touches:** `core/server/src/bootstrap.rs` (NEW — chose the **`bootstrap` module** option, not
+  `member.rs`: `member.rs` is T05's file and T04/T05 are parallel children of T02), `ports.rs`
+  (+`SecretSource::fresh_group_key`), `secrets.rs` (`RngSecretSource::fresh_group_key`, zeroized draw),
+  `lib.rs` (re-exports), `Cargo.toml` (+`zeroize`), the three existing `SecretSource` impls
+  (`tests/common/mod.rs` + `server/store/tests/service_pg.rs` `SeqSecrets`; `server/src/runtime/pg.rs`
+  `PlaceholderSecrets` → `unreachable!`), `tests/error_codes.rs`. **Regenerated `api/.bindings.lock`.**
 - **Closes:** AC12 (the generation + fail-closed decision).
 - **Tests:** `bootstrap_generates_wrapped_key_from_injected_seed` (wrapped blob ≠ plaintext; round-trips
-  via KEK); `member_service_issuance_fails_closed_without_group_key` (returns `ADMIN_GROUP_KEY_MISSING`,
-  writes no row; no `unwrap()` on key load).
+  via KEK; blob wraps the *same* key cached for the DO); `issuance_fails_closed_without_group_key`
+  (**renamed** from the plan's `member_service_issuance_fails_closed_without_group_key` — there is no
+  `MemberService` in T04; the gate `load_group_key` returns `ADMIN_GROUP_KEY_MISSING` on a missing/
+  corrupt/wrong-KEK key with no `unwrap()`, and T05 wires it into `MemberService::issue` as issuance's
+  first step so no row is written). Plus `bootstrap_generates_distinct_keys_per_group` (R1 cross-isolate)
+  and `group_key_missing_error_code_registered` (P12: ties the emitting type to the registry).
 - **Blockers:** T02. **Parallel:** with the early part of T05.
 
 ### T05 — `core/server` `MemberService` + ports + projections + audit decision
@@ -235,7 +246,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 | AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05/T07/T08 pending |
 | AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | pending |
 | AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | pending |
-| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03 ✓ (crypto + column); T04 bootstrap / T07 DB pending |
+| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓ (crypto + column + bootstrap/fail-closed decision); T07 DB pending |
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | pending |
 | AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | pending |
 | AC15 i18n + pseudo-locale | T10, T01-catalog | pending |
