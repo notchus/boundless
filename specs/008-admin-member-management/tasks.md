@@ -42,6 +42,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 ## Tasks
 
 ### T01 — Docs, error codes, runbook stub, DEFERRED/stack-matrix reconciliation
+- **Status:** ✅ DONE 2026-06-10 — commit `af2e701` (reviewer + security-auditor: 0 crit/high).
 - **What:** Land the non-code scaffolding the rest of the spec returns typed codes/keys against.
 - **Touches:** `docs/error-codes.md` (+5 codes), `docs/runbooks/key-management.md` (NEW stub),
   `docs/stack-matrix.md` (resolve the dryoc "sealed-box/secretbox" hedge → **secretbox** for field-level
@@ -58,6 +59,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** none. **Parallel:** with T02, T03.
 
 ### T02 — `core/crypto` secretbox + `GroupKey`/`Kek` (zeroize) + tainted `Address`/`MemberName` + injected nonce
+- **Status:** ✅ DONE 2026-06-10 — commit `6490876` (reviewer + security-auditor + platform-parity: 0 crit/high).
 - **What:** The field-encryption primitive (ADR-0025) and the new tainted types. **The load-bearing slice.**
 - **Touches:** `core/crypto/src/secretbox.rs` (NEW) + `core/crypto/src/lib.rs`; `core/crypto/Cargo.toml`
   (+`zeroize`); `core/domain/src/tainted.rs` (+`Address`, `MemberName` via the `tainted_secret!` macro);
@@ -78,6 +80,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **After:** regenerate `api/.bindings.lock` (core changed). **Blockers:** none. **Parallel:** T01, T03.
 
 ### T03 — Migrations `0009_delegated_keys`, `0010_member_pii`, `0011_audit_log`
+- **Status:** ✅ DONE 2026-06-10 — commit `72a7193` (reviewer + security-auditor: 0 crit/high; live apply/RLS/revert proven on real PG18).
 - **What:** The schema (plan §4). Reversible, FORCE-RLS, group-scoped, append-only audit.
 - **Touches:** `server/migrations/0009_*.{up,down}.sql`, `0010_*`, `0011_*`; `server/tests/migrations.rs`
   (`EXPECTED_VERSIONS` → 1..=11).
@@ -222,17 +225,17 @@ T09 is in flight, but its e2e needs T09's Worker.
 | AC | Covered by | Status |
 |---|---|---|
 | AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | pending |
-| AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | pending |
-| AC3 name encrypted at rest | T02, T03, T05 | pending |
+| AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓ (crypto + column); T07 DB pending |
+| AC3 name encrypted at rest | T02, T03, T05 | T02·T03 ✓ (crypto + column); T05 pending |
 | AC4 phone two-fold (I3) | T05, T07 | pending |
 | AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | pending |
 | AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | pending |
 | AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | pending |
 | AC8 `MemberSummary` no tainted type | T05 (compile assert) | pending |
-| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | pending |
+| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓ (schema); T05/T07/T08 pending |
 | AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | pending |
 | AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | pending |
-| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | pending |
+| AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03 ✓ (crypto + column); T04 bootstrap / T07 DB pending |
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | pending |
 | AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | pending |
 | AC15 i18n + pseudo-locale | T10, T01-catalog | pending |
