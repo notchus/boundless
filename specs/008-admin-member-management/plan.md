@@ -126,7 +126,7 @@ separate entities for the same reason). `down` drops the two columns.
 ### `0011_audit_log.{up,down}.sql` (I5)
 ```
 audit_log (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id          uuid PRIMARY KEY,     -- T03 resolution: NO column DEFAULT; minted via gen_random_uuid() inline at the audit INSERT (T07), matching every other table's store convention (server/store/src/lib.rs) — keeps the schema uniform + the core randomness-free (ADR-0021)
   group_id    uuid NOT NULL,
   admin_id    uuid NOT NULL,        -- the actor (I5)
   member_id   uuid NOT NULL,        -- whose PII was read
