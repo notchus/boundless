@@ -60,6 +60,9 @@ use boundless_server_core::{
 use tokio_postgres::{types::Type, Client, Transaction};
 use uuid::Uuid;
 
+mod members;
+pub use members::PgMemberStore;
+
 /// Errors from the Postgres auth store. Carries **no row values** (P2): a `Db` error wraps the
 /// driver error (query text + Postgres message, never bound parameter values).
 #[derive(Debug)]
@@ -121,7 +124,7 @@ type Result<T> = std::result::Result<T, StoreError>;
 /// Precondition: `now` is injected, positive server time (T04/T05). The negative branch exists only
 /// for totality; it is unreachable for any real server clock and never approaches `SystemTime`'s
 /// representable range.
-fn to_pg_time(t: UnixSeconds) -> SystemTime {
+pub(crate) fn to_pg_time(t: UnixSeconds) -> SystemTime {
     let s = t.as_secs();
     if s >= 0 {
         UNIX_EPOCH + Duration::from_secs(s as u64)
@@ -132,7 +135,7 @@ fn to_pg_time(t: UnixSeconds) -> SystemTime {
 
 /// Map a Postgres `member_role` (read as text) to the domain [`Role`]. Unknown variants are
 /// dropped (forward-compatible: a role this build does not model is simply ignored).
-fn role_from_wire(s: &str) -> Option<Role> {
+pub(crate) fn role_from_wire(s: &str) -> Option<Role> {
     match s {
         "rider" => Some(Role::Rider),
         "driver" => Some(Role::Driver),
@@ -682,7 +685,7 @@ impl AdminProvisioningStore for PgAuthStore {
 /// Whole-second contract: issuance writes whole-second TTLs and the core's TTL gate is whole-second,
 /// so flooring sub-second precision here is lossless in practice and consistent with `UnixSeconds`
 /// being an integer.
-fn system_time_to_unix(t: SystemTime) -> UnixSeconds {
+pub(crate) fn system_time_to_unix(t: SystemTime) -> UnixSeconds {
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => UnixSeconds::new(d.as_secs() as i64),
         Err(e) => UnixSeconds::new(-(e.duration().as_secs() as i64)),

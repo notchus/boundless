@@ -1,0 +1,6 @@
+# proptest failing-seed regressions land here on first property failure; commit them (P9:
+# reproducible seeds checked into the repo). The server/store property test is
+# `prop_rls_isolates_random_two_group_configs` (real-PG18 RLS isolation across random two-group
+# configs). NB: server/store is outside core/**, so it is NOT covered by
+# scripts/check-proptest-regressions.sh (which auto-discovers proptest crates under core/) — this
+# dir is committed manually.

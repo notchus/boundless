@@ -51,3 +51,7 @@ tokio-postgres = { version = "0.7", default-features = false, features = ["with-
 [dev-dependencies]
 # Drive the tokio-postgres Connection future + spawn concurrent tasks in the integration tests (native).
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+# Property tests (P9): the random two-group RLS-isolation proof (`prop_rls_isolates_random_two_group_configs`).
+# Same major as the core crates' proptest (1.11.x in the core lock); host/native dev-only — never on the
+# wasm path. Failing seeds persist to `server/store/proptest-regressions/` (committed; P9 reproducibility).
+proptest = "1"

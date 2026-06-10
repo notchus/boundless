@@ -21,12 +21,13 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use boundless_crypto::{
-    onboarding_code_hash, phone_lookup_hash, recovery_code_hash, refresh_token_hash, CodeHash,
-    HmacKey, RefreshTokenHash,
+    decrypt_field, encrypt_field, onboarding_code_hash, phone_lookup_hash, recovery_code_hash,
+    refresh_token_hash, CodeHash, GroupKey, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash,
+    KEY_LEN, NONCE_LEN,
 };
 use boundless_domain::{MemberId, OnboardingCode, RecoveryCode, RefreshToken};
 use boundless_server_core::normalize_phone;
-use boundless_server_store::PgAuthStore;
+use boundless_server_store::{PgAuthStore, PgMemberStore};
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
@@ -134,7 +135,7 @@ pub async fn setup(url: &str, schema: &str) -> Client {
         })
         .collect();
     files.sort();
-    assert_eq!(files.len(), 8, "expected 8 up migrations");
+    assert_eq!(files.len(), 11, "expected 11 up migrations (0001–0011)");
     for f in &files {
         let sql = std::fs::read_to_string(f).expect("read migration");
         su.batch_execute(&sql)
@@ -304,4 +305,144 @@ pub async fn live_invitation_expiry_secs(c: &Client, admin: Uuid) -> Option<i64>
 pub const G: u128 = 1;
 pub fn mid(n: u128) -> MemberId {
     MemberId::from_uuid(Uuid::from_u128(n))
+}
+
+// --- spec 008 T07: member-management helpers ---
+
+/// A fresh `PgMemberStore` scoped to `schema` + `group`, connected as the non-superuser app role.
+pub async fn app_member_store(url: &str, schema: &str, group: Uuid) -> PgMemberStore {
+    PgMemberStore::new(app_client(url, schema).await, group)
+}
+
+/// A fixed per-Group secretbox key for the member tests (the real one is KEK-wrapped in
+/// `delegated_keys`; these store-level tests encrypt/decrypt directly to prove the `bytea` columns
+/// round-trip genuine ciphertext, ADR-0025).
+pub fn group_key() -> GroupKey {
+    GroupKey::from_bytes([0x33; KEY_LEN])
+}
+
+/// Encrypt one PII field with [`group_key`] under a distinct nonce (`n` in the low byte) so a member's
+/// name/phone/address never reuse a nonce. Returns the stored `nonce ‖ ciphertext` blob.
+pub fn enc(plaintext: &str, n: u8) -> Vec<u8> {
+    let mut bytes = [0u8; NONCE_LEN];
+    bytes[0] = n;
+    encrypt_field(
+        plaintext.as_bytes(),
+        &group_key(),
+        &Nonce::from_bytes(bytes),
+    )
+}
+
+/// Decrypt a stored `nonce ‖ ciphertext` blob with [`group_key`] (panics on tamper/wrong key — the
+/// tests expect valid ciphertext they just stored).
+pub fn dec(stored: &[u8]) -> String {
+    String::from_utf8(decrypt_field(stored, &group_key()).expect("decrypt valid ciphertext"))
+        .expect("utf8")
+}
+
+/// The keyed phone-lookup hash (I3) for a raw phone, as a [`PhoneLookupHash`] (the `NewMemberWrite`
+/// field type).
+pub fn phone_lookup(raw: &str) -> PhoneLookupHash {
+    PhoneLookupHash::from_bytes(phone_hash(raw).try_into().expect("32-byte hash"))
+}
+
+/// The at-rest hash of an Onboarding Code, as a [`CodeHash`] (the `NewMemberWrite` field type).
+pub fn onb_code_hash(raw: &str) -> CodeHash {
+    onboarding_code_hash(&key(), &OnboardingCode::new(raw))
+}
+
+/// Seed a Group's per-Group wrapped key row (`delegated_keys`) directly (superuser, bypasses RLS).
+pub async fn seed_delegated_key(c: &Client, g: Uuid, wrapped: &[u8]) {
+    let w = wrapped.to_vec();
+    c.execute(
+        "INSERT INTO delegated_keys (group_id, wrapped_key) VALUES ($1, $2)",
+        &[&g, &w],
+    )
+    .await
+    .expect("seed delegated key");
+}
+
+/// Seed a member row WITH encrypted PII + a controlled `updated_at` (superuser, no `set_updated_at`
+/// trigger fires on INSERT) — used by the detail-read + optimistic-concurrency tests that need a
+/// known token. `roles` are the wire spellings (e.g. `["rider"]`).
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_member_pii(
+    c: &Client,
+    g: Uuid,
+    m: Uuid,
+    roles: &[&str],
+    phone_lookup: Vec<u8>,
+    name_enc: Vec<u8>,
+    phone_enc: Vec<u8>,
+    addr_enc: Vec<u8>,
+    updated_secs: i64,
+) {
+    let roles: Vec<String> = roles.iter().map(|s| s.to_string()).collect();
+    c.execute(
+        "INSERT INTO members \
+           (id, group_id, roles, phone_lookup_hash, phone_encrypted, name_encrypted, \
+            address_encrypted, updated_at) \
+         VALUES ($1, $2, $3::text[]::member_role[], $4, $5, $6, $7, $8)",
+        &[
+            &m,
+            &g,
+            &roles,
+            &phone_lookup,
+            &phone_enc,
+            &name_enc,
+            &addr_enc,
+            &pg_time(updated_secs),
+        ],
+    )
+    .await
+    .expect("seed member pii");
+}
+
+/// Count a member's **live** (non-consumed, non-superseded) Onboarding Codes — the one-live invariant.
+pub async fn live_codes(c: &Client, member: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM onboarding_codes \
+         WHERE member_id=$1 AND consumed_at IS NULL AND superseded_at IS NULL",
+        member,
+    )
+    .await
+}
+
+/// Count all of a member's Onboarding Code rows (live + superseded) — to prove a regenerate adds a
+/// row and supersedes (rather than mutating in place).
+pub async fn total_codes(c: &Client, member: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM onboarding_codes WHERE member_id=$1",
+        member,
+    )
+    .await
+}
+
+/// The at-rest hash bytes of a member's live Onboarding Code, if any (for a constant-time verify).
+pub async fn live_code_hash(c: &Client, member: Uuid) -> Option<Vec<u8>> {
+    c.query_opt(
+        "SELECT code_hash FROM onboarding_codes \
+         WHERE member_id=$1 AND consumed_at IS NULL AND superseded_at IS NULL",
+        &[&member],
+    )
+    .await
+    .expect("query live code hash")
+    .map(|r| r.get::<_, Vec<u8>>("code_hash"))
+}
+
+/// Count audit_log rows for a member (superuser, bypasses RLS → sees the whole schema).
+pub async fn audit_rows(c: &Client, member: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM audit_log WHERE member_id=$1",
+        member,
+    )
+    .await
+}
+
+/// Count members in a Group (superuser) — to prove a duplicate-phone insert creates no new member.
+pub async fn members_in_group(c: &Client, g: Uuid) -> i64 {
+    count(c, "SELECT count(*) FROM members WHERE group_id=$1", g).await
 }
