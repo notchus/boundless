@@ -15,7 +15,9 @@
 //! lookup (`boundless_crypto::access_token_hash` / `refresh_token_hash`), not parsing.
 
 use boundless_crypto::{GroupKey, Nonce, KEY_LEN, NONCE_LEN};
-use boundless_domain::{AccessToken, AdminInvitationToken, RecoveryCode, RefreshToken};
+use boundless_domain::{
+    AccessToken, AdminInvitationToken, OnboardingCode, RecoveryCode, RefreshToken,
+};
 use rand_core::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
@@ -72,6 +74,16 @@ impl<R: RngCore + CryptoRng> SecretSource for RngSecretSource<R> {
         // (it is echoed in the registration URL and hashed at rest), so hex is fine — same draw as
         // the tokens. Single-use + server-TTL are enforced by the store/orchestration, not here.
         AdminInvitationToken::new(self.fresh_opaque())
+    }
+
+    fn fresh_onboarding_code(&mut self) -> OnboardingCode {
+        // INTERIM FORMAT — confirm at spec-008 issuance UX. Like the Recovery Code, an Onboarding
+        // Code's human-facing format (length, grouping, alphabet — a helper may read it aloud) is a
+        // UX decision that does not exist yet. Here it is the same high-entropy opaque draw as the
+        // tokens: the *security* property (256-bit, single-use, server-TTL, rate-limited, hashed at
+        // rest via `onboarding_code_hash`) is settled; only the *display* format is spec-008's to
+        // refine. Tracked in DEFERRED.md.
+        OnboardingCode::new(self.fresh_opaque())
     }
 
     fn fresh_nonce(&mut self) -> Nonce {

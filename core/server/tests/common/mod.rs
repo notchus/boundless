@@ -16,7 +16,7 @@ use boundless_auth::{
 };
 use boundless_crypto::{
     onboarding_code_hash, phone_lookup_hash, recovery_code_hash, refresh_token_hash,
-    refresh_token_matches, AdminInvitationTokenHash, CodeHash, GroupKey, HmacKey, Nonce,
+    refresh_token_matches, AdminInvitationTokenHash, CodeHash, GroupKey, HmacKey, Kek, Nonce,
     PhoneLookupHash, RefreshTokenHash, HASH_LEN, KEY_LEN, NONCE_LEN,
 };
 use boundless_domain::{
@@ -24,10 +24,14 @@ use boundless_domain::{
     OnboardingCode, Platform, RecoveryCode, RefreshToken, Role, SessionFamilyId,
 };
 use boundless_server_core::{
-    normalize_phone, AdminAlert, AdminAlertSink, AdminProvisioningStore, AuthConfig, AuthService,
-    AuthStore, BindRequest, BindResponse, DeviceStore, FamilyInfo, ManifestPointer, MemberRecord,
-    OnboardingCodeRow, RecoveryCodeRow, RecoveryRequest, RecoveryResponse, RefreshClassification,
-    RefreshRequest, RefreshResponse, SecretSource, SignInRequest, SignInResponse, StoreBackend,
+    generate_group_key, normalize_phone, AdminAlert, AdminAlertSink, AdminProvisioningStore,
+    AuditEntry, AuditStore, AuthConfig, AuthService, AuthStore, BindRequest, BindResponse,
+    DelegatedKeyStore, DeviceStore, DuplicateDisclosureAudit, EditApplied, FamilyInfo,
+    InsertMemberOutcome, ManifestPointer, MemberConfig, MemberEditWrite, MemberRecord,
+    MemberService, MemberStore, NewMemberWrite, OnboardingCodeRow, OnboardingStatus,
+    RecoveryCodeRow, RecoveryRequest, RecoveryResponse, RefreshClassification, RefreshRequest,
+    RefreshResponse, SecretSource, SignInRequest, SignInResponse, StoreBackend, StoredMemberPii,
+    StoredMemberSummary,
 };
 use std::future::Future;
 use uuid::Uuid;
@@ -166,6 +170,10 @@ impl SecretSource for SeqSecrets {
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
         self.n += 1;
         AdminInvitationToken::new(format!("admin-invite-{}", self.n))
+    }
+    fn fresh_onboarding_code(&mut self) -> OnboardingCode {
+        self.n += 1;
+        OnboardingCode::new(format!("onboarding-{}", self.n))
     }
     fn fresh_nonce(&mut self) -> Nonce {
         // Deterministic but distinct per call (the counter in the low bytes) so a test never reuses
@@ -624,5 +632,317 @@ impl AdminProvisioningStore for MemStore {
             consumed: false,
         });
         Ok(true)
+    }
+}
+
+// === Member-management store (in-memory) =========================================================
+
+/// A fixed KEK for the member tests (production loads this from Secrets Store, ADR-0025 R3). A fresh
+/// instance each call — `Kek` is move-only + zeroizes on drop, but two instances with the same bytes
+/// wrap/unwrap interchangeably, so the bootstrap KEK and the `MemberConfig` KEK can be separate.
+pub fn member_kek() -> Kek {
+    Kek::from_bytes([0x55; KEY_LEN])
+}
+
+/// The fully-wired member-management engine the tests drive.
+pub type TestMemberService = MemberService<MemMemberStore, SeqSecrets, FixedClock>;
+
+/// Build the member engine around a store at a fixed instant, with [`member_kek`] as the KEK and the
+/// shared per-instance HMAC [`key`].
+pub fn member_service(store: MemMemberStore, clock_secs: i64) -> TestMemberService {
+    MemberService::new(
+        store,
+        SeqSecrets::default(),
+        FixedClock::at_secs(clock_secs),
+        MemberConfig {
+            hmac_key: key(),
+            kek: member_kek(),
+        },
+    )
+}
+
+/// A bootstrapped member store **plus** the plaintext per-Group key it was seeded with — so a test
+/// can decrypt exactly what the service stored. The KEK is [`member_kek`], so a [`member_service`]
+/// over the returned store unwraps the *same* key (`GroupKey` is move-only, returned by value).
+pub fn bootstrapped_store_with_key() -> (MemMemberStore, GroupKey) {
+    let mut store = MemMemberStore::new();
+    let mut boot_secrets = SeqSecrets::default();
+    let boot = generate_group_key(&mut boot_secrets, &member_kek());
+    store.wrapped_group_key = Some(boot.wrapped_key);
+    (store, boot.group_key)
+}
+
+/// A stored member row (the in-memory analog of the `members` PII columns + status + concurrency token).
+struct StoredMemberRow {
+    name_encrypted: Vec<u8>,
+    phone_encrypted: Vec<u8>,
+    address_encrypted: Vec<u8>,
+    phone_lookup: [u8; HASH_LEN],
+    roles: Vec<Role>,
+    onboarding_status: OnboardingStatus,
+    updated_at: UnixSeconds,
+}
+
+/// An in-memory [`MemberStore`] + [`AuditStore`] + [`DelegatedKeyStore`]. Single-threaded, so its
+/// "one transaction" methods are trivially atomic — they model the contract the Postgres twin must
+/// honor (the true DB-level proof is T07). The audit **write** is folded into the PII-read /
+/// duplicate-disclosure methods (I5/§7), and `recorded_audits()` is the observable channel the tests
+/// assert on (and `member_list_emits_no_audit_event` asserts is untouched on the list path).
+#[derive(Default)]
+pub struct MemMemberStore {
+    wrapped_group_key: Option<Vec<u8>>,
+    members: HashMap<MemberId, StoredMemberRow>,
+    phone_index: HashMap<[u8; HASH_LEN], MemberId>,
+    codes: HashMap<MemberId, (CodeHash, UnixSeconds)>,
+    audits: Vec<AuditEntry>,
+    next_member: u128,
+}
+
+impl MemMemberStore {
+    /// A fresh, empty store with a deterministic member-id base (clear of the small `member_id(n)` ids).
+    pub fn new() -> Self {
+        Self {
+            next_member: 50_000,
+            ..Self::default()
+        }
+    }
+
+    /// A store seeded with a valid wrapped per-Group key (bootstrapped under [`member_kek`]) — the
+    /// common starting point so issuance can encrypt. Use [`MemMemberStore::new`] (no key) to drive
+    /// the AC12 fail-closed path.
+    pub fn bootstrapped() -> Self {
+        let mut store = Self::new();
+        let mut boot_secrets = SeqSecrets::default();
+        let boot = generate_group_key(&mut boot_secrets, &member_kek());
+        store.wrapped_group_key = Some(boot.wrapped_key);
+        store
+    }
+
+    // --- assertions / accessors ---
+
+    /// Every recorded audit row (the observable I5 channel).
+    pub fn recorded_audits(&self) -> &[AuditEntry] {
+        &self.audits
+    }
+
+    /// The number of members currently stored.
+    pub fn member_count(&self) -> usize {
+        self.members.len()
+    }
+
+    /// The member's live Onboarding Code hash + expiry, if any (the type has no `PartialEq`, so a
+    /// test verifies a minted code against it with the constant-time `onboarding_code_matches`).
+    pub fn live_code(&self, member: MemberId) -> Option<(CodeHash, UnixSeconds)> {
+        self.codes.get(&member).map(|(h, e)| (h.clone(), *e))
+    }
+
+    /// The member's stored phone-lookup hash, rebuilt for a constant-time `phone_lookup_matches` check
+    /// (AC4 — the next sign-in matches).
+    pub fn stored_phone_lookup(&self, member: MemberId) -> Option<PhoneLookupHash> {
+        self.members
+            .get(&member)
+            .map(|m| PhoneLookupHash::from_bytes(m.phone_lookup))
+    }
+
+    /// The member's stored `name_encrypted` blob (to assert re-encryption changed the nonce/ciphertext).
+    pub fn stored_name_encrypted(&self, member: MemberId) -> Option<Vec<u8>> {
+        self.members.get(&member).map(|m| m.name_encrypted.clone())
+    }
+
+    /// The member's stored `phone_encrypted` blob.
+    pub fn stored_phone_encrypted(&self, member: MemberId) -> Option<Vec<u8>> {
+        self.members.get(&member).map(|m| m.phone_encrypted.clone())
+    }
+
+    /// The member's stored `address_encrypted` blob.
+    pub fn stored_address_encrypted(&self, member: MemberId) -> Option<Vec<u8>> {
+        self.members
+            .get(&member)
+            .map(|m| m.address_encrypted.clone())
+    }
+
+    /// The member's stored role set.
+    pub fn stored_roles(&self, member: MemberId) -> Option<Vec<Role>> {
+        self.members.get(&member).map(|m| m.roles.clone())
+    }
+
+    /// The member's optimistic-concurrency token (to pass as `expected_updated_at` on a clean edit).
+    pub fn stored_updated_at(&self, member: MemberId) -> Option<UnixSeconds> {
+        self.members.get(&member).map(|m| m.updated_at)
+    }
+
+    /// Force a member's onboarding status (to drive list/detail round-trips at a non-default status).
+    pub fn set_member_status(&mut self, member: MemberId, status: OnboardingStatus) {
+        if let Some(m) = self.members.get_mut(&member) {
+            m.onboarding_status = status;
+        }
+    }
+}
+
+impl StoreBackend for MemMemberStore {
+    type Error = std::convert::Infallible;
+}
+
+impl MemberStore for MemMemberStore {
+    async fn insert_member(
+        &mut self,
+        write: NewMemberWrite,
+        disclosure: DuplicateDisclosureAudit,
+        now: UnixSeconds,
+    ) -> Result<InsertMemberOutcome, Self::Error> {
+        // Phone conflict: surface the existing member's summary AND write the disclosure audit in the
+        // same (trivially atomic) step — the surface-and-link disclosure can never occur unaudited.
+        if let Some(&existing_id) = self.phone_index.get(write.phone_lookup.as_bytes()) {
+            let existing = &self.members[&existing_id];
+            self.audits.push(AuditEntry {
+                timestamp: now,
+                admin_id: write.created_by,
+                member_id: existing_id,
+                fields: disclosure.fields,
+                request_id: disclosure.request_id,
+            });
+            return Ok(InsertMemberOutcome::DuplicatePhone(StoredMemberSummary {
+                member_id: existing_id,
+                name_encrypted: existing.name_encrypted.clone(),
+                roles: existing.roles.clone(),
+                onboarding_status: existing.onboarding_status,
+            }));
+        }
+        let member_id = MemberId::from_uuid(Uuid::from_u128(self.next_member));
+        self.next_member += 1;
+        self.phone_index
+            .insert(*write.phone_lookup.as_bytes(), member_id);
+        self.members.insert(
+            member_id,
+            StoredMemberRow {
+                name_encrypted: write.name_encrypted,
+                phone_encrypted: write.phone_encrypted,
+                address_encrypted: write.address_encrypted,
+                phone_lookup: *write.phone_lookup.as_bytes(),
+                roles: write.roles,
+                onboarding_status: OnboardingStatus::IssuedNotOnboarded,
+                updated_at: now,
+            },
+        );
+        self.codes.insert(
+            member_id,
+            (write.onboarding_code_hash, write.code_expires_at),
+        );
+        Ok(InsertMemberOutcome::Created(member_id))
+    }
+
+    async fn list_members(&mut self) -> Result<Vec<StoredMemberSummary>, Self::Error> {
+        // Exclude Admin-role members (not managed on this surface, I11). No audit (name-only).
+        Ok(self
+            .members
+            .iter()
+            .filter(|(_, m)| !m.roles.contains(&Role::Admin))
+            .map(|(id, m)| StoredMemberSummary {
+                member_id: *id,
+                name_encrypted: m.name_encrypted.clone(),
+                roles: m.roles.clone(),
+                onboarding_status: m.onboarding_status,
+            })
+            .collect())
+    }
+
+    async fn read_member_detail_audited(
+        &mut self,
+        member_id: MemberId,
+        audit: AuditEntry,
+    ) -> Result<Option<StoredMemberPii>, Self::Error> {
+        // Atomic SELECT + audit-INSERT: write the audit row only if the member exists (a not-found
+        // read discloses no PII, so it writes no audit).
+        let Some(m) = self.members.get(&member_id) else {
+            return Ok(None);
+        };
+        let pii = StoredMemberPii {
+            member_id,
+            name_encrypted: m.name_encrypted.clone(),
+            phone_encrypted: m.phone_encrypted.clone(),
+            address_encrypted: m.address_encrypted.clone(),
+            roles: m.roles.clone(),
+            onboarding_status: m.onboarding_status,
+            updated_at: m.updated_at,
+        };
+        self.audits.push(audit);
+        Ok(Some(pii))
+    }
+
+    async fn edit_member(
+        &mut self,
+        member_id: MemberId,
+        write: MemberEditWrite,
+        expected_updated_at: UnixSeconds,
+        now: UnixSeconds,
+    ) -> Result<EditApplied, Self::Error> {
+        let Some(m) = self.members.get_mut(&member_id) else {
+            return Ok(EditApplied::Stale); // gone → treated as "someone changed this" (no member deletion in v1)
+        };
+        if m.updated_at != expected_updated_at {
+            return Ok(EditApplied::Stale);
+        }
+        if let Some(name) = write.name_encrypted {
+            m.name_encrypted = name;
+        }
+        if let Some(phone) = write.phone_encrypted {
+            m.phone_encrypted = phone;
+        }
+        if let Some(addr) = write.address_encrypted {
+            m.address_encrypted = addr;
+        }
+        if let Some(roles) = write.roles {
+            m.roles = roles;
+        }
+        if let Some(lookup) = write.phone_lookup {
+            // Re-index: the phone changed, so the lookup hash moved (AC11 — next sign-in matches).
+            let old = m.phone_lookup;
+            m.phone_lookup = *lookup.as_bytes();
+            self.phone_index.remove(&old);
+            self.phone_index.insert(*lookup.as_bytes(), member_id);
+        }
+        // Re-borrow to bump the concurrency token (the `phone_index` mutation released the &mut).
+        self.members
+            .get_mut(&member_id)
+            .expect("member present (just edited)")
+            .updated_at = now;
+        Ok(EditApplied::Updated)
+    }
+
+    async fn regenerate_code(
+        &mut self,
+        member_id: MemberId,
+        new_code_hash: CodeHash,
+        code_expires_at: UnixSeconds,
+        _now: UnixSeconds,
+    ) -> Result<bool, Self::Error> {
+        if !self.members.contains_key(&member_id) {
+            return Ok(false);
+        }
+        // Supersede-then-insert: replacing the live code is the in-memory analog of the partial-unique
+        // "one live code per member" supersede (the real atomic SQL is T07).
+        self.codes
+            .insert(member_id, (new_code_hash, code_expires_at));
+        Ok(true)
+    }
+}
+
+impl AuditStore for MemMemberStore {
+    async fn list_audit_log(
+        &mut self,
+        member: Option<MemberId>,
+    ) -> Result<Vec<AuditEntry>, Self::Error> {
+        Ok(self
+            .audits
+            .iter()
+            .filter(|a| member.is_none_or(|m| a.member_id == m))
+            .cloned()
+            .collect())
+    }
+}
+
+impl DelegatedKeyStore for MemMemberStore {
+    async fn current_wrapped_key(&mut self) -> Result<Option<Vec<u8>>, Self::Error> {
+        Ok(self.wrapped_group_key.clone())
     }
 }

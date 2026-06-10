@@ -33,8 +33,8 @@ use std::str::FromStr;
 use boundless_auth::{Clock, DeviceBinding, Session, UnixSeconds};
 use boundless_crypto::{CodeHash, GroupKey, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash};
 use boundless_domain::{
-    AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken,
-    SessionFamilyId,
+    AccessToken, AdminInvitationToken, DeviceToken, MemberId, OnboardingCode, RecoveryCode,
+    RefreshToken, SessionFamilyId,
 };
 use boundless_server_core::{
     AdminAlert, AdminAlertSink, AuthStore, DeviceStore, MemberRecord, OnboardingCodeRow,
@@ -308,6 +308,11 @@ impl SecretSource for PlaceholderSecrets {
     }
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken {
         unreachable!("sign-in mints no secrets; RngSecretSource lands with the bind-device slice")
+    }
+    fn fresh_onboarding_code(&mut self) -> OnboardingCode {
+        // Sign-in issues no members; the issuance route (spec 008 T09) injects the production
+        // `RngSecretSource` over a CSPRNG. So this never fires rather than ever minting a fake code.
+        unreachable!("sign-in issues no members; RngSecretSource lands with the issuance slice")
     }
     fn fresh_nonce(&mut self) -> Nonce {
         unreachable!("sign-in encrypts no fields; RngSecretSource lands with the issuance slice")

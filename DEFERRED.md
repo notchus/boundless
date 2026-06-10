@@ -1871,6 +1871,88 @@
   - **WHEN:** **T09** (the Worker KEK-load + GroupKey-cache path) — rides the same `emit()` sink the
     spec-008 issuance I10 fixture needs.
 
+## Server / core — `MemberService` (spec 008 T05 — out-of-scope register)
+
+> T05 shipped the pure `core/server` `MemberService` decision layer (`core/server/src/member.rs`):
+> issuance (validate → in-core `normalize_phone` → two-fold phone + secretbox name/address → mint
+> Onboarding Code → atomic insert), edit (re-encrypt + recompute phone hash + optimistic concurrency
+> *decision*), regenerate, the audited detail read + audit-log read (I5), the AC8 `MemberSummary`
+> projection + the two-type `MemberDetail`/`MemberDetailView` split, `OnboardingStatus`/`AuditField`/
+> `AuditEntry`, the `IssuableRole` admin-unrepresentable reject (`ADMIN_MEMBER_ROLE_FORBIDDEN`, the
+> 6th issuance code), and the duplicate-phone surface-and-link (audited). All behind 3 new ports
+> (`MemberStore`/`AuditStore`/`DelegatedKeyStore`) with in-memory doubles; **no new deps**;
+> wasm32-clean; `.bindings.lock` regenerated (80 inputs). **Module-placement note** (like T04's
+> bootstrap module): the 3 member ports live in `member.rs` (co-located with the member types), not
+> `ports.rs` — `ports.rs` gained only `SecretSource::fresh_onboarding_code`. Everything below was
+> deliberately left out; each carries a WHEN.
+
+- [ ] **Decrypted-PII zeroization (T02 review carry-forward (a)) — decision recorded, change deferred.**
+      `decrypt_field` returns a plain `Vec<u8>`; the boundary re-wraps it into tainted
+      `MemberName`/`PhoneNumber`/`Address` (inner `String` not zeroized) and `MemberDetail::to_wire`
+      makes another plain-`String` copy in `MemberDetailView`. So a detail read scatters 3+ unzeroized
+      plaintext copies — the DO-memory-snapshot residual on **PII** (vs keys, which T02 zeroizes).
+      Whether to give the `tainted_secret!` types a zeroizing buffer is a cross-cutting decision.
+  - **WHEN:** a privacy-hardening pass / when the `tainted_secret!` macro gains a zeroizing buffer.
+- [ ] **DB-level atomicity + RLS proofs (T07).** The in-memory double *models* the port atomicity
+      contracts (member+code insert in one txn; audit INSERT atomic with the detail SELECT, R5;
+      regenerate supersede-then-insert; optimistic `UPDATE … WHERE updated_at = $expected`). The real
+      `PgMemberStore`/`PgAuditStore`/`PgDelegatedKeyStore` over real PG18 prove them (the partial-unique
+      "one live code" index, the `(group_id, phone_lookup)` unique → `DuplicatePhone`, RLS isolation).
+      Also the **`list_members` admin-exclusion** is an in-memory `roles.contains(Admin)` filter here;
+      the SQL is `WHERE 'admin' != ALL(roles)` at T07.
+  - **WHEN:** **T07** (the Postgres adapters).
+- [ ] **`edit_member` has no duplicate-phone conflict outcome (T05 review, reviewer+sec LOW).** Issuance
+      models a phone collision as the first-class `IssueMemberOutcome::DuplicatePhone` (audited
+      surface-and-link); `EditMemberOutcome` has no analogue. An edit that moves a member's phone onto a
+      number already enrolled recomputes the lookup hash and trusts the store — in Postgres the
+      `(group_id, phone_lookup_hash)` partial-unique index rejects it as an opaque `StoreError` (a
+      500-class failure, not the calm `admin.member.duplicate_phone` copy), and the in-memory `edit_member`
+      double *silently overwrites* the `phone_index` (single-tenant, models the happy path only). At T07/T09
+      decide the edit-collision contract: map the unique-violation to a clean
+      `EditMemberOutcome`-conflict result (audit any existing-member disclosure as issuance does) **or**
+      document it as a calm `ADMIN_MEMBER_DUPLICATE_PHONE` reject with no partial write; add a
+      `pg_member_store_edit_into_duplicate_phone_*` integration test so the double's silent-overwrite
+      cannot mask a regression.
+  - **WHEN:** **T07** (DB conflict) / **T09** (the user-facing/audited mapping).
+- [ ] **Duplicate-phone cross-surface contract (T01 review (b)).** The `DuplicatePhone` outcome +
+      `ADMIN_MEMBER_DUPLICATE_PHONE` are **admin-surface-only** (R9). A T08 contract test must assert no
+      `/api/auth/*` shape can return that code or a member-identity field (the no-existence-leak
+      discipline holds on the member-facing endpoints). The T05 return types keep the duplicate arm in
+      the admin-only `IssueMemberOutcome` (never shared with an auth shape).
+  - **WHEN:** **T08** (OpenAPI freeze + contract test).
+- [ ] **OpenAPI single-source pins (T08).** `OnboardingStatus` + `AuditField` wire **casing**
+      (`snake_case`, pinned by T05 serde tests) mirrored verbatim into the OpenAPI enums; the
+      `AuditEntry.timestamp` wire form = **epoch-seconds integer** (core `UnixSeconds(i64)`, no chrono);
+      `member_id` as `{type:string, format:uuid}` (`$serde(transparent)`); `roles` reuse `Role` by
+      `$ref`; and the `IssueMemberResponse` **two-arm `oneOf`** (Issued-with-code vs duplicate-with-
+      summary) — the existing contract test does NOT descend `oneOf`, so T08 needs an explicit per-arm
+      assertion (the `ManifestPointer`-miss class).
+  - **WHEN:** **T08**.
+- [ ] **Worker projection + R10 + request_id (T09).** The Worker must (a) serialize `MemberDetailView`
+      via serde (`Response::from_json(&view)`), **not** a hand-rolled `json!` — `server/src/runtime/**`
+      is **not** in `.bindings.lock`, so a re-typed projection is unguarded (the `ManifestPointer`
+      seam); (b) keep the inbound raw `name`/`address`/`phone` off the log path + out of error responses
+      (R10 — the core maps to value-free codes); (c) mint `request_id` as a **server-minted opaque id**
+      (never client-echoed), so the persisted, admin-readable `audit_log` row has no PII/secret
+      injection point. Plus: a **field-decrypt failure** collapses to `ADMIN_GROUP_KEY_MISSING` on the
+      wire (no oracle); the Worker logs the underlying `SecretboxError` variant via `emit()` to
+      distinguish "no key" from "corrupt field/blob" (extends the T04 L1 carry-forward to field decrypts).
+  - **WHEN:** **T09** (the deployable Worker + `emit()` sink).
+- [ ] **Server-side member search/filter (`?search=&role=&status=`).** `list_members` is param-less in
+      T05 (lists all non-Admin members); the search/filter (SQL `WHERE` + the query params) is a T07/T08/
+      T10 concern. The `MemberStore::list_members` signature may gain a filter param then.
+  - **WHEN:** **T07/T10**.
+- [ ] **`PATCH` returns the updated detail?** T05's `edit_member` returns only `{Updated, Stale,
+      Rejected}` (not the detail), so editing is **not** an audited read — the UI re-fetches via the
+      audited `read_detail` if it wants to show the result. Whether the wire `PATCH` returns the detail
+      (and so audits) is a T08 wire-shape decision.
+  - **WHEN:** **T08**.
+- [ ] **Keep the new admin types off the UniFFI/wasm FFI mirror crates.** `MemberSummary`/`MemberDetail`/
+      `MemberDetailView`/`OnboardingStatus`/`AuditEntry`/`AuditField`/`IssuableRole` are admin-web/TS-only
+      (no proto, no UniFFI) — never add them to `core/ffi-swift`/`core/ffi-kotlin` (the parity gate would
+      catch a one-sided addition, but they should simply never be mirrored).
+  - **WHEN:** ongoing (a no-op to maintain; note for a future reader).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

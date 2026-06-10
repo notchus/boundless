@@ -24,8 +24,8 @@ use boundless_crypto::{
     AdminInvitationTokenHash, CodeHash, GroupKey, HmacKey, Nonce, PhoneLookupHash, RefreshTokenHash,
 };
 use boundless_domain::{
-    AccessToken, AdminInvitationToken, DeviceToken, MemberId, RecoveryCode, RefreshToken, Role,
-    SessionFamilyId,
+    AccessToken, AdminInvitationToken, DeviceToken, MemberId, OnboardingCode, RecoveryCode,
+    RefreshToken, Role, SessionFamilyId,
 };
 
 use crate::alerts::AdminAlert;
@@ -283,6 +283,12 @@ pub trait SecretSource {
     fn fresh_recovery_code(&mut self) -> RecoveryCode;
     /// A fresh Admin registration-invitation token (single-use, opaque, no PII — ADR-0015 / AC16).
     fn fresh_admin_invitation(&mut self) -> AdminInvitationToken;
+    /// A fresh single-use Onboarding Code minted at member issuance / regeneration (ADR-0016; spec
+    /// 008 T05 `MemberService`). Like every secret here it must be a fresh CSPRNG draw in production
+    /// — never derived/constant — so an issued code is unguessable; the human-facing format is an
+    /// issuance/UX detail (interim: the same opaque draw as the tokens). Unlike `fresh_group_key`
+    /// (operator-only bootstrap), issuance IS a live Worker path, so every `SecretSource` must mint it.
+    fn fresh_onboarding_code(&mut self) -> OnboardingCode;
     /// A fresh, single-use random secretbox **nonce** for one field encryption (I1 / R1, ADR-0025;
     /// spec 008). MUST be unique per encryption — a reused XSalsa20-Poly1305 nonce is catastrophic —
     /// so it is a CSPRNG draw, never counter/time-derived (a pooled multi-isolate Worker fleet has no

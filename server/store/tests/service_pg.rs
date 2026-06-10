@@ -76,6 +76,10 @@ impl SecretSource for SeqSecrets {
         self.n += 1;
         AdminInvitationToken::new(format!("admin-invite-{}", self.n))
     }
+    fn fresh_onboarding_code(&mut self) -> OnboardingCode {
+        self.n += 1;
+        OnboardingCode::new(format!("onboarding-{}", self.n))
+    }
     fn fresh_nonce(&mut self) -> Nonce {
         // Deterministic, distinct per call (so a test never reuses a nonce); prod uses a CSPRNG.
         self.n += 1;

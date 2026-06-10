@@ -4,8 +4,11 @@
 mod common;
 
 use boundless_auth::{OnboardingCodeVerdict, RecoveryCodeVerdict, RefreshVerdict};
-use boundless_domain::AppVersion;
-use boundless_server_core::{AdminAlert, GroupKeyMissing};
+use boundless_domain::{AppVersion, Role};
+use boundless_server_core::{
+    AdminAlert, AdminRoleForbidden, EditMemberOutcome, GroupKeyMissing, IssueMemberOutcome,
+    MemberError, MemberSummary, OnboardingStatus,
+};
 use common::member_id;
 use std::path::Path;
 
@@ -89,6 +92,8 @@ fn admin_member_issuance_codes_registered() {
         "ADMIN_MEMBER_ADDRESS_INVALID",
         "ADMIN_MEMBER_DUPLICATE_PHONE",
         "ADMIN_MEMBER_EDIT_STALE",
+        "ADMIN_MEMBER_ROLE_FORBIDDEN",
+        "ADMIN_MEMBER_ROLES_REQUIRED",
         "ADMIN_GROUP_KEY_MISSING",
     ] {
         let cell = format!("`{code}`");
@@ -111,4 +116,71 @@ fn group_key_missing_error_code_registered() {
         registry().contains(&format!("`{code}`")),
         "GroupKeyMissing's code {code} is not registered as a code cell in docs/error-codes.md (P12)"
     );
+}
+
+/// The spec-008 T05 emitting types must each surface a **registered** code: ties every
+/// `MemberError` variant, `AdminRoleForbidden`, and the outcome-level `DuplicatePhone`/`EditStale`
+/// codes to the literal AND the registry (the stronger form of `admin_member_issuance_codes_registered`,
+/// now that the emitting types exist — a future typo in either the code or the doc fails CI).
+#[test]
+fn member_emitting_types_codes_match_registry() {
+    let reg = registry();
+
+    // Validation rejects (the `MemberError` enum).
+    assert_eq!(
+        MemberError::PhoneInvalid.error_code(),
+        "ADMIN_MEMBER_PHONE_INVALID"
+    );
+    assert_eq!(
+        MemberError::AddressInvalid.error_code(),
+        "ADMIN_MEMBER_ADDRESS_INVALID"
+    );
+    assert_eq!(
+        MemberError::RolesRequired.error_code(),
+        "ADMIN_MEMBER_ROLES_REQUIRED"
+    );
+    assert_eq!(
+        MemberError::GroupKeyMissing.error_code(),
+        "ADMIN_GROUP_KEY_MISSING"
+    );
+    // The I11 admin-role reject (the wire-conversion error).
+    assert_eq!(
+        AdminRoleForbidden.error_code(),
+        "ADMIN_MEMBER_ROLE_FORBIDDEN"
+    );
+
+    let mut codes: Vec<&str> = vec![
+        MemberError::PhoneInvalid.error_code(),
+        MemberError::AddressInvalid.error_code(),
+        MemberError::RolesRequired.error_code(),
+        MemberError::GroupKeyMissing.error_code(),
+        AdminRoleForbidden.error_code(),
+    ];
+    // Outcome-level codes (not `MemberError` variants).
+    let duplicate = IssueMemberOutcome::DuplicatePhone {
+        existing: MemberSummary {
+            member_id: member_id(1),
+            name: "x".into(),
+            roles: vec![Role::Rider],
+            onboarding_status: OnboardingStatus::IssuedNotOnboarded,
+        },
+    };
+    codes.push(
+        duplicate
+            .error_code()
+            .expect("duplicate-phone carries a code"),
+    );
+    codes.push(
+        EditMemberOutcome::Stale
+            .error_code()
+            .expect("stale carries a code"),
+    );
+
+    for code in codes {
+        let cell = format!("`{code}`");
+        assert!(
+            reg.contains(&cell),
+            "member code {code} is not registered as a code cell in docs/error-codes.md (P12)"
+        );
+    }
 }

@@ -54,6 +54,7 @@ mod alerts;
 mod bind;
 mod bootstrap;
 mod hub;
+mod member;
 mod phone;
 mod ports;
 mod recovery;
@@ -72,6 +73,14 @@ pub use bootstrap::{
     generate_group_key, load_group_key, GroupKeyBootstrap, GroupKeyMissing, INITIAL_KEK_VERSION,
 };
 pub use hub::{GroupHubState, CODE_ATTEMPT_WINDOW_SECS};
+pub use member::{
+    issuable_roles, AdminRoleForbidden, AuditEntry, AuditField, AuditStore, DelegatedKeyStore,
+    DetailRead, DuplicateDisclosureAudit, EditApplied, EditMemberInput, EditMemberOutcome,
+    InsertMemberOutcome, IssuableRole, IssueMemberInput, IssueMemberOutcome, MemberConfig,
+    MemberDetail, MemberDetailView, MemberEditWrite, MemberError, MemberService, MemberStore,
+    MemberSummary, NewMemberWrite, OnboardingStatus, RegenerateOutcome, StoredMemberPii,
+    StoredMemberSummary, ONBOARDING_CODE_TTL_SECS,
+};
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{
     AdminAlertSink, AdminProvisioningStore, AuthStore, DeviceStore, FamilyInfo, MemberRecord,

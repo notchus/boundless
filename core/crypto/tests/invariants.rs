@@ -27,8 +27,8 @@ use boundless_domain::{
     AccessToken, Address, AdminInvitationToken, MemberName, OnboardingCode, PhoneNumber,
     RecoveryCode, RefreshToken,
 };
-use proptest::prelude::*;
 use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
+use proptest::prelude::*;
 use serde_json::Value;
 
 // === I3 / AC3 — keyed-hash constant-time verify ===================================

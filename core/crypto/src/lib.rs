@@ -41,12 +41,12 @@ pub use hashing::{
     refresh_token_hash, refresh_token_matches, AccessTokenHash, AdminInvitationTokenHash, CodeHash,
     HmacKey, PhoneLookupHash, RefreshTokenHash, HASH_LEN, HMAC_KEY_LEN,
 };
-pub use secretbox::{
-    decrypt_field, encrypt_field, unwrap_group_key, wrap_group_key, GroupKey, Kek, Nonce,
-    SecretboxError, KEY_LEN, MAC_LEN, NONCE_LEN,
-};
 pub use manifest::{
     canonical_manifest_bytes, decide_manifest, verify_manifest_signature, FetchedManifest,
     ManifestCache, ManifestDecision, ManifestErrorCode, ManifestResolution, Signature,
     VerifyingKey, PUBLIC_KEY_LEN, SIGNATURE_LEN,
+};
+pub use secretbox::{
+    decrypt_field, encrypt_field, unwrap_group_key, wrap_group_key, GroupKey, Kek, Nonce,
+    SecretboxError, KEY_LEN, MAC_LEN, NONCE_LEN,
 };
