@@ -155,12 +155,17 @@
 > slice (per the approved plan + the "keep track of everything out of scope" instruction).
 > Each carries a WHEN trigger so it is picked up at the right task.
 
-- [ ] **Per-Group sealed-box / secretbox PII encryption (I1).** dryoc-based encryption of
-      `Address` (and any field-level PII) at rest. The `core/crypto` doc still names this as
-      the crate's eventual scope, but T03 does **not** implement it (addresses are entered at
-      admin *issuance*, not on the onboarded device).
-  - **WHEN:** **spec 008** (admin member-management / issuance), where `Address` persistence
-    and the per-Group key + KEK (Secrets Store) land. Adds the `i1_addresses_encrypted` test.
+- [ ] **Per-Group field-level PII encryption (I1).** dryoc-based encryption of `Address` (and
+      any field-level PII) at rest. The `core/crypto` doc named this as the crate's eventual
+      scope; spec 001 T03 did **not** implement it (addresses are entered at admin *issuance*,
+      not on the onboarded device). **Now governed by ADR-0025** — the `sealed-box`-vs-`secretbox`
+      hedge is resolved to **secretbox** (symmetric, XSalsa20-Poly1305; sealed boxes reserved for
+      I9's live tracker).
+  - **WHEN:** **spec 008 T02** (this is the load-bearing slice): `core/crypto/src/secretbox.rs`
+    (`encrypt_field`/`decrypt_field`, `GroupKey`/`Kek` wrap/unwrap, zeroized) + the tainted
+    `Address`/`MemberName` + the `core/crypto/tests/invariants.rs::i1_addresses_encrypted`/
+    `i1_name_encrypted` tests. The per-Group key + KEK (Secrets Store) **wiring** + `Address`
+    persistence land across T03 (columns) / T04 (bootstrap) / T07 (DB) / T09 (Worker KEK binding).
 
 - [ ] **Onboarding/Recovery code generation, TTL, rate-limit, single-use + regenerate-
       invalidates-prior.** T03 ships only the at-rest **hash** primitive (`*_code_hash` /
@@ -837,8 +842,9 @@
 - [ ] **`DeviceStore` Postgres impl** (`current_device_bindings` / `invalidate_device` /
       `register_device`). Now isolated behind the `DeviceStore` port (ADR-0020); `PgAuthStore` does
       **not** implement it. `register_device` must write `token_encrypted bytea`, and **device-token
-      at-rest encryption does not exist yet** (the I1-adjacent sealed-box crypto is deferred to spec
-      008; the push registration itself to spec 007). The DeviceToken is PII (P2) — storing it without
+      at-rest encryption** is now *unblocked*: the I1-adjacent **secretbox** primitive (ADR-0025) lands
+      at **spec 008 T02** (`encrypt_field` + the per-Group `GroupKey`), so the push spec (007) can
+      encrypt the token under the same per-Group key. The DeviceToken is PII (P2) — storing it without
       encryption would violate "encrypt before writing." The Worker (T07-shell-B) and the orchestration
       tests currently compose `PgAuthStore` with an **in-memory** `DeviceStore`; implement the Postgres
       `PgDeviceStore` when the encryption primitive lands. **Guard-rail (sec-audit F3):** when it lands,
@@ -1770,6 +1776,60 @@
       here is **generated** (pseudoize), not translated; real locales (incl. the shipping Swiss German
       and Arabic/Hebrew RTL) arrive through the translation pipeline + the signed KV manifest.
   - **WHEN:** the translation pipeline / manifest service spec.
+
+## Admin member-management (spec 008 — deferred shells, recorded at T01)
+
+> Spec 008 (admin member-management / issuance) is decomposed into T01–T11 (`specs/008-admin-member-management/tasks.md`).
+> These are the **deferred shells** the plan (§10/§15) and `tasks.md` enumerate — the legs that cannot be
+> built/proven host-only, plus the spec's explicit out-of-scope items. Each carries a WHEN trigger.
+> Per-task out-of-scope registers (the T02/T03/… "what this slice deliberately left out") are appended as
+> each task lands, matching the spec-001 convention.
+
+- [ ] **Live `boundless::logging::emit()` sink + the member-issuance I10 scrubber fixture.** The product's
+      hottest PII write path (name + address + phone + the per-Group key). The deployable scrubbed `emit()`
+      sink + the no-raw-`tracing` lint are the shared T07-shell-B track (spec 001); spec 008 adds a
+      **member-issuance** red-team fixture (a synthetic issuance log line carrying name/address/phone →
+      assert zero PII survives the scrubber) once that sink exists.
+  - **WHEN:** **spec 001 T07-shell-B** (the live `emit()` sink) + spec 008 T09 (Worker issuance logging).
+
+- [ ] **KEK re-wrap rotation tooling + the Group-key re-encrypt Workflow (ADR-0025).** The
+      **runbook-documented** procedures (`docs/runbooks/key-management.md`, authored at T01) are
+      **unbuilt**: KEK rotation is cheap (re-wrap `delegated_keys.wrapped_key`, bump `kek_version`);
+      Group-key rotation is the expensive re-encrypt-every-PII-row maintenance Workflow. No rotation
+      *trigger* ships in spec 008 — a long-lived key relies on KEK protection + the nonce/zeroize discipline.
+  - **WHEN:** a key-rotation maintenance spec (or on suspected compromise — run the runbook procedure).
+
+- [ ] **The I12 `forget_member` sweep must cover the new PII surfaces.** When `core::deletion` is built
+      (the spec 001-deferred deletion flow), `forget_member` must redact/remove `members.name_encrypted`,
+      `members.address_encrypted`, and the member's `audit_log` rows' references (audit logs are kept but
+      their PII-pointing rows handled per I12), in addition to the spec-001 artifacts. Member deletion is
+      **out of scope** for spec 008 (no soft-deactivate in v1).
+  - **WHEN:** the `core::deletion` spec (extends the I12 forgetting property test to the spec-008 columns).
+
+- [ ] **`PgDeviceStore` device-token at-rest encryption is now *unblocked*** by spec 008 T02's secretbox
+      primitive — the push spec (007) can encrypt the device token under the per-Group `GroupKey`
+      (`encrypt_field`). (Cross-linked from the spec-001 `DeviceStore` Postgres-impl item above.)
+  - **WHEN:** push spec **007**.
+
+- [ ] **Geocoding the address → coordinates / the ETA-matrix Workflow** — architecture flow D's geocode
+      trigger is owned by the **matching spec**, not issuance (the architecture doc is amended to say so).
+      Spec 008 persists only the encrypted address. Other spec-008 out-of-scope items (role-swap *workflow*,
+      remote-only/"join from home" mode, the O5 device-versions panel, the O7 phone-list export, bulk/CSV
+      import) live in their own later specs (`spec.md` → Out of scope).
+  - **WHEN:** the matching spec (004+) / the named sibling specs.
+
+- [ ] **Carry-forwards from the T01 review (reviewer S1 / security-auditor F4):**
+      (a) **`admin.member.address_invalid`** was registered in `docs/error-codes.md` at T01 *beyond* the
+      spec's i18n table (which enumerated only `phone_invalid`/`duplicate_phone`/`edit_stale`) — a
+      defensible addition (spec.md edge-cases names "invalid / unparseable phone **or address**"), but the
+      English copy must be **confirmed with the owner** when T10 authors it (matches the spec-001
+      added-keys-review convention). (b) The **`#[require_audit]` compile gate (T06, I5) must cover the
+      duplicate-phone response path** specifically: `ADMIN_MEMBER_DUPLICATE_PHONE` returns an *existing*
+      member's identity (a PII read), so it is an audited read, not just a not-found code — T06 must not
+      let that path skip the audit obligation, and T08's contract test must assert no `/api/auth/*` shape
+      can ever return `ADMIN_MEMBER_DUPLICATE_PHONE` or a member-identity field (no existence-leak
+      regression).
+  - **WHEN:** (a) **T10** (catalog copy); (b) **T06** (`#[require_audit]` gate) + **T08** (contract test).
 
 ## Constitution
 

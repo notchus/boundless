@@ -75,3 +75,26 @@ fn server_verdict_error_codes_match_registry() {
         );
     }
 }
+
+/// Spec 008 (admin member-management / issuance) registers its five issuance error codes at T01
+/// (P12: the code is documented before the emitting type ships). The emitting enum
+/// (`MemberError::error_code`) lands at T05; this forward-looking check guarantees the registry
+/// already carries every code that slice will surface, so T05 cannot introduce an uncoded variant.
+#[test]
+fn admin_member_issuance_codes_registered() {
+    let reg = registry();
+
+    for code in [
+        "ADMIN_MEMBER_PHONE_INVALID",
+        "ADMIN_MEMBER_ADDRESS_INVALID",
+        "ADMIN_MEMBER_DUPLICATE_PHONE",
+        "ADMIN_MEMBER_EDIT_STALE",
+        "ADMIN_GROUP_KEY_MISSING",
+    ] {
+        let cell = format!("`{code}`");
+        assert!(
+            reg.contains(&cell),
+            "spec-008 issuance code {code} is not registered as a code cell in docs/error-codes.md (P12)"
+        );
+    }
+}

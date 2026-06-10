@@ -62,6 +62,16 @@
 | `ADMIN_WEBAUTHN_CHALLENGE_EXPIRED` | The KV-held WebAuthn challenge expired (5-min TTL) or was already used (one-time). | AC20 · ADR-0017 D3 | `admin.onboarding.register_credential` | yes |
 | `DEV_ADMIN_CREATE_FORBIDDEN` | A non-Developer (unauthenticated **or** admin-authenticated) called the Admin-creation endpoint. Admins are issued only by the Developer (I11). | AC1 · I11 | — (no client surface; there is no signup) | no |
 
+## Admin member-management — issuance (spec 008, ADR-0025)
+
+| Code | Meaning | Maps to (state / AC) | Catalog key | Retryable |
+|---|---|---|---|---|
+| `ADMIN_MEMBER_PHONE_INVALID` | The submitted phone could not be normalized/validated to E.164 (single-source `normalize_phone`). The submitted value is never echoed or logged (P2). | issuance / edit validation · AC1/AC11 | `admin.member.phone_invalid` | yes |
+| `ADMIN_MEMBER_ADDRESS_INVALID` | The submitted address failed validation (empty / unparseable). The submitted value is never echoed or logged (P2). | issuance / edit validation · AC1/AC11 | `admin.member.address_invalid` (UI copy authored at T10) | yes |
+| `ADMIN_MEMBER_DUPLICATE_PHONE` | The submitted phone is already enrolled in this Group (`(group_id, phone_lookup_hash)` unique). The existing member is surfaced and linked — an I5-audited, **admin-surface-only** read; this disclosure is never reused on a member-facing endpoint (the no-existence-leak discipline holds on `/api/auth/*`). | duplicate-phone edge · AC1 · I5 | `admin.member.duplicate_phone` | no (resolve by editing the existing member) |
+| `ADMIN_MEMBER_EDIT_STALE` | Optimistic-concurrency reject: the member's `updated_at` changed since the edit was loaded (a concurrent Admin edit). No partial write. | concurrent-edit edge · AC11 | `admin.member.edit_stale` | yes (after refresh) |
+| `ADMIN_GROUP_KEY_MISSING` | Member issuance attempted with no per-Group encryption key (Group bootstrap incomplete — ADR-0025). Fails closed — no member row is written and an address is never stored unencrypted. | Group-key-missing edge · AC12 · I1 | — (no client surface; an operator bootstraps the key — see `docs/runbooks/key-management.md`) | no (operator) |
+
 ---
 
 ## Updating this file
