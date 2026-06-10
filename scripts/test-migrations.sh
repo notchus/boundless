@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Boundless migration live-apply test (spec 001 T06). The live half of the migration test
-# strategy: applies 0001→0008 against a REAL Postgres, asserts the schema conventions hold in the
-# catalog (PII columns are bytea; RLS is enabled+forced on every table), runs an RLS isolation
-# smoke (a non-superuser sees only its own group's rows), then reverts 0008→0001 and asserts a
-# clean teardown. The dependency-free static convention test lives in server/tests/migrations.rs.
+# Boundless migration live-apply test (spec 001 T06; extended spec 008 T03 → 0011). The live half of
+# the migration test strategy: applies 0001→0011 against a REAL Postgres, asserts the schema
+# conventions hold in the catalog (PII columns are bytea; RLS is enabled+forced on every table), runs
+# an RLS isolation smoke (a non-superuser sees only its own group's rows), then reverts 0011→0001 and
+# asserts a clean teardown. The dependency-free static convention test lives in server/tests/migrations.rs.
 #
 # Self-skipping: if psql is absent or no database is configured, it prints a notice and exits 0,
 # so it is safe to call from any hook or CI step. CI provides a postgres:18 service and sets
@@ -29,7 +29,7 @@ fi
 PSQL=(psql -v ON_ERROR_STOP=1 --no-psqlrc -q)
 [ -n "${DATABASE_URL:-}" ] && PSQL+=("$DATABASE_URL")
 
-echo "→ applying up migrations 0001→0008…"
+echo "→ applying up migrations 0001→0011…"
 for f in $(printf '%s\n' "$MIG"/[0-9][0-9][0-9][0-9]_*.up.sql | sort); do
     echo "    $f"
     "${PSQL[@]}" --single-transaction -f "$f"
@@ -59,7 +59,7 @@ count=$("${PSQL[@]}" -tA <<'SQL'
 SELECT count(*) FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace;
 SQL
 )
-if [ "$count" != "8" ]; then echo "❌ expected 8 tables after apply, found $count"; exit 1; fi
+if [ "$count" != "10" ]; then echo "❌ expected 10 tables after apply, found $count"; exit 1; fi
 
 echo "→ RLS isolation smoke (non-superuser): own-group visible, other-group denied, unset denied, cross-group write rejected…"
 # Seed two groups as the (superuser) owner — superusers bypass RLS, so this needs no GUC. The
@@ -136,7 +136,7 @@ fi
 cleanup_smoke_role
 trap - EXIT
 
-echo "→ reverting down migrations 0008→0001…"
+echo "→ reverting down migrations 0011→0001…"
 for f in $(printf '%s\n' "$MIG"/[0-9][0-9][0-9][0-9]_*.down.sql | sort -r); do
     echo "    $f"
     "${PSQL[@]}" --single-transaction -f "$f"
@@ -155,4 +155,4 @@ SQL
 )
 if [ -n "$types" ]; then echo "❌ enum type(s) survived teardown: $types"; exit 1; fi
 
-echo "✓ migrations: applied 0001→0008; PII columns bytea; RLS forced + isolating on 8 tables; reverted clean."
+echo "✓ migrations: applied 0001→0011; PII columns bytea; RLS forced + isolating on 10 tables; reverted clean."

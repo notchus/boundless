@@ -1801,10 +1801,17 @@
 
 - [ ] **The I12 `forget_member` sweep must cover the new PII surfaces.** When `core::deletion` is built
       (the spec 001-deferred deletion flow), `forget_member` must redact/remove `members.name_encrypted`,
-      `members.address_encrypted`, and the member's `audit_log` rows' references (audit logs are kept but
-      their PII-pointing rows handled per I12), in addition to the spec-001 artifacts. Member deletion is
-      **out of scope** for spec 008 (no soft-deactivate in v1).
-  - **WHEN:** the `core::deletion` spec (extends the I12 forgetting property test to the spec-008 columns).
+      `members.address_encrypted`, and reconcile the **`audit_log` retention tension** (T03 security
+      review F2): `audit_log` carries `FOREIGN KEY (member_id, group_id) REFERENCES members ON DELETE
+      CASCADE` (provisional — noted in the `0011` header), so deleting a member's row would **delete**
+      their audit rows — but I12 says audit logs are **kept** (legal requirement) with PII redacted. The
+      deletion spec must change this (e.g. `member_id` nullable + `ON DELETE SET NULL` + an
+      `Anonymous_NNNN` ref, or sever the FK) so the trail survives, and extend the I12 forgetting
+      property test to assert the forgotten member's audit rows **still exist** but carry no resolvable
+      PII pointer (distinguishing "redacted/retained" from "deleted"). Member deletion is **out of
+      scope** for spec 008 (no soft-deactivate in v1).
+  - **WHEN:** the `core::deletion` spec (extends the I12 forgetting property test to the spec-008 columns
+    + the audit_log retention reconciliation).
 
 - [ ] **`PgDeviceStore` device-token at-rest encryption is now *unblocked*** by spec 008 T02's secretbox
       primitive — the push spec (007) can encrypt the device token under the per-Group `GroupKey`

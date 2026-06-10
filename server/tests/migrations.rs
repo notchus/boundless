@@ -1,13 +1,13 @@
-//! Static schema-convention test for the spec-001 migrations (T06).
+//! Static schema-convention test for the migrations (spec 001 T06: 0001–0008; spec 008 T03: 0009–0011).
 //!
 //! This is the **always-on** half of the migration test strategy: it runs everywhere (pre-push +
 //! CI) with **no Postgres and no dependencies**, encoding the schema conventions as enforced
 //! invariants rather than prose. It parses the SQL text in `server/migrations/` and asserts:
 //!
-//! * numbering `0001`–`0008` is contiguous and each version has both a `.up.sql` and `.down.sql`
-//!   (sqlx reversible convention; version must be `> 0`);
-//! * every `CREATE TABLE` carries the audit columns `created_at` / `updated_at` / `created_by`
-//!   (stack-matrix "Schema conventions");
+//! * numbering `0001`–`0011` is contiguous and each version has both a `.up.sql` and `.down.sql`
+//!   (reversible convention; version must be `> 0`);
+//! * every `CREATE TABLE` carries `created_at` — plus `updated_at` / `created_by` unless the table is
+//!   append-only (e.g. the I5 `audit_log`, which is immutable) — per the stack-matrix conventions;
 //! * every table has `ENABLE` + `FORCE ROW LEVEL SECURITY` and a group-isolation `CREATE POLICY`
 //!   (privacy posture; one uniform tenant policy per table);
 //! * no PII/secret column is `text` — anything named like a phone, token, address, `_hash`, or
@@ -30,8 +30,17 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// The eight migration versions this slice ships, in order.
-const EXPECTED_VERSIONS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// The migration versions shipped so far, in order (spec 001 T06: 0001–0008; spec 008 T03: the
+/// member-PII / per-Group-key / audit-log schema, 0009–0011).
+const EXPECTED_VERSIONS: [u32; 11] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+/// Append-only tables: deliberately have NO `updated_at`/`created_by` and no `set_updated_at`
+/// trigger (their rows are immutable). `created_at` + the group-scoped FORCE-RLS policy are still
+/// required. `audit_log` (0011, I5) is the first — see its migration header for the rationale.
+const APPEND_ONLY_TABLES: &[&str] = &["audit_log"];
+
+/// The exact number of `CREATE TABLE`s across all migrations (0010 only ALTERs `members`).
+const EXPECTED_TABLE_COUNT: usize = 10;
 
 fn migrations_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations")
@@ -150,11 +159,20 @@ fn is_constraint(segment: &str) -> bool {
 }
 
 /// True if a column name denotes PII or a secret that must be stored as `bytea` (P2/I3).
+///
+/// Includes key material (`wrapped_key` and any `*_key`/`key`/`*secret*` column): the KEK-wrapped
+/// per-Group DEK is the root of the whole I1 trust chain (ADR-0025), so a regression that stored a
+/// key as `text`/plaintext must fail this guard, not slip through. (`group_id`/`member_id`/
+/// `kek_version`/`app_version` do not match — verified no false positives against the schema.)
 fn is_pii_or_secret(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.contains("phone")
         || n.contains("token")
         || n.contains("address")
+        || n.contains("wrapped")
+        || n.contains("secret")
+        || n == "key"
+        || n.ends_with("_key")
         || n.ends_with("_hash")
         || n.ends_with("_encrypted")
 }
@@ -244,12 +262,12 @@ fn migration_files() -> BTreeMap<u32, (Option<String>, Option<String>)> {
 }
 
 #[test]
-fn migrations_are_numbered_0001_to_0008_with_up_and_down() {
+fn migrations_are_numbered_0001_to_0011_with_up_and_down() {
     let files = migration_files();
     let versions: Vec<u32> = files.keys().copied().collect();
     assert_eq!(
         versions, EXPECTED_VERSIONS,
-        "expected exactly migrations 0001..0008, contiguous"
+        "expected exactly migrations 0001..0011, contiguous"
     );
     for (v, (up, down)) in &files {
         assert!(up.is_some(), "migration {v:04} is missing its .up.sql");
@@ -267,10 +285,31 @@ fn every_table_has_audit_columns_and_forced_rls_policy() {
         for (table, body) in create_tables(up) {
             total_tables += 1;
             let body_l = body.to_ascii_lowercase();
-            for col in ["created_at", "updated_at", "created_by"] {
+            // `created_at` is required on every table; `updated_at`/`created_by` only on mutable
+            // tables — an append-only table (e.g. the I5 `audit_log`) deliberately omits them.
+            let required: &[&str] = if APPEND_ONLY_TABLES.contains(&table.as_str()) {
+                &["created_at"]
+            } else {
+                &["created_at", "updated_at", "created_by"]
+            };
+            for col in required {
                 assert!(
                     body_l.contains(col),
                     "table `{table}` (migration {v:04}) is missing the audit column `{col}`"
+                );
+            }
+            // An append-only table must NOT carry an `updated_at` column or its trigger (rows are
+            // immutable). Asserting the ABSENCE makes the carve-out two-sided (reviewer W1): a
+            // mutable table wrongly added to APPEND_ONLY_TABLES — which will have `updated_at` — then
+            // FAILS here, rather than silently shipping without the audit-column/trigger guard.
+            if APPEND_ONLY_TABLES.contains(&table.as_str()) {
+                assert!(
+                    !body_l.contains("updated_at"),
+                    "append-only table `{table}` (migration {v:04}) must not have an updated_at column"
+                );
+                assert!(
+                    !norm.contains(&format!("trigger {table}_set_updated_at")),
+                    "append-only table `{table}` (migration {v:04}) must not have a set_updated_at trigger"
                 );
             }
             assert!(
@@ -298,8 +337,8 @@ fn every_table_has_audit_columns_and_forced_rls_policy() {
         }
     }
     assert_eq!(
-        total_tables, 8,
-        "expected exactly 8 tables across the migrations"
+        total_tables, EXPECTED_TABLE_COUNT,
+        "expected exactly {EXPECTED_TABLE_COUNT} tables across the migrations"
     );
 }
 
@@ -327,8 +366,10 @@ fn pii_and_secret_columns_are_bytea_never_text() {
         }
     }
     // Guard against the patterns silently matching nothing (e.g. a refactor renaming the columns).
+    // Floor raised with the spec-008 columns (name_encrypted, address_encrypted, wrapped_key) and the
+    // extended matcher now also covering key material (public_key).
     assert!(
-        checked >= 6,
+        checked >= 9,
         "expected to have checked the known PII/secret columns, saw {checked}"
     );
 }
