@@ -15,6 +15,11 @@ boundless-domain.workspace = true
 boundless-auth.workspace = true
 boundless-crypto.workspace = true
 serde = { workspace = true, features = ["derive"] }
+# serde_json — promoted from dev to a RUNTIME dep at spec 008 T06 for `audited::admin_response_body`,
+# the single sanctioned serialization seam for admin responses (the `AuditedResponse`-bounded body
+# the T09 router emits, so PII-response serialization is single-sourced in the core — P4). Pure-Rust,
+# wasm32-safe (no getrandom; already a runtime dep of the deployed Worker). Pinned in core/Cargo.toml.
+serde_json.workspace = true
 # rand_core TRAITS ONLY (default-features off → no getrandom): the RngCore + CryptoRng contract the
 # production `RngSecretSource<R>` is generic over. The RNG is INJECTED (no ambient randomness in the
 # core; stays wasm32-safe) — same discipline as the injected Clock. ADR-0021. The Worker supplies a
@@ -28,14 +33,18 @@ zeroize.workspace = true
 [dev-dependencies]
 # rand_chacha — seeded `ChaCha20Rng` (CryptoRng) so the `RngSecretSource` tests are reproducible.
 # proptest — code-consume / alert-dedup invariants (seeds committed, P9). uuid — test ids.
-# serde_json — assert the PII-free admin-alert payload shape (deterministic). static_assertions —
-# compile-time proof that the secret-bearing response types expose no Debug/Display/Serialize (P2,
-# sec-audit F1). pollster — block_on the now-`async` AuthStore/DeviceStore ports in host unit tests
+# static_assertions — compile-time proof that the secret-bearing response types expose no
+# Debug/Display/Serialize (P2, sec-audit F1) + the T06 `MemberDetailView`/`PiiDisclosure` trait
+# memberships. pollster — block_on the now-`async` AuthStore/DeviceStore ports in host unit tests
 # (the in-memory stub's futures are always ready, so no async runtime is needed — ADR-0020). All
-# dev-only / host-only.
+# dev-only / host-only. (serde_json moved to a RUNTIME dep at T06 — see above; tests still use it.)
 proptest.workspace = true
 uuid.workspace = true
-serde_json.workspace = true
 static_assertions.workspace = true
 pollster.workspace = true
 rand_chacha.workspace = true
+# trybuild — the I5 require-audit COMPILE-FAIL gate (spec 008 T06): proves that forging the
+# `PiiDisclosure` audited carrier, serializing the bare `MemberDetailView`, or sneaking a tainted
+# field into a PII-free `Serialize` projection all FAIL TO BUILD. Host-only/dev-only (never on the
+# wasm path) — see core/Cargo.toml. Pinned there; lock = ground truth.
+trybuild.workspace = true

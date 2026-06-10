@@ -91,6 +91,13 @@ insta = { version = "1", features = ["json"] }
 static_assertions = "1.1"
 base64 = "0.22"
 
+# trybuild — the I5 require-audit COMPILE gate (spec 008 T06): drives `tests/ui/*.rs` compile-fail
+# cases (a PII-returning path lacking the audit obligation must FAIL TO BUILD) + their committed
+# `.stderr` golden files. DEV-ONLY / host-only — it shells out to `cargo build` over fixture crates,
+# never compiles into the lib, so it carries no wasm/getrandom concern. Latest published release
+# (verified 2026-06-10 via docs-researcher against crates.io). MIT OR Apache-2.0; lock = ground truth.
+trybuild = "1.0.116"
+
 # Property-based testing for core::auth's code/version invariants (spec 001 T04; P9).
 # Latest published release on crates.io, verified 2026-06-04 via docs-researcher (MIT OR
 # Apache-2.0, MSRV 1.85 ≤ the workspace 1.89 floor). DEV-ONLY / host-only — it never

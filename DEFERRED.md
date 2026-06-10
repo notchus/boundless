@@ -1953,6 +1953,61 @@
       catch a one-sided addition, but they should simply never be mirrored).
   - **WHEN:** ongoing (a no-op to maintain; note for a future reader).
 
+## Server / core — I5 audited-response compile gate (sealed `AuditedResponse` / `PiiDisclosure`) (spec 008 T06 — out-of-scope register)
+
+> T06 shipped the **compile-time** I5 require-audit gate (`core/server/src/audited.rs`): the
+> un-forgeable `PiiDisclosure<T>` audited carrier (`pub(crate)` ctor, delegating `Serialize`, no
+> `Debug`), the **sealed** `AuditedResponse` bound + the `admin_response_body` send-seam + the
+> hand-curated PII-free allowlist (`MemberSummary`/`Vec<MemberSummary>`/`Vec<AuditEntry>`), and the
+> hardening of `MemberDetailView` (private fields + `pub(crate) to_wire` so the bare view is
+> un-constructible/un-readable outside the core). `DetailRead::Detail` now carries
+> `Box<PiiDisclosure<MemberDetailView>>`. Proven by two `trybuild` harnesses (`require_audit` +
+> `member_summary_compile`, 3 compile-fail + 1 pass fixture) + the `audit.rs` `assert_*_impl` locks.
+> `trybuild` 1.0.116 added (dev-only); `serde_json` promoted to a runtime dep of `core/server`.
+> All host-testable; no Worker/DB needed. Everything below was deliberately left out.
+
+- [ ] **The residual `expose_secret()` + hand-rolled-`json!` egress is NOT closed by any pure-Rust
+      gate** (the design panel's adversarial finding — `expose_secret` is a deliberate escape hatch and
+      `worker::Response::from_json(&impl Serialize)` is universal). T06 closes the *dominant* paths
+      (can't forge the carrier; can't construct/read/serialize a bare `MemberDetailView`; can't send a
+      non-`AuditedResponse` through the seam), but a future endpoint that re-`decrypt_field`s and builds
+      its own body bypasses the type gate. This residual is covered by I5's **own named second layer** —
+      **T08**'s `openapi_pii_handlers_all_require_audit` integration test (every OpenAPI PII handler has a
+      matching audit) — plus a **T09** clippy/grep lint forbidding `Response::from_json`/`to_string`/
+      `json!` on member PII in `server/runtime/**`, and the P2/I10 scrubber. Document the gate's scope in
+      the route code so no one mistakes it for airtight.
+  - **WHEN:** **T08** (the OpenAPI-coverage second layer) + **T09** (the deployable route lint).
+
+- [ ] **T08 must extend the `AuditedResponse` allowlist for its new admin wire DTOs.** The allowlist in
+      `audited.rs` currently blesses only the three PII-free response types that exist at T05
+      (`MemberSummary`, `Vec<MemberSummary>`, `Vec<AuditEntry>`). When T08 freezes `MemberList`,
+      `IssueMemberResponse`, the regenerate-code response, etc., each PII-free one must get an
+      `impl AuditedResponse` (with the matching `impl sealed::Sealed`), and any that carries decrypted
+      PII must flow as a `PiiDisclosure<_>` instead — never a bare `impl AuditedResponse`. The sealed
+      supertrait keeps that decision in `core/server`.
+  - **WHEN:** **T08** (OpenAPI freeze + the new wire DTOs).
+
+- [ ] **The router send-seam (`admin_response_body`) is provided but not yet *consumed* (no router
+      exists — that is T09).** T09 must actually serialize every admin response through it (or an
+      equivalent `AuditedResponse`-bounded constructor) rather than calling `worker::Response::from_json`
+      directly on a member DTO — the gate only bites code that goes through the bound. Pair with the T09
+      lint above. The `#[allow(dead_code)]`-free seam compiles today because the `require_audit` pass
+      fixture exercises it.
+  - **WHEN:** **T09** (the deployable `/api/admin/members/*` routes).
+
+- [ ] **`.stderr` golden re-bless on a toolchain bump.** `trybuild` normalizes `$CARGO`/`$VERSION` and
+      `$N others`, so the committed `.stderr` files are stable across serde/dep bumps; but a *rustc*
+      diagnostic-wording change (the repo toolchain is pinned, so this is rare) would require
+      `TRYBUILD=overwrite cargo test -p boundless-server-core --test require_audit --test
+      member_summary_compile` to regenerate them. Note for whoever next bumps `rust-toolchain.toml`.
+  - **WHEN:** the next `rust-toolchain.toml` bump (if the compile-fail tests then mismatch).
+
+- [ ] **A literal `#[require_audit]` proc-macro (the plan §7 "stretch goal") was NOT built.** The sealed
+      `AuditedResponse` bound + the un-forgeable carrier satisfy I5's *intent* (omission is a compile
+      error) without a `core/macros` proc-macro crate; the proc-macro remains an optional future
+      hardening if a per-handler attribute is ever wanted.
+  - **WHEN:** only if a literal attribute-macro form is later desired (not required).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

@@ -1,0 +1,32 @@
+error[E0277]: the trait bound `ForgedMemberBody: AuditedResponse` is not satisfied
+  --> tests/ui/require_audit/send_unaudited.rs:21:33
+   |
+21 |     let _ = admin_response_body(&body);
+   |             ------------------- ^^^^^ unsatisfied trait bound
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the trait `AuditedResponse` is not implemented for `ForgedMemberBody`
+  --> tests/ui/require_audit/send_unaudited.rs:8:1
+   |
+ 8 | struct ForgedMemberBody {
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+help: the following other types implement trait `AuditedResponse`
+  --> src/audited.rs
+   |
+   | impl<T> AuditedResponse for PiiDisclosure<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PiiDisclosure<T>`
+...
+   | impl AuditedResponse for MemberSummary {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemberSummary`
+...
+   | impl AuditedResponse for Vec<MemberSummary> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Vec<MemberSummary>`
+...
+   | impl AuditedResponse for Vec<AuditEntry> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Vec<AuditEntry>`
+note: required by a bound in `admin_response_body`
+  --> src/audited.rs
+   |
+   | pub fn admin_response_body<R: AuditedResponse + Serialize>(
+   |                               ^^^^^^^^^^^^^^^ required by this bound in `admin_response_body`

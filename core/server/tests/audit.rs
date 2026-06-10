@@ -5,20 +5,28 @@
 mod common;
 
 use boundless_server_core::{
-    AuditField, DetailRead, IssueMemberOutcome, MemberDetail, MemberDetailView, MemberSummary,
-    OnboardingStatus,
+    AuditField, AuditedResponse, DetailRead, IssueMemberOutcome, MemberDetail, MemberDetailView,
+    MemberSummary, OnboardingStatus, PiiDisclosure,
 };
 use common::{block_on, member_id, member_service, MemMemberStore};
 use static_assertions::{assert_impl_all, assert_not_impl_any};
 
 const NOW: i64 = 1_700_000_000;
 
-// AC8 / the two-type split, both directions: the list summary + the wire detail are serializable
-// (so — since the tainted PII types are NOT `Serialize` — a tainted field could not compile in), and
-// the CORE detail is NOT serializable (it holds tainted PII; P2 by construction).
-assert_impl_all!(MemberSummary: serde::Serialize);
-assert_impl_all!(MemberDetailView: serde::Serialize);
+// AC8 / the two-type split + the T06 I5 gate — all compile-time:
+// - `MemberSummary` IS `Serialize` (so — since the tainted PII types are NOT `Serialize` — a tainted
+//   field could not compile in, the AC8 guarantee) AND is an allowlisted `AuditedResponse` (listing
+//   is not an audited read).
+// - the CORE `MemberDetail` is NOT serializable (tainted PII; P2 by construction).
+// - the WIRE `MemberDetailView` keeps `Serialize` (only so the disclosure can emit the wire body) but
+//   is NOT an `AuditedResponse` on its own (T06): the bare view cannot pass `admin_response_body`, and
+//   its fields are private + un-constructible outside the crate. The only sendable carrier is
+//   `PiiDisclosure<MemberDetailView>`, mintable only after an audit row is committed (the I5 gate).
+assert_impl_all!(MemberSummary: serde::Serialize, AuditedResponse);
 assert_not_impl_any!(MemberDetail: serde::Serialize);
+assert_impl_all!(MemberDetailView: serde::Serialize);
+assert_not_impl_any!(MemberDetailView: AuditedResponse);
+assert_impl_all!(PiiDisclosure<MemberDetailView>: serde::Serialize, AuditedResponse);
 
 use boundless_domain::{Address, MemberName, PhoneNumber};
 use boundless_server_core::{IssuableRole, IssueMemberInput};
@@ -75,14 +83,24 @@ fn audit_entry_carries_field_names_ts_admin_member_request() {
     let mut svc = member_service(MemMemberStore::bootstrapped(), NOW);
     let id = issue(&mut svc, "Maria", "+15551230001", "12 Olive St");
 
-    let view = match block_on(svc.read_detail(member_id(2), id, "req-detail".into())).unwrap() {
-        DetailRead::Detail(view) => view,
+    let disclosure = match block_on(svc.read_detail(member_id(2), id, "req-detail".into())).unwrap()
+    {
+        DetailRead::Detail(disclosure) => disclosure,
         other => panic!("expected Detail, got error_code {:?}", other.error_code()),
     };
-    // The decrypted wire view is correct.
-    assert_eq!(view.name, "Maria");
-    assert_eq!(view.phone, "+15551230001");
-    assert_eq!(view.address, "12 Olive St");
+    // The decrypted wire view is correct — serialized through the audited disclosure (T06: the bare
+    // `MemberDetailView` has private fields, reachable on the wire only via `PiiDisclosure`, which an
+    // audit minted; the disclosure's `Serialize` delegates to the view).
+    let view = serde_json::to_value(&disclosure).unwrap();
+    assert_eq!(view["name"], "Maria");
+    assert_eq!(view["phone"], "+15551230001");
+    assert_eq!(view["address"], "12 Olive St");
+    // The disclosure carries the committed audit (the I5 binding) — the same record the store recorded.
+    assert_eq!(disclosure.audit().request_id, "req-detail");
+    assert_eq!(
+        disclosure.audit().fields,
+        vec![AuditField::Name, AuditField::Phone, AuditField::Address]
+    );
 
     let audits = svc.store.recorded_audits();
     assert_eq!(audits.len(), 1, "exactly one audit per detail read");

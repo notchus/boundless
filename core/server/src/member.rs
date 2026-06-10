@@ -56,6 +56,7 @@ use boundless_crypto::{
 use boundless_domain::{Address, MemberId, MemberName, OnboardingCode, PhoneNumber, Role};
 use serde::Serialize;
 
+use crate::audited::PiiDisclosure;
 use crate::bootstrap::load_group_key;
 use crate::phone::normalize_phone;
 use crate::ports::{SecretSource, StoreBackend};
@@ -207,11 +208,12 @@ pub struct MemberDetail {
 }
 
 impl MemberDetail {
-    /// Project to the serializable wire DTO, revealing the tainted fields via `expose_secret` (the
-    /// **sole sanctioned boundary**, mirroring `SessionMaterial`/`AdminInvitation`). The Worker calls
-    /// this only **after** the audit row is committed (`read_detail` enforces that ordering), and the
-    /// resulting [`MemberDetailView`] is plain-`String`-by-necessity — it must **never** be logged.
-    pub fn to_wire(&self) -> MemberDetailView {
+    /// Project to the wire DTO, revealing the tainted fields via `expose_secret` (the **sole
+    /// sanctioned boundary**, mirroring `SessionMaterial`/`AdminInvitation`). `pub(crate)` (T06): the
+    /// bare [`MemberDetailView`] is not a public producer — the only public PII-detail surface is
+    /// `read_detail`'s [`PiiDisclosure`]`<MemberDetailView>`, built only after the audit commits. The
+    /// resulting view is plain-`String`-by-necessity — it must **never** be logged.
+    pub(crate) fn to_wire(&self) -> MemberDetailView {
         MemberDetailView {
             member_id: self.member_id,
             name: self.name.expose_secret().to_string(),
@@ -224,26 +226,37 @@ impl MemberDetail {
     }
 }
 
-/// The **wire** member-detail DTO (the audited GET/PATCH response shape) — plain `String` fields,
-/// `Serialize`. The two-type split's serializable half (T08 mirrors it into OpenAPI). Plain-`String`
-/// by necessity, so unlike the tainted core [`MemberDetail`] it has no compile-time log guard: it
-/// must never be logged (route errors on this path through redacted summaries, never `?view`).
+/// The **wire** member-detail DTO (the audited GET/PATCH response shape) — plain `String` fields.
+/// The two-type split's wire half (T08 mirrors it into OpenAPI). Plain-`String` by necessity, so
+/// unlike the tainted core [`MemberDetail`] it has no compile-time log guard: it must never be
+/// logged (route errors on this path through redacted summaries, never `?view`).
+///
+/// **The I5 gate (T06): its fields are private and its only constructor is the `pub(crate)`
+/// [`MemberDetail::to_wire`].** It keeps `Serialize` solely so [`PiiDisclosure`]`<MemberDetailView>`
+/// (the audited carrier) can emit the wire body by delegation — but no code outside this crate can
+/// *construct* one (private fields, no public ctor), so a future Worker cannot
+/// `Response::from_json(&bare_view)` a fabricated one. The PII detail therefore reaches the wire
+/// **only** as a [`PiiDisclosure`] minted after an audit row was committed. (A holder of an
+/// *already-audited* disclosure can of course serialize its payload — that is the point; the gate is
+/// about producing PII for the wire *without* an audit, not field-level secrecy after one. The
+/// irreducible `expose_secret`+hand-rolled-JSON path is covered by I5's named second layer — T08's
+/// OpenAPI-PII-handler-coverage test — + a T09 P2 lint; see `DEFERRED.md` → T06.)
 #[derive(Clone, Serialize)]
 pub struct MemberDetailView {
     /// The opaque member identity.
-    pub member_id: MemberId,
+    member_id: MemberId,
     /// The member's name (plaintext — never log).
-    pub name: String,
+    name: String,
     /// The member's phone, E.164 (plaintext — never log).
-    pub phone: String,
+    phone: String,
     /// The member's home address (plaintext — never log).
-    pub address: String,
+    address: String,
     /// The role set.
-    pub roles: Vec<Role>,
+    roles: Vec<Role>,
     /// The onboarding lifecycle status.
-    pub onboarding_status: OnboardingStatus,
+    onboarding_status: OnboardingStatus,
     /// The optimistic-concurrency token the client echoes back on edit.
-    pub updated_at: UnixSeconds,
+    updated_at: UnixSeconds,
 }
 
 // ===== Audit (I5) =================================================================================
@@ -385,8 +398,12 @@ impl EditMemberOutcome {
 
 /// The result of [`MemberService::read_detail`] (the audited PII read, AC7).
 pub enum DetailRead {
-    /// The member's decrypted detail (the audit row was committed atomically with the ciphertext read).
-    Detail(MemberDetailView),
+    /// The member's decrypted detail, wrapped in a [`PiiDisclosure`] (T06 / the I5 gate): the only
+    /// serializable PII-detail carrier, mintable only here after the audit row was committed
+    /// atomically with the ciphertext read — so the Worker cannot serialize the detail without it.
+    /// `Box`ed so the large carrier (view + its committed [`AuditEntry`]) does not bloat the small
+    /// `NotFound`/`GroupKeyMissing` variants (`clippy::large_enum_variant`).
+    Detail(Box<PiiDisclosure<MemberDetailView>>),
     /// No such member (a 404 — no PII read, no audit row written).
     NotFound,
     /// The Group key (or a stored field) could not be decrypted — fail closed (`ADMIN_GROUP_KEY_MISSING`).
@@ -836,9 +853,12 @@ where
             fields: vec![AuditField::Name, AuditField::Phone, AuditField::Address],
             request_id,
         };
+        // Clone the audit for the store (which persists it atomically with the SELECT); the original
+        // is carried into the `PiiDisclosure` so the Worker has the committed record to log, and so
+        // the disclosure type-level witnesses that an audit accompanied the read (I5).
         let Some(stored) = self
             .store
-            .read_member_detail_audited(member_id, audit)
+            .read_member_detail_audited(member_id, audit.clone())
             .await?
         else {
             return Ok(DetailRead::NotFound);
@@ -859,7 +879,10 @@ where
             onboarding_status: stored.onboarding_status,
             updated_at: stored.updated_at,
         };
-        Ok(DetailRead::Detail(detail.to_wire()))
+        Ok(DetailRead::Detail(Box::new(PiiDisclosure::new(
+            audit,
+            detail.to_wire(),
+        ))))
     }
 
     /// Edit a member (AC11) — re-validate/re-encrypt changed fields; a phone change recomputes the

@@ -51,6 +51,7 @@
 
 mod admin;
 mod alerts;
+mod audited;
 mod bind;
 mod bootstrap;
 mod hub;
@@ -68,6 +69,7 @@ pub use admin::{
     INVITE_TTL_SECS,
 };
 pub use alerts::{AdminAlert, AlertKind};
+pub use audited::{admin_response_body, AuditedResponse, PiiDisclosure};
 pub use bind::{BindOutcome, BindRequest, BindResponse};
 pub use bootstrap::{
     generate_group_key, load_group_key, GroupKeyBootstrap, GroupKeyMissing, INITIAL_KEK_VERSION,

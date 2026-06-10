@@ -1,0 +1,10 @@
+error[E0624]: associated function `new` is private
+ --> tests/ui/require_audit/forge_disclosure.rs:8:43
+  |
+8 |     let _forge = PiiDisclosure::<String>::new;
+  |                                           ^^^ private associated function
+  |
+ ::: src/audited.rs
+  |
+  |     pub(crate) fn new(audit: AuditEntry, payload: T) -> Self {
+  |     -------------------------------------------------------- private associated function defined here
