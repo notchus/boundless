@@ -209,6 +209,18 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **After:** `cargo build --target wasm32 -p boundless-server-store` clean. **Blockers:** T02, T03, T05.
 
 ### T08 — OpenAPI `/api/admin/*` freeze + contract test
+- **Status:** ✅ DONE 2026-06-11 — the 6 admin paths (`GET/POST /api/admin/members`, `GET/PATCH
+  /api/admin/members/{id}`, `POST …/regenerate-code`, `GET /api/admin/audit-log`) + 11 schemas
+  (`MemberSummary`/`MemberList`/`MemberDetail`/`IssueMemberRequest`/`MemberIssued`/`DuplicatePhoneLink`/
+  `EditMemberRequest`/`RegenerateCodeResponse`/`AuditEntry`/`AuditLog`/`OnboardingStatus`/`IssuableRole`)
+  added **additively** to `api/openapi.yaml` (the `/api/auth/*` freeze + ADR-0023 tests stay green); the
+  `adminSharedSecret` scheme + `AdminIdHeader` param model ADR-0026's trust boundary; PII handlers carry
+  `x-requires-audit: true`. 4 new contract tests green (`openapi_pii_handlers_all_require_audit`,
+  `member_summary_schema_has_no_tainted_field`, `admin_issuance_error_codes_in_registry`,
+  `openapi_admin_surface_has_no_admin_creation_path`); `.bindings.lock` refreshed (87 inputs); allow-list
+  clean (6 locks); web typecheck 0/0. **No new deps.** The TS client (`web/src/lib/server/members.ts`) +
+  the Rust wire response DTOs + the `audited.rs` allowlist extension were deferred to their consumers
+  (T10 / T09) — see `DEFERRED.md`.
 - **What:** Add the admin paths/schemas to `api/openapi.yaml` (additive; auth shapes frozen) and the
   contract tests. Plan §6.
 - **Touches:** `api/openapi.yaml`, `web/tests/contract/api-contract.test.ts`,
@@ -282,10 +294,10 @@ T09 is in flight, but its e2e needs T09's Worker.
 | AC4 phone two-fold (I3) | T05, T07 | T05 ✓; **T07 ✓ DB** (`…phone_two_fold`: lookup hash + ciphertext; `PgAuthStore::find_member_by_phone` then matches — issuance feeds sign-in) |
 | AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…issue_is_atomic`: one member + one live code, one txn); T09 shell pending |
 | AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); T09 shell pending |
-| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); T08 coverage + T09 shell emit pending |
-| AC8 `MemberSummary` no tainted type | T05 (compile assert) | T05 ✓ (compile assert + no-PII prop) |
-| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); T08 pending |
-| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); T08 no-path + T10 shell UI pending |
+| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); **T08 ✓ OpenAPI-coverage** (`openapi_pii_handlers_all_require_audit`: every `MemberDetail`-returning handler is `x-requires-audit`); T09 shell live-emit pending |
+| AC8 `MemberSummary` no tainted type | T05 (compile assert), T08 (schema) | T05 ✓ (compile assert + no-PII prop); **T08 ✓ contract** (`member_summary_schema_has_no_tainted_field`: schema has name/roles/status, no phone/address) |
+| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); **T08 ✓ contract** (`AuditEntry.fields` enum `[name,phone,address]` — names only) |
+| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); **T08 ✓ no-path** (`openapi_admin_surface_has_no_admin_creation_path`: issuance `roles` = `IssuableRole` {rider,driver}, no admin); T10 shell UI pending |
 | AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓; **T07 ✓ DB** (`…optimistic_concurrency_stale_reject` whole-second token + `…edit_recomputes_phone_lookup`) |
 | AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓; T05 ✓; **T07 ✓ DB** (`pg_delegated_key_store_persists_only_wrapped`: wrapped-only, `None`→fail-closed) |
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓; **T07 ✓ DB** (`…roles_array_round_trip`: multi-role set through `member_role[]`) |

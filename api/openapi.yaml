@@ -39,7 +39,8 @@ info:
   description: |
     The bottom-of-the-stack auth contract: member sign-in / device-bind / refresh / Driver
     recovery, the developer-only Admin-creation endpoint, and admin WebAuthn registration +
-    assertion. Member-management (issuance) is spec 008 and not described here.
+    assertion. Member-management — the admin `/api/admin/members/*` issuance surface — is spec 008,
+    added ADDITIVELY here (the `/api/auth/*` shapes stay frozen; ADR-0026 governs admin→Worker trust).
   license:
     name: AGPL-3.0-only
     identifier: AGPL-3.0-only
@@ -264,6 +265,298 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorBody'
 
+  # ── Admin member-management (issuance) — spec 008 (additive) ───────────────────────────
+  # Trust model (ADR-0026): the WebAuthn-verified SvelteKit BFF calls the Worker with a
+  # server-to-server shared secret (adminSharedSecret) and asserts the acting admin's verified id
+  # in the X-Admin-Id header. The Worker checks the secret (constant-time) and fails closed without
+  # it. group_id is the single-install GROUP_ID binding (RLS scope). The real SvelteKit→Worker call
+  # is wired at T10; these are the Worker-side shapes the contract freezes.
+  /api/admin/members:
+    get:
+      operationId: adminListMembers
+      summary: List the group's Rider/Driver members (PII-free summaries; not an audited read).
+      description: |
+        Returns the group's managed members (Riders/Drivers; Admins are EXCLUDED — they are not
+        managed here, I11) as PII-free [`MemberSummary`] rows (display name + roles + onboarding
+        status; NO phone/address). Listing is NOT an audited PII read (name-alone is not the
+        P2-sensitive unit). Filterable by free-text search, role, and onboarding status.
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+        - name: search
+          in: query
+          required: false
+          description: Free-text filter over member display names.
+          schema:
+            type: string
+        - name: role
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Role'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OnboardingStatus'
+      responses:
+        '200':
+          description: The member list (PII-free summaries).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberList'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+    post:
+      operationId: adminIssueMember
+      summary: Issue (create) a Rider/Driver member + mint a one-time Onboarding Code (AC1/AC5).
+      # PII handler: a phone collision surfaces-and-links an EXISTING member (name) — an I5-audited
+      # admin-only disclosure. The Worker writes the audit row atomically (P4/I5).
+      x-requires-audit: true
+      description: |
+        Creates a member from admin-entered PII — name/address encrypted at rest (I1), phone two-fold
+        (I3) — and mints a single live Onboarding Code (shown once). `roles` are Rider/Driver only;
+        an Admin cannot be issued here (I11/AC10 — the request `roles` enum excludes `admin`). A phone
+        already enrolled in the group surfaces-and-links the existing member (name only) — an
+        admin-surface-only, I5-audited disclosure, never reused on `/api/auth/*`. Inbound PII is
+        TLS-only; the server never logs or echoes it (P2/R10).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueMemberRequest'
+      responses:
+        '201':
+          description: The member was created; the Onboarding Code is shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberIssued'
+        '409':
+          description: The phone is already enrolled — the existing member is surfaced (I5-audited).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicatePhoneLink'
+        '400':
+          description: |
+            Validation rejected — invalid phone (`ADMIN_MEMBER_PHONE_INVALID`), invalid address
+            (`ADMIN_MEMBER_ADDRESS_INVALID`), empty role set (`ADMIN_MEMBER_ROLES_REQUIRED`), or the
+            `Admin` role (`ADMIN_MEMBER_ROLE_FORBIDDEN`). The submitted value is never echoed (P2/R10).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          description: |
+            No per-Group encryption key (bootstrap incomplete) — fails closed
+            (`ADMIN_GROUP_KEY_MISSING`); no member row is written (AC12/I1).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/members/{id}:
+    get:
+      operationId: adminGetMember
+      summary: Read a member's full detail — an AUDITED PII read (AC7).
+      x-requires-audit: true
+      description: |
+        Returns the member's decrypted [`MemberDetail`] (name/phone/address). This is an audited PII
+        read: the server writes an `audit_log` row (admin_id, member_id, field NAMES, request_id) in
+        the SAME transaction as the ciphertext read (I5/§7). The PII is TLS-only; never logged (P2).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+        - name: id
+          in: path
+          required: true
+          description: The opaque member id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The member detail (audited).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberDetail'
+        '404':
+          description: No such member (no PII read, no audit row written).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          description: Group key missing/undecryptable — fails closed (`ADMIN_GROUP_KEY_MISSING`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+    patch:
+      operationId: adminEditMember
+      summary: Edit a member under optimistic concurrency; returns the updated detail (audited, AC11).
+      x-requires-audit: true
+      description: |
+        Updates changed fields only; a phone change recomputes the I3 lookup hash and re-encrypts.
+        Optimistic concurrency on `expected_updated_at` — a concurrent edit yields
+        `ADMIN_MEMBER_EDIT_STALE` with no partial write. Returns the updated [`MemberDetail`] (an
+        audited read). Inbound PII is TLS-only; never logged (P2/R10).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+        - name: id
+          in: path
+          required: true
+          description: The opaque member id.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditMemberRequest'
+      responses:
+        '200':
+          description: The updated member detail (audited).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberDetail'
+        '409':
+          description: Stale edit — the member's `updated_at` changed (`ADMIN_MEMBER_EDIT_STALE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '400':
+          description: |
+            Validation rejected — invalid phone/address, empty role set, or the `Admin` role
+            (same codes as issuance). The submitted value is never echoed (P2/R10).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: No such member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          description: Group key missing — fails closed (`ADMIN_GROUP_KEY_MISSING`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/members/{id}/regenerate-code:
+    post:
+      operationId: adminRegenerateCode
+      summary: Regenerate a member's Onboarding Code (AC6) — not an audited PII read.
+      description: |
+        Mints a fresh Onboarding Code and supersedes the prior live one atomically (at most one live
+        code per member). The plaintext is shown once. Not an audited read (no name/phone/address is
+        disclosed).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+        - name: id
+          in: path
+          required: true
+          description: The opaque member id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: A fresh Onboarding Code (shown once) + its expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegenerateCodeResponse'
+        '404':
+          description: No such member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/audit-log:
+    get:
+      operationId: adminReadAuditLog
+      summary: Read the group's PII-read audit log (AC9 — field NAMES, never values).
+      description: |
+        Returns the I5 audit entries (timestamp, admin_id, member_id, the field NAMES read,
+        request_id), optionally filtered to one member. `fields` are names only
+        (`name`/`phone`/`address`) — never values — so reading the log is not itself a recursive PII
+        read (it is not `x-requires-audit`).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - $ref: '#/components/parameters/AdminIdHeader'
+        - name: member_id
+          in: query
+          required: false
+          description: Filter to one member's audit entries.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The audit-log entries (names only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLog'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
 components:
   securitySchemes:
     developerWebAuthn:
@@ -272,6 +565,28 @@ components:
       description: |
         The Developer's hardware-key-backed WebAuthn credential (I11). Verification is the
         T08-shell concern; modeled here only so the dev endpoint declares its auth requirement.
+    adminSharedSecret:
+      type: http
+      scheme: bearer
+      description: |
+        The server-to-server shared secret the WebAuthn-verified SvelteKit BFF presents to the
+        Worker for `/api/admin/members/*` (ADR-0026). The Worker checks it in constant time and
+        FAILS CLOSED without it. This is NOT a client-facing credential — only the trusted admin BFF
+        (which already verified the admin via WebAuthn, ADR-0017) holds it. The acting admin's
+        verified id rides in the `X-Admin-Id` header (see `AdminIdHeader`).
+
+  parameters:
+    AdminIdHeader:
+      name: X-Admin-Id
+      in: header
+      required: true
+      description: |
+        The verified acting admin's member id, asserted by the WebAuthn-verified BFF (ADR-0026). The
+        Worker trusts it because the request carried the `adminSharedSecret`; it becomes the
+        `admin_id` / `created_by` actor on the I5 audit row.
+      schema:
+        type: string
+        format: uuid
 
   schemas:
     # ── Shared value types (verified serde wire forms from core/domain) ───────────────────
@@ -686,3 +1001,216 @@ components:
         error_code:
           type: string
           description: A stable code from docs/error-codes.md (e.g. DEV_ADMIN_CREATE_FORBIDDEN, ADMIN_WEBAUTHN_*).
+
+    # ── Admin member-management (issuance) — spec 008 ──────────────────────────────────────
+    OnboardingStatus:
+      type: string
+      description: |
+        Where a member is in the issue → onboard lifecycle. Mirrors `core::server` `OnboardingStatus`
+        ONE-FOR-ONE (snake_case values/order pinned in both; spec-008 T05 `onboarding_status_wire_casing`).
+      enum: [issued_not_onboarded, onboarded, code_expired_or_lost, needs_reonboarding]
+
+    IssuableRole:
+      type: string
+      description: |
+        A role a member may be ISSUED with — Rider or Driver only. Admins are issued solely by the
+        Developer (I11/AC10), so `admin` is NOT a member-issuance option. Distinct from `Role` (which
+        includes `admin`, used when displaying an existing member). Mirrors `core::server::IssuableRole`.
+      enum: [rider, driver]
+
+    MemberSummary:
+      type: object
+      description: |
+        The member-LIST projection (AC8) — PII-free: a display `name` + `roles` + `onboarding_status`,
+        and deliberately NO `phone`/`address`. Because it carries no tainted field, listing is not an
+        audited read. Mirrors `core::server::MemberSummary`.
+      required: [member_id, name, roles, onboarding_status]
+      properties:
+        member_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: |
+            The member's display name, decrypted for the admin UI (AC3 — plain text, never persisted
+            in clear). Still PII for LOGGING: log only the redacted form (P2).
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        onboarding_status:
+          $ref: '#/components/schemas/OnboardingStatus'
+
+    MemberList:
+      type: object
+      description: The admin member list (AC8) — PII-free summaries.
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberSummary'
+
+    MemberDetail:
+      type: object
+      description: |
+        The audited member-DETAIL view (the GET/PATCH `/{id}` response) — plain-string
+        `name`/`phone`/`address`. The WIRE half of the two-type split: the `core::server` `MemberDetail`
+        holds tainted types and cannot serialize, so the Worker projects it via `expose_secret` at the
+        audited boundary (`MemberDetailView`). Carries decrypted PII, so the handler returning it is
+        `x-requires-audit: true` (I5). TLS-only; NEVER logged (P2).
+      required: [member_id, name, phone, address, roles, onboarding_status, updated_at]
+      properties:
+        member_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Plaintext name (TLS-only; never log).
+        phone:
+          type: string
+          description: E.164 phone (TLS-only; never log).
+        address:
+          type: string
+          description: Home address (TLS-only; never log).
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        onboarding_status:
+          $ref: '#/components/schemas/OnboardingStatus'
+        updated_at:
+          type: integer
+          format: int64
+          description: The optimistic-concurrency token (server-time epoch seconds) echoed back on edit (AC11).
+
+    IssueMemberRequest:
+      type: object
+      description: |
+        Admin issuance input. PII (`name`/`address`/`phone`) is TLS-only; the server normalizes the
+        phone in-core, hashes (I3) + encrypts (I1) it, and drops the plaintext (never logged — P2/R10).
+        `roles` excludes `admin` (I11/AC10 — `IssuableRole`).
+      required: [name, phone, address, roles]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+          description: The member's phone (admin-entered; server-normalized to E.164). TLS-only.
+        address:
+          type: string
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/IssuableRole'
+
+    MemberIssued:
+      type: object
+      description: |
+        A member was created; the Onboarding Code is shown ONCE (sensitive, TLS-only — modeled like
+        the auth `access_token`; omitted from committed fixtures). The `member` summary is PII-free.
+      required: [member, code_expires_at]
+      properties:
+        member:
+          $ref: '#/components/schemas/MemberSummary'
+        onboarding_code:
+          type: string
+          description: |
+            The single-use Onboarding Code, shown once to the admin (a helper reads it to the member).
+            Sensitive; TLS-only to the legitimate admin. Omitted from committed fixtures (no secrets).
+        code_expires_at:
+          type: integer
+          format: int64
+          description: The code's server-time expiry (epoch seconds; `now + 72h`).
+
+    DuplicatePhoneLink:
+      type: object
+      description: |
+        The submitted phone is already enrolled in the group (`(group_id, phone_lookup_hash)` unique).
+        The existing member is surfaced (NAME only) and the disclosure is I5-audited — admin-surface-
+        only, never reused on `/api/auth/*` (the no-existence-leak discipline holds there). The admin
+        resolves by editing the existing member.
+      required: [error_code, existing]
+      properties:
+        error_code:
+          type: string
+          const: ADMIN_MEMBER_DUPLICATE_PHONE
+        existing:
+          $ref: '#/components/schemas/MemberSummary'
+
+    EditMemberRequest:
+      type: object
+      description: |
+        A member edit — each PII field is OPTIONAL (only changed fields are re-validated/re-encrypted).
+        `expected_updated_at` is the optimistic-concurrency token the client loaded (AC11). PII is
+        TLS-only; never logged (P2/R10). `roles` (if present) excludes `admin` (I11) and must be non-empty.
+      required: [expected_updated_at]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/IssuableRole'
+        expected_updated_at:
+          type: integer
+          format: int64
+          description: |
+            The `updated_at` the edit was loaded against; a stale value → `ADMIN_MEMBER_EDIT_STALE`
+            (no partial write).
+
+    RegenerateCodeResponse:
+      type: object
+      description: A fresh Onboarding Code (shown once) + its expiry (AC6). The prior live code is superseded.
+      required: [code_expires_at]
+      properties:
+        onboarding_code:
+          type: string
+          description: The fresh single-use code, shown once. Sensitive; TLS-only. Omitted from fixtures.
+        code_expires_at:
+          type: integer
+          format: int64
+          description: The fresh code's server-time expiry (epoch seconds).
+
+    AuditEntry:
+      type: object
+      description: |
+        One I5 PII-read audit record — field NAMES, never values (AC9). Mirrors `core::server::AuditEntry`.
+        Carries no PII, so the audit-log read is not itself a recursive audited read.
+      required: [timestamp, admin_id, member_id, fields, request_id]
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Server-time instant of the read (epoch seconds).
+        admin_id:
+          type: string
+          format: uuid
+        member_id:
+          type: string
+          format: uuid
+        fields:
+          type: array
+          description: The field NAMES read (never values — AC9).
+          items:
+            type: string
+            enum: [name, phone, address]
+        request_id:
+          type: string
+          description: The server-minted opaque request correlation id (never client-echoed).
+
+    AuditLog:
+      type: object
+      description: The group's PII-read audit log (AC9) — names only.
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'

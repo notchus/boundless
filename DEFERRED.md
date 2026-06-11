@@ -2052,6 +2052,38 @@
       documented calm reject) + a `pg_member_store_edit_into_duplicate_phone` regression test is T09's.
   - **WHEN:** **T09** (the user-facing/audited edit-conflict mapping).
 
+## API contracts / admin surface (spec 008 T08 — out-of-scope register)
+
+> T08 froze the `/api/admin/*` HTTP contract: the 6 admin member paths + 12 schemas were added
+> **additively** to `api/openapi.yaml` (the `/api/auth/*` freeze + ADR-0023 tests stay green), the
+> `adminSharedSecret` scheme + `AdminIdHeader` param model the ADR-0026 trust boundary, PII handlers
+> carry `x-requires-audit: true`, and 4 contract tests (`openapi_pii_handlers_all_require_audit`,
+> `member_summary_schema_has_no_tainted_field`, `admin_issuance_error_codes_in_registry`,
+> `openapi_admin_surface_has_no_admin_creation_path`) gate it. `.bindings.lock` refreshed; no new deps;
+> all host-testable. Everything below was deliberately left out; each carries a WHEN.
+
+- [ ] **The hand-rolled-but-derived TS client `web/src/lib/server/members.ts`** (plan §6 — the thin Worker
+      marshalling layer the admin UI calls). Deferred to **T10**, where its UI consumer + Playwright e2e
+      exist — a client with no consumer/test would be untested "this should work" code (anti-hallucination).
+      Plan §6's TS-provenance decision stands: hand-rolled-but-derived from `api/openapi.yaml` for v1
+      (openapi-typescript codegen is still scaffold per the T10-shell register), revisit when codegen is wired.
+  - **WHEN:** **T10** (the SvelteKit admin UI).
+
+- [ ] **The Rust wire response DTOs + the `audited.rs` `AuditedResponse` allowlist extension.** The new
+      admin wire response shapes the Worker serializes (`IssueMemberResponseWire`/`MemberIssued`,
+      `RegenerateCodeResponseWire`, the `DuplicatePhoneLink` body) live in `core/server` (the two-type split,
+      built via `expose_secret` like `MemberDetail::to_wire`) and must be **blessed** on the sealed
+      `AuditedResponse` allowlist (T06 register's "T08 extends the allowlist") so `admin_response_body` will
+      serialize them. Deliberately kept in **T09** (where the Worker serializes them and the miniflare
+      round-trip tests them), not T08, to keep T08 a pure contract slice. Pin their serde keys (mirror
+      `member_detail_view_wire_keys_are_pinned`).
+  - **WHEN:** **T09** (the Worker projection + miniflare tests).
+
+- [ ] **Live deployed-edge contract-conformance for the admin surface.** The T08 tests check the contract
+      *document* (+ the registry parity); replaying real admin responses against the deployed Worker to
+      prove runtime conformance is the deploy-hardening pass (with T09's Worker + T11's seeded Groups).
+  - **WHEN:** the deploy-hardening pass / **T11**.
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a
