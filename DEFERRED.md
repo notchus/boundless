@@ -2257,6 +2257,61 @@
   - **WHEN:** M1 — a contract+Worker regenerate-503 slice; M2/M3 — an a11y-polish pass; L2/L3 — the
     deploy-hardening pass (the Worker is ours, so both are latent).
 
+## Server / Worker — cross-tenant deployed-edge proof (spec 008 T11 — out-of-scope register)
+
+> T11 shipped the **Worker-HTTP cross-tenant isolation proof** (AC16 / sec-audit F5) and the operator
+> handoff for the live-edge run. The locally-green gate is `server/test/cross-tenant.spec.ts`
+> (`worker_cross_tenant_admin_cannot_read_other_group`): a SECOND tenant (Group B + one Group-B member)
+> is seeded into the same local PG18 by `scripts/setup-worker-test-db.sh` (as superuser, bypassing RLS;
+> no `delegated_keys`/KEK — the Worker must never even SELECT the row), then the real Rust→wasm Worker —
+> scoped to its single `GROUP_ID` binding (Group A) and connecting as the non-superuser, **NOBYPASSRLS**
+> `boundless_app` role — is proven unable to read (404), list (absent), edit (409 Stale), or
+> regenerate-code (404) that Group-B member. This is strictly stronger than T07's store-level
+> `rls_isolates_member_reads_by_tenant` (which runs as a superuser with `SET ROLE`) and is the honest
+> CI-covered leg for AC16. The operator artifacts: `scripts/smoke-deployed-edge.sh` gained an **opt-in**
+> cross-tenant block (runs when `ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID` are exported; skips
+> otherwise, so the default post-deploy smoke is unchanged), and `docs/runbooks/deploy-worker.md` gained
+> a **"step 8 — AC16 cross-tenant isolation check"** section (seed ≥2 Groups + run the block). All
+> host/CI-testable; no core/Worker/migration change; no new deps. Everything below was left out.
+
+- [ ] **The LIVE deployed-edge run of the cross-tenant proof (the only thing that turns AC16 live-green;
+      operator-gated).** Cloudflare MCP is read-only — the human runs `wrangler`. The operator must:
+      (1) `wrangler deploy` the T09 Worker (the currently-deployed edge — first deployed 2026-06-09 — is
+      the auth-only Worker; the `/api/admin/members/*` routes need a re-deploy); (2) seed ≥2 Groups in
+      Neon (a real second Group from issuance, or the throwaway probe row the runbook's step 8 SQL
+      documents); (3) run `smoke-deployed-edge.sh` with `ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID`
+      set. A `200` (the cross-tenant row returned) would mean the Worker connects as a superuser/
+      `BYPASSRLS` role — but the W2 boot guard (`ensure_least_privilege`) already refuses such a role at
+      `/readyz`, so this is the belt-and-suspenders end-to-end proof. **AC16 stays `[shell]` until this
+      runs live.** (Supersedes the T07-shell-B / T09 registers' "live deployed-edge cross-tenant
+      isolation smoke (sec-audit F5)" items — the artifacts to run it now exist.)
+  - **WHEN:** the operator's next deploy + first issuance (or the throwaway-probe seed), per
+    `docs/runbooks/deploy-worker.md` → step 8.
+
+- [ ] **Optional: a Rust seed helper for the operator's Group-B seed against Neon.** The runbook's step
+      8 carries the seed SQL inline (run as `neondb_owner`, DIRECT endpoint). A dedicated script (the
+      Neon analog of the `setup-worker-test-db.sh` Group-B block) is only worth it if the operator finds
+      the inline SQL inconvenient — not built (YAGNI).
+  - **WHEN:** only if the operator asks.
+
+- [ ] **Carry-forwards from the T11 review (reviewer M1/M2 fixed in-slice; the rest non-blocking).** The
+      reviewer's M1 (the edit assertion was vacuous with `expected_updated_at:0`) and M2 (a broken-RLS
+      probe surfaces as a 5xx, not the 200 the runbook claimed) were **fixed in-slice** — the Group-B
+      member is now seeded with a fixed `updated_at` the test passes (so a 409 genuinely means RLS hid an
+      otherwise-matching row), and the runbook now says "404 is the only correct answer; any other status
+      (5xx or 200) = breach". Deferred with rationale: (L1) the gate is a single `it()` running all four
+      isolation channels (read/list/edit/regenerate) in sequence — a first-channel failure masks the
+      rest; splitting into one `it()` per channel would give cleaner per-channel CI signal (kept single to
+      preserve the canonical `worker_cross_tenant_admin_cannot_read_other_group` name the tracker
+      references; each channel still bites independently). (security-auditor F2) the smoke passes
+      `ADMIN_API_SECRET` as a `curl` argv `-H "authorization: Bearer …"`, briefly visible in `ps`/
+      `/proc/<pid>/cmdline` to other local users on a shared deploy host — pass it via `curl -K -` (config
+      on stdin) instead; **folds into the already-deferred deployed-edge `/readyz` hardening** (T07-shell-B
+      register). (security-auditor F3) the smoke's `assert_no_secret` already closes the "no response
+      echoes the secret" half. (L3) the `EXIT` trap is registered inside the opt-in block — correct today
+      (sole trap), but hoist it if a second trap is ever added above.
+  - **WHEN:** the deploy-hardening pass (F2 with the `/readyz` hardening; L1/L3 optional polish).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

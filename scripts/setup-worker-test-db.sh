@@ -36,6 +36,14 @@ SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../server" && pwd)"
 # `KEK` binding (a LOCAL TEST value, not a secret — like the boundless_app password). Spec 008 T09.
 SEED_GROUP_ID="${WORKER_TEST_GROUP_ID:-00000000-0000-0000-0000-000000000001}"
 SEED_KEK_HEX="${WORKER_TEST_KEK_HEX:-cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd}"
+# A SECOND Group (B) + a Group-B member, seeded so the spec-008 **T11** cross-tenant test
+# (server/test/cross-tenant.spec.ts) can prove the Worker — scoped to GROUP_ID = the Group-A
+# SEED_GROUP_ID above — cannot list/read/edit them (AC16 / sec-audit F5). Group B deliberately gets NO
+# `delegated_keys`/KEK: Worker-A never touches Group B's crypto — RLS hides the rows before any decrypt,
+# which is the whole point. Fixed ids, shared verbatim with the test (and mirroring the GB/MB convention
+# in scripts/test-provision-neon.sh). The seed runs as the superuser below (bypasses RLS).
+XTENANT_GROUP_ID="20000000-0000-0000-0000-000000000000"
+XTENANT_MEMBER_ID="2b000000-0000-0000-0000-000000000000"
 
 echo "→ provisioning worker test DB via ${SU_URL%@*}@… (role=${APP_ROLE}, schema=public)"
 
@@ -91,4 +99,25 @@ echo "→ seeding bootstrapped Group ${SEED_GROUP_ID} (KEK-wrapped delegated key
   WORKER_TEST_KEK_HEX="$SEED_KEK_HEX" \
   cargo run -q -p boundless-server-store --example seed_worker_test_pg )
 
-echo "✓ worker test DB ready (role=${APP_ROLE}, 11 migrations applied, 1 bootstrapped Group seeded)"
+# Seed a SECOND tenant (Group B) + one Group-B member, as the superuser (bypasses RLS for the seed), so
+# the T11 cross-tenant test can prove RLS isolation through the live Worker (AC16). No crypto needed —
+# Group B has no delegated_keys and the member's PII columns stay NULL (Worker-A never decrypts them; it
+# must never even SELECT them). A distinct phone_lookup_hash keeps the (group_id, phone_lookup_hash)
+# index satisfied. Idempotent (ON CONFLICT DO NOTHING), so re-runs are safe.
+echo "→ seeding cross-tenant Group ${XTENANT_GROUP_ID} + member ${XTENANT_MEMBER_ID} (T11 AC16 isolation)"
+$PSQL "$SU_URL" -v ON_ERROR_STOP=1 -q <<SQL
+INSERT INTO groups (id, name) VALUES ('${XTENANT_GROUP_ID}', 'Cross-Tenant Group B')
+  ON CONFLICT (id) DO NOTHING;
+-- ONE Group-B member. The FIXED updated_at (epoch 1700000000) lets the T11 edit-isolation case pass the
+-- member's REAL updated_at, so the optimistic-concurrency WHERE clause WOULD match the row if it were
+-- visible — making a 409 (0 rows) a genuine "RLS hid an otherwise-matching row" signal, not merely a
+-- stale-timestamp miss (a NON-vacuous isolation assertion; the set_updated_at trigger is BEFORE UPDATE
+-- only, so this explicit INSERT value sticks). The distinct phone_lookup_hash satisfies the
+-- (group_id, phone_lookup_hash) index — bump it if you ever add a SECOND Group-B member.
+INSERT INTO members (id, group_id, roles, phone_lookup_hash, updated_at)
+  VALUES ('${XTENANT_MEMBER_ID}', '${XTENANT_GROUP_ID}', '{rider}'::member_role[], '\x99',
+          to_timestamp(1700000000))
+  ON CONFLICT (id) DO NOTHING;
+SQL
+
+echo "✓ worker test DB ready (role=${APP_ROLE}, 11 migrations applied, Group A bootstrapped + Group B cross-tenant seeded)"

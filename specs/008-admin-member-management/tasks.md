@@ -306,6 +306,17 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** T08 (contract); e2e needs T09 (a running Worker/dev server).
 
 ### T11 — Cross-tenant deployed-edge proof (AC16) `[shell]` — operator-gated
+- **Status:** ✅ DONE 2026-06-11 (precursor + operator handoff). Shipped the locally-green **Worker-HTTP**
+  isolation gate `server/test/cross-tenant.spec.ts::worker_cross_tenant_admin_cannot_read_other_group`:
+  a Group-A-scoped real Worker, connecting as the non-superuser **NOBYPASSRLS** `boundless_app` role over
+  real PG18, cannot read (404) / list (absent) / edit (409 Stale) / regenerate-code (404) a Group-B member
+  seeded in the same DB — strictly stronger than T07's superuser+`SET ROLE` store-level precursor. Plus
+  the Group-B seed in `scripts/setup-worker-test-db.sh`, the **opt-in** cross-tenant block in
+  `scripts/smoke-deployed-edge.sh` (`ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID`; skips otherwise), and
+  the `docs/runbooks/deploy-worker.md` **step-8 AC16** section. No core/Worker/migration change; no new
+  deps. The **live deployed-edge run stays operator-gated** (`wrangler deploy` the T09 Worker + ≥2 Groups
+  + run the smoke) — AC16 is `[shell]` until then; see `DEFERRED.md` → "Server / Worker — cross-tenant
+  deployed-edge proof (spec 008 T11)".
 - **What:** With ≥2 seeded Groups, prove a Group-A admin token cannot list/read/edit Group-B members on
   the **deployed edge** as the locked-down `boundless_app` role. Closes the long-open sec-audit **F5**.
 - **Touches:** `scripts/smoke-deployed-edge.sh` (extend); `docs/runbooks/deploy-worker.md` (note the
@@ -338,7 +349,7 @@ T09 is in flight, but its e2e needs T09's Worker.
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓; **T07 ✓ DB** (`…roles_array_round_trip`: multi-role set through `member_role[]`) |
 | AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | **T10 ✓ shell** (`members_routes_axe_clean_default_dark_rtl` ×{default,dark,RTL} per route + open dialog; `members_add_edit_dialog_keyboard_ceremony` focus-trap/Esc/return; `members_list_reflows_at_400_percent`; `audit_log_validation_aria_live`) |
 | AC15 i18n + pseudo-locale | T10, T01-catalog | **T10 ✓** (`admin_members_catalog_parity` extends the cross-platform gate to the 17 spec-008 keys; `members_pseudo_locale_renders_without_truncation[zz-ZZ]` bracketed copy + reflow; `member-errors.test.ts` code↔key parity; all copy catalog-sourced — i18n-validator pass) |
-| AC16 cross-tenant deployed-edge proof (F5) | T11 [shell], T07 (host precursor) | **T07 ✓ host precursor** (`rls_isolates_member_reads_by_tenant` + `prop_rls_isolates_random_two_group_configs`); T11 live deployed-edge proof pending |
+| AC16 cross-tenant deployed-edge proof (F5) | T07 (store precursor), T11 (Worker-HTTP precursor + operator handoff), T11 [shell] live | **T07 ✓ store precursor** (`rls_isolates_member_reads_by_tenant` + `prop_rls_isolates_random_two_group_configs`, superuser+`SET ROLE`); **T11 ✓ Worker-HTTP precursor** (`worker_cross_tenant_admin_cannot_read_other_group`: a Group-A-scoped Worker, as the NOBYPASSRLS `boundless_app` role over real PG18, cannot read/list/edit/regenerate a seeded Group-B member); **live deployed-edge run = `[shell]`, operator-gated** (smoke cross-tenant block + runbook step 8 ready) |
 
 Every task maps to ≥1 AC; no task introduces behavior absent from `spec.md`. Out-of-scope items (geocoding,
 deletion/I12, device-token encryption, role-swap workflow, remote-only, O5/O7, matching, bulk import)

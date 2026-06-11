@@ -51,3 +51,49 @@ printf '%s' "$signin" | grep -q 'AUTH_PHONE_NOT_ON_FILE' || fail "sign-in did no
 assert_no_leak "/api/auth/signin" "$signin"
 
 echo "✓ deployed-edge smoke passed (${BASE}): /healthz ok · /readyz db:ok · sign-in phone_not_on_file · no credential leak."
+
+# 4. cross-tenant isolation (spec 008 T11 / AC16 / sec-audit F5) — OPT-IN. Runs only once the operator has
+# seeded a SECOND Group and exports its member id + the admin shared secret. Proves a Group-A admin (this
+# single-install Worker's only tenant — the GROUP_ID binding is the RLS tenant; X-Admin-Id is just the I5
+# audit actor) cannot read or list a member that exists ONLY in another Group: RLS + the non-BYPASSRLS
+# `boundless_app` role hide it. The production analog of test-provision-neon.sh's app-role isolation proof
+# and of the worker_cross_tenant_admin_cannot_read_other_group miniflare test. See
+# docs/runbooks/deploy-worker.md → "AC16 — cross-tenant isolation check".
+#   ADMIN_API_SECRET       — the ADR-0026 admin shared secret (the value you `wrangler secret put`).
+#   CROSS_TENANT_MEMBER_ID — a member uuid that exists ONLY in another Group (NOT this Worker's GROUP_ID).
+#   X_ADMIN_ID (optional)  — any uuid; defaults below (the audit actor, never a tenant selector).
+if [ -n "${ADMIN_API_SECRET:-}" ] && [ -n "${CROSS_TENANT_MEMBER_ID:-}" ]; then
+  XADMIN="${X_ADMIN_ID:-00000000-0000-0000-0000-0000000000aa}"
+  xtmp="$(mktemp)"
+  trap 'rm -f "$xtmp"' EXIT
+  # Defense-in-depth (P2/I8): beyond the connection-string check, no admin response may echo the shared
+  # secret itself. (Admin bodies are value-free ErrorBody codes / PII-free summaries, so this never fires
+  # today — it guards against a future endpoint reflecting a request header.)
+  assert_no_secret() { # $1=label $2=body
+    if printf '%s' "$2" | grep -qF "$ADMIN_API_SECRET"; then fail "$1 response echoed the admin shared secret (P2/I8)"; fi
+  }
+
+  # 4a. read the other Group's member by id → MUST be 404 ADMIN_MEMBER_NOT_FOUND (never the row). No `-f`
+  # here: a 404 is the expected, correct answer, so capture the status explicitly instead of erroring on it.
+  xcode="$(curl -sS -o "$xtmp" -w '%{http_code}' \
+    -H "authorization: Bearer ${ADMIN_API_SECRET}" -H "x-admin-id: ${XADMIN}" \
+    "$BASE/api/admin/members/${CROSS_TENANT_MEMBER_ID}")" || fail "cross-tenant detail request did not complete"
+  xbody="$(cat "$xtmp")"
+  [ "$xcode" = "404" ] || fail "cross-tenant member read returned HTTP ${xcode}, expected 404 — RLS isolation may be broken (is the Worker role NOBYPASSRLS?)"
+  printf '%s' "$xbody" | grep -q 'ADMIN_MEMBER_NOT_FOUND' || fail "cross-tenant member read did not return ADMIN_MEMBER_NOT_FOUND (got: ${xbody})"
+  assert_no_leak "cross-tenant detail" "$xbody"
+  assert_no_secret "cross-tenant detail" "$xbody"
+
+  # 4b. list THIS Group's members → the other Group's member id MUST be absent from the body.
+  xlist="$(curl -fsS -H "authorization: Bearer ${ADMIN_API_SECRET}" -H "x-admin-id: ${XADMIN}" \
+    "$BASE/api/admin/members")" || fail "cross-tenant list request did not return 2xx"
+  if printf '%s' "$xlist" | grep -qF "$CROSS_TENANT_MEMBER_ID"; then
+    fail "the member list LEAKED a cross-tenant member id — RLS isolation is broken"
+  fi
+  assert_no_leak "cross-tenant list" "$xlist"
+  assert_no_secret "cross-tenant list" "$xlist"
+
+  echo "✓ cross-tenant isolation (AC16): a Group-A admin cannot read or list the seeded Group-B member."
+else
+  echo "ℹ cross-tenant check skipped — set ADMIN_API_SECRET + CROSS_TENANT_MEMBER_ID with ≥2 Groups seeded (docs/runbooks/deploy-worker.md → AC16)."
+fi

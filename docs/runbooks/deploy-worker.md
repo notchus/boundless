@@ -191,6 +191,58 @@ no response leaks a connection string.
 > deploy answers every sign-in with `AUTH_PHONE_NOT_ON_FILE` — exactly what the smoke checks. That is
 > the Worker + transport + RLS working, not a bug.
 
+### 8 — AC16: cross-tenant isolation check (after ≥2 Groups exist)
+
+The single highest-impact privacy proof on the live edge (spec 008 **T11**, closes sec-audit **F5**):
+prove a Group-A admin cannot read or list a member that exists **only in another Group**. RLS + the
+locked-down `boundless_app` role (step 0) hide it — this is the production analog of
+`scripts/test-provision-neon.sh`'s app-role isolation proof and of the
+`worker_cross_tenant_admin_cannot_read_other_group` miniflare test, but against the deployed Worker over
+the real Hyperdrive→Neon path.
+
+This Worker is **single-tenant**: the `GROUP_ID` binding (step 5) is the RLS tenant, and `X-Admin-Id` is
+only the audit actor — so "cross-tenant" means *a row that belongs to a different `group_id` than this
+Worker's*. You need a second Group's member in the database. Once issuance has created a real second
+Group you can use one of its member ids; before then, seed a throwaway probe row as the DB **owner**
+(`neondb_owner`, DIRECT endpoint — it bypasses RLS, so the insert lands regardless of tenant), choosing
+a `group_id` that is **not** this Worker's `GROUP_ID`:
+
+```sql
+-- A throwaway second Group + one member (no PII, no key needed — the Worker must never even SELECT it).
+INSERT INTO groups (id, name) VALUES
+  ('20000000-0000-0000-0000-000000000000', 'AC16 cross-tenant probe')
+  ON CONFLICT (id) DO NOTHING;
+INSERT INTO members (id, group_id, roles, phone_lookup_hash) VALUES
+  ('2b000000-0000-0000-0000-000000000000',
+   '20000000-0000-0000-0000-000000000000', '{rider}'::member_role[], '\x99')
+  ON CONFLICT (id) DO NOTHING;
+```
+
+Then run the smoke's opt-in cross-tenant block, passing the admin shared secret (the value you
+`wrangler secret put ADMIN_API_SECRET` in step 4c) and that member id:
+
+```bash
+ADMIN_API_SECRET="<the ADMIN_API_SECRET you set>" \
+CROSS_TENANT_MEMBER_ID="2b000000-0000-0000-0000-000000000000" \
+bash ../scripts/smoke-deployed-edge.sh https://boundless-worker.<account>.workers.dev
+```
+
+It asserts the deployed Worker returns **404 `ADMIN_MEMBER_NOT_FOUND`** for that member and **omits its
+id** from `GET /api/admin/members`. **404 is the only correct answer; the smoke fails on anything else.**
+If RLS is *not* isolating (almost always because the Worker connects as a superuser / `BYPASSRLS` role),
+the Group-B row becomes reachable and the smoke fails — usually with a **5xx** (the row is now visible, but
+its PII is encrypted under a different Group's key, so the Worker can't decrypt it), or in the worst case a
+`200`. Either way the failure is loud. Re-check step 0 — though the W2 boot guard
+(`ensure_least_privilege`) should already have refused such a role at `/readyz`, so reaching this check at
+all is the belt-and-suspenders end-to-end proof.
+
+You can delete the probe rows afterward, or leave them — the Worker can never see them:
+
+```sql
+DELETE FROM members WHERE id = '2b000000-0000-0000-0000-000000000000';
+DELETE FROM groups  WHERE id = '20000000-0000-0000-0000-000000000000';
+```
+
 ---
 
 ## Troubleshooting step 0
@@ -232,7 +284,8 @@ This is the highest-impact privacy control in the deploy (DEFERRED.md → T07-sh
 cross-tenant reads return zero rows.
 
 After the first real deploy, run the cross-tenant check **as the live app role** against the deployed
-edge — the production analog of that meta-test (still open in DEFERRED.md → T07-shell-B).
+edge — the production analog of that meta-test. See [step 8](#8--ac16-cross-tenant-isolation-check-after-2-groups-exist)
+(spec 008 T11; closes sec-audit F5).
 
 ## References
 
