@@ -2275,12 +2275,16 @@
 > host/CI-testable; no core/Worker/migration change; no new deps. Everything below was left out.
 
 - [ ] **The LIVE deployed-edge run of the cross-tenant proof (the only thing that turns AC16 live-green;
-      operator-gated).** Cloudflare MCP is read-only — the human runs `wrangler`. The operator must:
-      (1) `wrangler deploy` the T09 Worker (the currently-deployed edge — first deployed 2026-06-09 — is
-      the auth-only Worker; the `/api/admin/members/*` routes need a re-deploy); (2) seed ≥2 Groups in
-      Neon (a real second Group from issuance, or the throwaway probe row the runbook's step 8 SQL
-      documents); (3) run `smoke-deployed-edge.sh` with `ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID`
-      set. A `200` (the cross-tenant row returned) would mean the Worker connects as a superuser/
+      operator-gated).** Cloudflare MCP is read-only — the human runs `wrangler`. **Prerequisite (surfaced
+      2026-06-11 when the operator first deployed the T09 Worker and the member endpoints 500'd): the
+      deployed Neon was provisioned 2026-06-09, before the member migrations existed, so it lacks
+      0009–0011 AND the Group is not bootstrapped.** The "Deploy tooling" register below closes that — the
+      operator must: (0) re-run `provision-neon.sh` (now idempotently applies 0009–0011 + re-grants), THEN
+      `bootstrap-group.sh` with the KEK (mints Group A's key — runbook step 5b); (1) `wrangler deploy` the
+      T09 Worker (the currently-deployed edge — first deployed 2026-06-09 — is the auth-only Worker; the
+      `/api/admin/members/*` routes need a re-deploy); (2) seed ≥2 Groups in Neon (a real second Group from
+      issuance, or the throwaway probe row the runbook's step 8 SQL documents); (3) run
+      `smoke-deployed-edge.sh` with `ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID` set. A `200` (the cross-tenant row returned) would mean the Worker connects as a superuser/
       `BYPASSRLS` role — but the W2 boot guard (`ensure_least_privilege`) already refuses such a role at
       `/readyz`, so this is the belt-and-suspenders end-to-end proof. **AC16 stays `[shell]` until this
       runs live.** (Supersedes the T07-shell-B / T09 registers' "live deployed-edge cross-tenant
@@ -2311,6 +2315,64 @@
       echoes the secret" half. (L3) the `EXIT` trap is registered inside the opt-in block — correct today
       (sole trap), but hoist it if a second trap is ever added above.
   - **WHEN:** the deploy-hardening pass (F2 with the `/readyz` hardening; L1/L3 optional polish).
+
+## Deploy tooling — member-management provisioning (spec 008 — DONE 2026-06-11)
+
+> Surfaced when the operator first deployed the T09 Worker (2026-06-09 had deployed the auth-only Worker)
+> and every `/api/admin/members/*` route returned **500**. Root cause (NOT an RLS breach, NOT a code
+> defect): the deployed Neon was provisioned before the member migrations existed, so (a) it lacked
+> `0009`–`0011` (`delegated_keys` / `members.{name,address}_encrypted` / `audit_log`), and (b) the Group
+> was never bootstrapped (no `delegated_keys` row → every member endpoint loads the Group key first and
+> fails closed). `provision-neon.sh` only knew the 8 auth migrations (and a *fresh* run was also broken —
+> it globbed 11 files but asserted a count of 8). This is the spec-008 **operator provisioning**
+> (plan §13.4) that had never been run because the feature was just built. The tooling now exists; no
+> core/Worker/migration/ADR change.
+
+- [x] **`provision-neon.sh` → idempotent per-migration apply. DONE 2026-06-11.** Replaced the
+      empty/full/partial-refuse branch with a **marker-probe** loop: each `server/migrations/NNNN_*.up.sql`
+      is applied only if its marker object is absent (`to_regclass` for tables; the `members.name_encrypted`
+      column for the ALTER-only 0010), `--single-transaction` (atomic ⇒ one marker = fully applied). So a
+      **fresh** DB gets all 11 AND an older `0001..0008` DB picks up exactly the new ones — the 8→11 upgrade
+      the live DB needs. An **unmapped** migration is a hard error (fail-closed: a future 0012 without a
+      marker must be added, never silently skipped/applied). The unconditional grants already re-grant the
+      app role on the re-created tables (this is the closure of the **review backstop (i)** — the
+      `GRANT … ON ALL TABLES` point-in-time gap — recorded under the T07-shell-B register). Meta-test:
+      `scripts/test-provision-neon.sh` gained an **upgrade phase** (drop 0009–0011 objects, re-run, assert
+      they re-apply + the app role is re-granted) + the 8→10 table-count update; proven on real PG18.
+
+- [x] **Production Group-bootstrap tool. DONE 2026-06-11.** `server/store/examples/bootstrap_group_pg.rs`
+      (the prod analog of the test-only `seed_worker_test_pg.rs`) + `scripts/bootstrap-group.sh`: mints a
+      **random** per-Group key + nonce, wraps under the operator's real KEK (`wrap_group_key`, P4), writes
+      ONLY the wrapped blob `ON CONFLICT DO NOTHING` — **never overwrites** an existing key (overwriting
+      orphans all PII under it; the difference from the test seed's `DO UPDATE`). Self-checks the unwrap
+      before insert; exit 0=new / 3=already / panic=bad KEK/URL. The KEK rides in the env (not argv → not in
+      `ps`). `getrandom` 0.4 added as a `boundless-server-store` **dev-dep** (native/host; examples never
+      build for wasm; already 0.4.2 in the lock — no new crate version; not on the non-dev wasm tree, so the
+      no-getrandom CI gate is unaffected). Meta-test `scripts/test-bootstrap-group.sh` (wired into the CI
+      `worker` job) proves: mints a 72-byte (NONCE+MAC+KEY) wrapped key, idempotent, **never overwrites**
+      (byte-identical across runs); proven on real PG18. Runbook **step 5b** documents the operator run.
+
+- [ ] **The operator's prod run (their DB writes; agent won't run unprompted).** Against the deployed Neon:
+      re-run `provision-neon.sh` (owner DIRECT URL → applies 0009–0011 + re-grants), then `bootstrap-group.sh`
+      with the **saved KEK** + `GROUP_ID` (mints Group A's key). Then the member endpoints work and the AC16
+      cross-tenant smoke returns the clean 404. (This is the (0) prerequisite folded into the T11 live-run
+      item above.) **WHEN:** the operator's next deploy session.
+
+- [ ] **Review carry-forwards (reviewer S2; both reviews otherwise clean — 0 crit/high/warning, sec-auditor
+      "ship it").** `bootstrap-group.sh` takes the **owner URL (with its password) as `$1`** — visible in
+      `ps`/shell history. This mirrors `provision-neon.sh` exactly (same convention, not a regression) and is
+      the same argv-secret class already tracked under the T11 review's sec-auditor **F2** item; fold an
+      env-based owner-URL option into that deploy-hardening pass. (Other LOW notes need no action: a
+      `.cargo/config.toml` `target-dir` would defeat the binary-path resolution but fails *closed* with a
+      clear error — S1; the marker probe could skip a half-applied migration only on a DB migrated by some
+      *other* non-atomic tool, out of contract + fail-closed — S4.) **WHEN:** the deploy-hardening pass.
+
+- [ ] **Future robustness: a `schema_migrations` tracking table** (vs. the per-migration marker map).
+      The marker map is explicit + meta-tested + fail-closed on an unmapped migration, which suffices and
+      adds no dependency — but a tracking table (the standard approach) would remove the per-migration
+      maintenance. Deferred: it would need back-filling the existing 0001–0008 rows on already-migrated DBs,
+      and ADR-0019 deliberately chose plain out-of-band SQL (no migration framework). **WHEN:** if the marker
+      map's maintenance becomes a burden / a migration-framework decision is revisited.
 
 ## Constitution
 

@@ -200,6 +200,13 @@ jobs:
         # setup-worker-test-db.sh) — keeping the two order-independent. Self-locating → run from root.
         working-directory: ${{ github.workspace }}
         run: bash scripts/test-provision-neon.sh
+      - name: Test the Group-bootstrap script (account-free; throwaway DB — idempotent, never-overwrite)
+        # Proves scripts/bootstrap-group.sh + examples/bootstrap_group_pg.rs mint a KEK-wrapped per-Group
+        # key (72 bytes), are idempotent, and NEVER overwrite an existing key (which would orphan all PII).
+        # Self-contained throwaway DB (boundless_bootstrap_test); builds the example with the native
+        # toolchain installed above. Self-locating → run from repo root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/test-bootstrap-group.sh
       - name: Provision the worker test DB (app role + migrations + grants — no seeding)
         # ubuntu-latest ships psql; the script creates the non-superuser LOGIN role the Worker connects
         # as, applies the T06 migrations into public, and grants DML. Self-locating → run from repo root.

@@ -14,7 +14,7 @@
 # is still the live deployed-edge cross-tenant smoke (DEFERRED.md → T07-shell-B, sec-audit F5).
 #
 # Asserts, as boundless_app over the freshly-provisioned `public`:
-#   role attrs (NOSUPERUSER/NOBYPASSRLS/LOGIN) · 8 tables · single uniform table owner (catches a Neon
+#   role attrs (NOSUPERUSER/NOBYPASSRLS/LOGIN) · 10 tables · single uniform table owner (catches a Neon
 #   ownership split a local superuser would mask) · the literal `ensure_least_privilege` SQL returns
 #   both-false (+ a superuser returns is_super=true — the guard's negative) · current_group_id() executes
 #   (PUBLIC-EXECUTE) · DML works under the tenant GUC · RLS isolates cross-tenant reads · fail-closed
@@ -56,8 +56,8 @@ SIM_TARGET="$(printf '%s' "$SU_TARGET" | sed -E "s#^(postgres(ql)?://)[^/]*@#\1$
 OWNER_TARGET="$SIM_TARGET"                                 # the NON-superuser Neon-like owner provision runs AS
 APP_TARGET="$(printf '%s' "$SU_TARGET" | sed -E "s#^(postgres(ql)?://)[^/]*@#\1boundless_app:${APP_PW}@#")"
 
-# 8 tables the migrations create.
-TABLES="groups members onboarding_codes recovery_codes device_tokens sessions admin_webauthn_credentials admin_invitations"
+# The 10 tables the migrations create (0001..0011; 0010 only ADDs columns to `members`, no new table).
+TABLES="groups members onboarding_codes recovery_codes device_tokens sessions admin_webauthn_credentials admin_invitations delegated_keys audit_log"
 in_list="$(printf "'%s'," $TABLES)"; in_list="${in_list%,}"
 
 # Fixed test ids.
@@ -117,9 +117,9 @@ fi
 [ "$(q "$OWNER_TARGET" "SELECT rolbypassrls  FROM pg_roles WHERE rolname='boundless_app'")" = "f" ] || fail "boundless_app must be NOBYPASSRLS"
 [ "$(q "$OWNER_TARGET" "SELECT rolcanlogin   FROM pg_roles WHERE rolname='boundless_app'")" = "t" ] || fail "boundless_app must be LOGIN"
 
-# --- 5. schema: 8 tables, single uniform owner (Neon ownership-split guard) ------------------------
-[ "$(q "$OWNER_TARGET" "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN (${in_list})")" = "8" ] \
-  || fail "expected 8 provisioned tables"
+# --- 5. schema: 10 tables, single uniform owner (Neon ownership-split guard) -----------------------
+[ "$(q "$OWNER_TARGET" "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN (${in_list})")" = "10" ] \
+  || fail "expected 10 provisioned tables"
 [ "$(q "$OWNER_TARGET" "SELECT count(DISTINCT tableowner) FROM pg_tables WHERE schemaname='public' AND tablename IN (${in_list})")" = "1" ] \
   || fail "tables must share ONE owner (a split would let ON ALL TABLES silently under-grant on Neon)"
 
@@ -179,4 +179,24 @@ BOUNDLESS_APP_DB_PASSWORD="$APP_PW" PSQL="$PSQL" bash scripts/provision-neon.sh 
 $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "ALTER ROLE boundless_app NOBYPASSRLS" >/dev/null
 [ "$neg_rc" -ne 0 ] || fail "provision-neon.sh must REFUSE a pre-existing BYPASSRLS app role (verify must fail-closed)"
 
-echo "✓ provision-neon meta-test passed AS a Neon-like non-superuser owner (role-locked · 8 tables · single-owner · least-privilege+negative · public-execute · DML · RLS isolates · fail-closed · conn-string · rejects-unsafe-password · refuses-privileged-role · no-stderr-leak)."
+# --- 10. UPGRADE path (idempotent apply): simulate an OLDER 0001..0008-only DB — the user's live Neon,
+# provisioned before 0009..0011 existed — by dropping those three migrations' objects, then prove a re-run
+# RE-APPLIES exactly them AND the unconditional grants reach the re-created tables (closes DEFERRED
+# backstop (i)). Drop as the SU (RLS/ownership don't block it; the objects carry no rows here). NB section
+# 9 restored boundless_app to NOBYPASSRLS, so the re-provision's verify passes.
+$PSQL "$SU_TARGET" -v ON_ERROR_STOP=1 -q <<SQL
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS delegated_keys;
+ALTER TABLE members DROP COLUMN IF EXISTS name_encrypted, DROP COLUMN IF EXISTS address_encrypted;
+SQL
+[ "$(q "$OWNER_TARGET" "SELECT to_regclass('public.delegated_keys') IS NULL")" = "t" ] || fail "upgrade setup: delegated_keys should be dropped"
+BOUNDLESS_APP_DB_PASSWORD="$APP_PW" PSQL="$PSQL" bash scripts/provision-neon.sh "$OWNER_TARGET" >/dev/null 2>&1 \
+  || fail "re-provision (8→11 upgrade) failed"
+[ "$(q "$OWNER_TARGET" "SELECT to_regclass('public.delegated_keys') IS NOT NULL")" = "t" ] || fail "upgrade: delegated_keys not re-created"
+[ "$(q "$OWNER_TARGET" "SELECT to_regclass('public.audit_log') IS NOT NULL")" = "t" ]      || fail "upgrade: audit_log not re-created"
+[ "$(q "$OWNER_TARGET" "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='members' AND column_name='name_encrypted')")" = "t" ] \
+  || fail "upgrade: members.name_encrypted not re-added (0010)"
+[ "$(q "$OWNER_TARGET" "SELECT has_table_privilege('boundless_app','delegated_keys','SELECT')")" = "t" ] || fail "upgrade: boundless_app not granted on the re-created delegated_keys"
+[ "$(q "$OWNER_TARGET" "SELECT has_table_privilege('boundless_app','audit_log','INSERT')")" = "t" ]      || fail "upgrade: boundless_app not granted on the re-created audit_log"
+
+echo "✓ provision-neon meta-test passed AS a Neon-like non-superuser owner (role-locked · 10 tables · single-owner · least-privilege+negative · public-execute · DML · RLS isolates · fail-closed · conn-string · rejects-unsafe-password · refuses-privileged-role · upgrade-reapplies-pending · no-stderr-leak)."

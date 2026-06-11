@@ -70,10 +70,10 @@ bash ../scripts/smoke-deployed-edge.sh http://localhost:8787
 
 ### 0 — Provision the Neon database (the one non-`wrangler` step)
 
-Run once, as the database **owner**, against an existing (empty) Neon database. The script is
-**non-destructive and idempotent** — it creates the locked-down `boundless_app` role, applies the
-schema migrations only if the database is empty, grants least privilege, and prints the **app-role
-connection string** you need for step 1.
+Run once, as the database **owner**, against an existing Neon database. The script is **non-destructive
+and idempotent** — it creates the locked-down `boundless_app` role, applies the schema migrations
+**idempotently** (each migration only if its objects are absent), grants least privilege, and prints the
+**app-role connection string** you need for step 1.
 
 ```bash
 # HOST = the DIRECT (unpooled) Neon host — no `-pooler` (the script refuses a pooled host); role neondb_owner.
@@ -92,6 +92,11 @@ pin the password instead of generating one, set a URL/SQL-safe `BOUNDLESS_APP_DB
 `--sslmode require` flag in the next step. **Re-running** with no `BOUNDLESS_APP_DB_PASSWORD` set generates
 a *new* password and resets the role to it — so if you have already created the Hyperdrive config (step 1),
 either pin `BOUNDLESS_APP_DB_PASSWORD` to the original value or update the config (`wrangler hyperdrive update`).
+
+> **Schema upgrades (re-deploys).** Re-running step 0 after new migrations land is safe: each migration
+> is gated on a marker object, so it applies only the *pending* ones and re-grants the app role on the new
+> tables. **If you first deployed before spec 008 added the member tables (`0009`–`0011`), just re-run
+> step 0 to pick them up** — the member endpoints return 500 until those tables exist.
 
 ### 1 — Create the Hyperdrive config
 
@@ -141,10 +146,12 @@ npx wrangler secret put HMAC_KEY   # paste it at the interactive prompt
 
 The root of the whole PII envelope: it wraps the per-Group secretbox key in `delegated_keys`. A 32-byte
 hex value, set as a secret (never a `[vars]` entry, never committed — the `check-wrangler-credentials.sh`
-gate forbids that). **This MUST be the same KEK the Group was bootstrapped under** (`provision-neon.sh` /
-the issuance bootstrap wrap the Group key with it) — if it differs, every admin issuance fails closed
-(`ADMIN_GROUP_KEY_MISSING`). (Once the runtime emulates a Secrets Store binding locally, migrate `KEK`
-there per DEFERRED.md → T09; until then it is a `wrangler secret`, like `HMAC_KEY`.)
+gate forbids that). **This MUST be the same KEK you bootstrap the Group under** — step 5b runs
+`bootstrap-group.sh`, which wraps the per-Group key with it; if it differs, every admin read/issue fails
+closed (`ADMIN_GROUP_KEY_MISSING`). **Save this value** — you cannot read a `wrangler secret` back from
+Cloudflare, and the step-5b bootstrap needs it (lose it after real members exist and their PII is
+unrecoverable). (Once the runtime emulates a Secrets Store binding locally, migrate `KEK` there per
+DEFERRED.md → T09; until then it is a `wrangler secret`, like `HMAC_KEY`.)
 
 ```bash
 openssl rand -hex 32            # copy the output — and keep it: the Group bootstrap must use the SAME value
@@ -167,6 +174,28 @@ npx wrangler secret put ADMIN_API_SECRET
 Leave the `[vars]` default (`00000000-…-0001`) for now. It is an opaque tenant UUID, not a secret, and
 there are no members until issuance (spec 008) assigns the real Group id — so the value does not affect
 this deploy. Set the real id when issuance lands.
+
+### 5b — Bootstrap the Group's encryption key (spec 008 — required before member management works)
+
+The member endpoints load the per-Group key (the `delegated_keys` row) **before** anything else, so until
+the Group is bootstrapped every admin read/list/issue fails closed (`ADMIN_GROUP_KEY_MISSING` → 503; the
+AC16 cross-tenant detail read can't reach its clean 404). Bootstrap mints a **random** per-Group key, wraps
+it under the **KEK from step 4b**, and stores only the wrapped blob — `ON CONFLICT DO NOTHING`, so a re-run
+**never overwrites** an existing key (which would orphan all PII encrypted under it). Run it once per Group,
+as the database **owner** (its `BYPASSRLS` lands the insert), with the SAME `GROUP_ID` (step 5) and `KEK`
+(step 4b). The KEK rides in the env (never an argv → not in `ps`):
+
+```bash
+BOOTSTRAP_KEK_HEX="<the KEK from step 4b>" \
+  bash scripts/bootstrap-group.sh \
+    "postgresql://neondb_owner:PW@HOST/neondb?sslmode=require" \
+    00000000-0000-0000-0000-000000000001 \
+    "Your group's name"
+```
+
+It reports `✓ … bootstrapped` (or `✓ … already bootstrapped — left untouched` on a re-run). Requires the
+migrations from step 0 (the `delegated_keys` table) and a Rust toolchain (it builds the helper with
+`cargo` — unlike the pure-`wrangler` steps).
 
 ### 6 — Deploy
 
@@ -199,6 +228,10 @@ locked-down `boundless_app` role (step 0) hide it — this is the production ana
 `scripts/test-provision-neon.sh`'s app-role isolation proof and of the
 `worker_cross_tenant_admin_cannot_read_other_group` miniflare test, but against the deployed Worker over
 the real Hyperdrive→Neon path.
+
+> **Prerequisite:** this Worker's own Group (`GROUP_ID`) must be **bootstrapped** (step 5b) and the member
+> migrations applied (step 0) — the detail read loads the Group key *first*, so without them you get a
+> 503/500, not the clean 404 this check expects.
 
 This Worker is **single-tenant**: the `GROUP_ID` binding (step 5) is the RLS tenant, and `X-Admin-Id` is
 only the audit actor — so "cross-tenant" means *a row that belongs to a different `group_id` than this

@@ -14,8 +14,10 @@
 #     CREATEROLE role, NOT a superuser, so naming them is rejected. (Neon's `neondb_owner` itself has
 #     BYPASSRLS and is correctly REJECTED by the Worker's boot guard — DEFERRED.md → T07-shell-B,
 #     sec-audit W2/R3 — which is why this script mints a separate, locked-down role.)
-#   * applies the T06 migrations 0001..0008 **only if the schema is empty** (0 of the 8 tables present);
-#     if all 8 are present it skips; a PARTIAL schema makes it fail loudly (it never DROPs / never guesses);
+#   * applies the schema migrations IDEMPOTENTLY — each `server/migrations/NNNN_*.up.sql` is applied
+#     only if its MARKER object is absent, so a fresh DB gets all of them AND an older DB (e.g. one
+#     provisioned before 0009..0011 existed) picks up exactly the new ones. It never DROPs and never
+#     re-runs a CREATE on an existing object; an unmapped migration (no marker) is a hard error;
 #   * grants the app role CONNECT + USAGE + table DML (the proven server/store/tests/common/mod.rs set;
 #     no extension/sequence/EXECUTE grants are needed — gen_random_uuid is a PG13+ builtin, and functions
 #     keep the PG15+ default PUBLIC EXECUTE). Grants run on EVERY run, even when migrations are skipped.
@@ -53,10 +55,6 @@ case "$APP_PW" in
     exit 2 ;;
 esac
 MIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../server/migrations" && pwd)"
-
-# The 8 tables the T06 migrations create (used to detect empty / migrated / partial).
-EXPECTED_TABLES="groups members onboarding_codes recovery_codes device_tokens sessions admin_webauthn_credentials admin_invitations"
-EXPECTED_COUNT=8
 
 # All human-facing output goes to stderr; STDOUT is reserved for the one connection-string line.
 log() { echo "$@" >&2; }
@@ -124,37 +122,55 @@ attr() { $PSQL "$OWNER_URL" -tAc "SELECT $1 FROM pg_roles WHERE rolname='${APP_R
 [ "$(attr rolcanlogin)"    = "t" ] || { log "✗ ${APP_ROLE} cannot LOGIN —  run:  ALTER ROLE ${APP_ROLE} LOGIN;"; exit 1; }
 log "✓ app role ${APP_ROLE} (LOGIN · verified NOSUPERUSER · NOBYPASSRLS · NOREPLICATION · NOCREATEROLE · NOCREATEDB)"
 
-# --- 2. migrations (CONDITIONAL — never destructive) -------------------------------------------
-# Count how many of the 8 tables already exist, then: 0 → apply all; 8 → skip; partial → refuse.
-in_list="$(printf "'%s'," $EXPECTED_TABLES)"; in_list="${in_list%,}"
-present="$($PSQL "$OWNER_URL" -tAc \
-  "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN (${in_list})")"
-present="$(printf '%s' "$present" | tr -d '[:space:]')"
-# A successful `SELECT count(*)` always yields a number; guard so an empty/non-numeric read can't be
-# treated as 0 (bash `[ "" -eq 0 ]` is true) → silently applying migrations onto an unknown schema.
-case "$present" in ''|*[!0-9]*) log "✗ could not read the table count from the database"; exit 1 ;; esac
+# --- 2. migrations (IDEMPOTENT — never destructive) --------------------------------------------
+# Apply each up-migration whose MARKER object is absent; skip those already applied. This makes a fresh
+# DB get all of them AND an already-partially-migrated DB (e.g. an older deploy on 0001..0008 from before
+# 0009..0011 existed) pick up exactly the new ones — repeatable for every future migration. We never DROP
+# and never re-run a CREATE on an existing object: each file is wrapped --single-transaction (atomic ⇒ one
+# marker reliably means "fully applied"), and the marker probe gates the apply.
+#
+# marker_sql <basename> → a SQL predicate, TRUE iff this migration is already applied. Tables probe
+# `to_regclass`; 0010 ALTERs `members` (creates no table) so it probes the column. An UNMAPPED migration
+# (a future NNNN_*.up.sql with no entry) is a HARD ERROR — fail closed so a new migration can never be
+# silently skipped or silently re-applied (it MUST be added here with its marker).
+marker_sql() {
+  case "$1" in
+    0001_*) echo "to_regclass('public.groups') IS NOT NULL" ;;
+    0002_*) echo "to_regclass('public.members') IS NOT NULL" ;;
+    0003_*) echo "to_regclass('public.onboarding_codes') IS NOT NULL" ;;
+    0004_*) echo "to_regclass('public.recovery_codes') IS NOT NULL" ;;
+    0005_*) echo "to_regclass('public.device_tokens') IS NOT NULL" ;;
+    0006_*) echo "to_regclass('public.sessions') IS NOT NULL" ;;
+    0007_*) echo "to_regclass('public.admin_webauthn_credentials') IS NOT NULL" ;;
+    0008_*) echo "to_regclass('public.admin_invitations') IS NOT NULL" ;;
+    0009_*) echo "to_regclass('public.delegated_keys') IS NOT NULL" ;;
+    0010_*) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='members' AND column_name='name_encrypted')" ;;
+    0011_*) echo "to_regclass('public.audit_log') IS NOT NULL" ;;
+    *) return 1 ;;
+  esac
+}
 
-if [ "$present" -eq 0 ]; then
-  log "→ empty schema — applying migrations 0001..0008"
-  shopt -s nullglob
-  mig_count=0
-  for f in "$MIG_DIR"/*.up.sql; do
-    # Fed on stdin (not -f) so `docker exec -i` works; --single-transaction wraps each file.
-    $PSQL "$OWNER_URL" -v ON_ERROR_STOP=1 -q --single-transaction < "$f"
-    mig_count=$((mig_count + 1))
-  done
-  if [ "$mig_count" -ne "$EXPECTED_COUNT" ]; then
-    log "✗ expected ${EXPECTED_COUNT} up-migrations, applied ${mig_count}"
+shopt -s nullglob
+mig_files=("$MIG_DIR"/*.up.sql)
+[ "${#mig_files[@]}" -ge 1 ] || { log "✗ no migrations found in ${MIG_DIR}"; exit 1; }
+applied=0; skipped=0
+for f in "${mig_files[@]}"; do
+  name="$(basename "$f" .up.sql)"
+  if ! marker="$(marker_sql "$name")"; then
+    log "✗ migration ${name} has no marker mapping in provision-neon.sh — refusing to guess."
+    log "  Add a marker_sql case for it (the object it creates), then re-run."
     exit 1
   fi
-  log "✓ applied ${mig_count} migrations"
-elif [ "$present" -eq "$EXPECTED_COUNT" ]; then
-  log "✓ schema already migrated (${present}/${EXPECTED_COUNT} tables) — skipping migrations"
-else
-  log "✗ partial schema: ${present}/${EXPECTED_COUNT} expected tables present."
-  log "  Refusing to guess (this script never DROPs). Inspect the database and reconcile by hand."
-  exit 1
-fi
+  has="$($PSQL "$OWNER_URL" -tAc "SELECT ${marker}")"
+  has="$(printf '%s' "$has" | tr -d '[:space:]')"
+  case "$has" in
+    t) skipped=$((skipped + 1)) ;;
+    # Fed on stdin (not -f) so `docker exec -i` works; --single-transaction wraps each file.
+    f) $PSQL "$OWNER_URL" -v ON_ERROR_STOP=1 -q --single-transaction < "$f"; log "  ✓ applied ${name}"; applied=$((applied + 1)) ;;
+    *) log "✗ could not probe the marker for ${name} (got: '${has}')"; exit 1 ;;
+  esac
+done
+log "✓ migrations: ${applied} applied, ${skipped} already present ($((applied + skipped)) total)"
 
 # --- 3. grants (UNCONDITIONAL — re-asserted every run, AFTER migrate so ON ALL TABLES sees them) ---
 # CONNECT (via format() since GRANT can't take current_database() directly) + USAGE + table DML. No

@@ -114,6 +114,7 @@ dependencies = [
  "boundless-crypto",
  "boundless-domain",
  "boundless-server-core",
+ "getrandom 0.4.2",
  "proptest",
  "tokio",
  "tokio-postgres",
