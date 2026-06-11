@@ -271,9 +271,26 @@ T09 is in flight, but its e2e needs T09's Worker.
   `KEK`/`GROUP_KEY` value.
 
 ### T10 — SvelteKit admin UI + i18n + a11y `[shell]`
-- **What:** The admin screens behind the existing session: member list (search+filter via **TanStack
-  Table/Query**), add/edit dialogs + member menu (**melt-ui**), member detail (audited read), audit-log
-  view, regenerate-code; the 17 i18n keys.
+- **Status:** ✅ DONE 2026-06-11 — the SvelteKit admin member-management surface under a new
+  authenticated `(app)` route group (`/admin/members`, `/admin/members/[id]`, `/admin/audit-log`):
+  the member list (search+filter via the frozen `?search=&role=&status=` params, semantic `<table>`),
+  the **melt-ui** add/edit dialogs + per-row actions menu, the audited detail read, regenerate-code,
+  the first-class audit-log view, and the 17 i18n keys (+ affordance/status keys, owner-review flagged).
+  Per P4/ADR-0026 the tier is a **BFF**: `web/src/lib/server/members.ts` (the `MembersClient` port +
+  `WorkerMembersClient` fetch adapter carrying the shared secret + `X-Admin-Id` + an in-memory fake +
+  fail-closed `selectMembersClient`) calls the T09 Worker — wiring the "real SvelteKit→Worker BFF call"
+  T09 handed forward. **Decided (Open-Decision-8 reversal):** TanStack NOT adopted (its Svelte-5 table
+  adapter is beta-only; the list needs only a semantic table + server-side filter); **melt-ui**
+  (`@melt-ui/svelte` 0.86.6 + the `@melt-ui/pp` 0.3.2 preprocessor) for the dialogs/menu. 8 new
+  Playwright e2e (axe ×{default,dark,RTL}, keyboard dialog ceremony, 400% reflow, audit aria-live +
+  names-not-values, no-create-admin, pseudo-locale, edit/issue/duplicate flows) + 2 vitest units
+  (client request-shape, member-error parity) + the catalog-parity extension; **full suite 21 e2e +
+  93 vitest green**; typecheck 0/0; build clean; allow-list clean (6 locks). Playwright `workers: 1`
+  (serial — the specs share one dev-server + global in-memory backend). The **live deployed BFF→Worker
+  round-trip** + persistent session + real translations are deferred shells (`DEFERRED.md` → T10).
+- **What:** The admin screens behind the existing session: member list (search+filter via a semantic
+  `<table>` + server-side filter params — **TanStack not adopted**, see Decisions), add/edit dialogs +
+  member menu (**melt-ui**), member detail (audited read), audit-log view, regenerate-code; the 17 i18n keys.
 - **Touches:** `web/src/routes/(admin)/members/*` (NEW), `web/src/lib/server/members.ts`,
   `web/src/lib/i18n/catalog.ts`, `web/tests/e2e/members.spec.ts` (NEW),
   `web/tests/cross-platform/catalog-parity.test.ts` + `web/tests/e2e/pseudo-locale.spec.ts` (extend).
@@ -306,21 +323,21 @@ T09 is in flight, but its e2e needs T09's Worker.
 
 | AC | Covered by | Status |
 |---|---|---|
-| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…persists_member_with_roles_and_created_by`, RLS-scoped insert); **T09 ✓ shell** (`worker_issue_member_round_trip`: real Worker → encrypt → store → decrypt over real PG18) |
+| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…persists_member_with_roles_and_created_by`, RLS-scoped insert); **T09 ✓ shell** (`worker_issue_member_round_trip`: real Worker → encrypt → store → decrypt over real PG18); **T10 ✓ client** (the add-member dialog issues via the BFF, shows the member in the list) |
 | AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓; **T07 ✓ DB** (`…address_encrypted_round_trip`: ciphertext≠plaintext, decrypt via Group key) |
 | AC3 name encrypted at rest | T02, T03, T05, T07 | T02·T03 ✓; T05 ✓; **T07 ✓ DB** (name ciphertext round-trips through `name_encrypted bytea`) |
 | AC4 phone two-fold (I3) | T05, T07 | T05 ✓; **T07 ✓ DB** (`…phone_two_fold`: lookup hash + ciphertext; `PgAuthStore::find_member_by_phone` then matches — issuance feeds sign-in) |
 | AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…issue_is_atomic`: one member + one live code, one txn); **T09 ✓ shell** (issuance returns the show-once code over the live Worker) |
-| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); **T09 ✓ shell** (`worker_regenerate_code`: fresh code supersedes the prior) |
+| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); **T09 ✓ shell** (`worker_regenerate_code`: fresh code supersedes the prior); **T10 ✓ client** (the detail-page Regenerate-code action shows the fresh show-once code) |
 | AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); **T08 ✓ OpenAPI-coverage** (`openapi_pii_handlers_all_require_audit`); **T09 ✓ shell live-emit** (`worker_detail_read_emits_audit`: a real detail read writes the `audit_log` row over real PG, names only) |
 | AC8 `MemberSummary` no tainted type | T05 (compile assert), T08 (schema) | T05 ✓ (compile assert + no-PII prop); **T08 ✓ contract** (`member_summary_schema_has_no_tainted_field`: schema has name/roles/status, no phone/address) |
-| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); **T08 ✓ contract** (`AuditEntry.fields` enum `[name,phone,address]` — names only) |
-| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T09 (HTTP reject), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); **T08 ✓ no-path** (`openapi_admin_surface_has_no_admin_creation_path`); **T09 ✓ HTTP** (the issuance route rejects `roles:[admin]` → `ADMIN_MEMBER_ROLE_FORBIDDEN` 400, worker test); T10 shell UI pending |
+| AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); **T08 ✓ contract** (`AuditEntry.fields` enum `[name,phone,address]` — names only); **T10 ✓ client** (`audit_log_validation_aria_live`: the view renders field NAMES as badges, asserts no PII value in the body) |
+| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T09 (HTTP reject), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); **T08 ✓ no-path** (`openapi_admin_surface_has_no_admin_creation_path`); **T09 ✓ HTTP** (the issuance route rejects `roles:[admin]` → `ADMIN_MEMBER_ROLE_FORBIDDEN` 400, worker test); **T10 ✓ shell UI** (`members_ui_offers_no_create_admin_action`: role options Rider/Driver only, no add/invite-admin affordance anywhere) |
 | AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓; **T07 ✓ DB** (`…optimistic_concurrency_stale_reject` whole-second token + `…edit_recomputes_phone_lookup`) |
 | AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓; T05 ✓; **T07 ✓ DB** (`pg_delegated_key_store_persists_only_wrapped`: wrapped-only, `None`→fail-closed) |
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓; **T07 ✓ DB** (`…roles_array_round_trip`: multi-role set through `member_role[]`) |
-| AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | pending |
-| AC15 i18n + pseudo-locale | T10, T01-catalog | pending |
+| AC14 a11y (WCAG 2.2 AA, axe, dialogs/menus) | T10 [shell] | **T10 ✓ shell** (`members_routes_axe_clean_default_dark_rtl` ×{default,dark,RTL} per route + open dialog; `members_add_edit_dialog_keyboard_ceremony` focus-trap/Esc/return; `members_list_reflows_at_400_percent`; `audit_log_validation_aria_live`) |
+| AC15 i18n + pseudo-locale | T10, T01-catalog | **T10 ✓** (`admin_members_catalog_parity` extends the cross-platform gate to the 17 spec-008 keys; `members_pseudo_locale_renders_without_truncation[zz-ZZ]` bracketed copy + reflow; `member-errors.test.ts` code↔key parity; all copy catalog-sourced — i18n-validator pass) |
 | AC16 cross-tenant deployed-edge proof (F5) | T11 [shell], T07 (host precursor) | **T07 ✓ host precursor** (`rls_isolates_member_reads_by_tenant` + `prop_rls_isolates_random_two_group_configs`); T11 live deployed-edge proof pending |
 
 Every task maps to ≥1 AC; no task introduces behavior absent from `spec.md`. Out-of-scope items (geocoding,

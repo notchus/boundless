@@ -221,7 +221,7 @@ jobs:
         run: pnpm test
 
   web:
-    name: Admin web (typecheck · vitest · build · webauthn + onboarding e2e — spec 001 T09/T10/T15/T16)
+    name: Admin web (typecheck · vitest · build · webauthn + onboarding + member-mgmt e2e — spec 001 T09/T10/T15/T16 · spec 008 T10)
     runs-on: ubuntu-latest
     defaults:
       run:

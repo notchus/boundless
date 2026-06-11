@@ -9,6 +9,11 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
 	testDir: 'tests/e2e',
 	fullyParallel: false,
+	// One worker = fully serial across files. The specs share ONE dev server with a single global
+	// in-memory backend (WebAuthn invites/credentials + the spec-008 member store) and global dev-only
+	// /api/test/reset|seed seams; running spec FILES on parallel workers would let one file's reset wipe
+	// another's seeded session/state mid-test. Serial is correct for that shared-backend design.
+	workers: 1,
 	forbidOnly: !!process.env.CI,
 	reporter: 'list',
 	webServer: {

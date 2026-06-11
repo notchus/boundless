@@ -81,6 +81,32 @@ describe('cross-platform onboarding catalog parity (AC12 / P8)', () => {
 			expect(webCatalog, `web catalog missing ${key}`).toHaveProperty(key);
 		}
 	});
+
+	it('admin_members_catalog_parity — the web catalog carries the spec-008 member-management keys', () => {
+		// The 17 keys named in specs/008-admin-member-management/spec.md §i18n notes (P8 / AC15).
+		const spec008Keys = [
+			'admin.members.title',
+			'admin.members.add',
+			'admin.members.search',
+			'admin.member.name',
+			'admin.member.phone',
+			'admin.member.address',
+			'admin.member.role',
+			'admin.member.role_rider',
+			'admin.member.role_driver',
+			'admin.member.save',
+			'admin.member.onboarding_code',
+			'admin.member.code_expires',
+			'admin.member.regenerate_code',
+			'admin.members.audit_log',
+			'admin.member.phone_invalid',
+			'admin.member.duplicate_phone',
+			'admin.member.edit_stale',
+		];
+		for (const key of spec008Keys) {
+			expect(webCatalog, `web catalog missing spec-008 key ${key}`).toHaveProperty(key);
+		}
+	});
 });
 
 describe('pseudo-locale generation (AC12 / P8)', () => {

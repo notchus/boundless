@@ -2062,12 +2062,13 @@
 > `openapi_admin_surface_has_no_admin_creation_path`) gate it. `.bindings.lock` refreshed; no new deps;
 > all host-testable. Everything below was deliberately left out; each carries a WHEN.
 
-- [ ] **The hand-rolled-but-derived TS client `web/src/lib/server/members.ts`** (plan §6 — the thin Worker
-      marshalling layer the admin UI calls). Deferred to **T10**, where its UI consumer + Playwright e2e
-      exist — a client with no consumer/test would be untested "this should work" code (anti-hallucination).
-      Plan §6's TS-provenance decision stands: hand-rolled-but-derived from `api/openapi.yaml` for v1
-      (openapi-typescript codegen is still scaffold per the T10-shell register), revisit when codegen is wired.
-  - **WHEN:** **T10** (the SvelteKit admin UI).
+- [x] **The hand-rolled-but-derived TS client `web/src/lib/server/members.ts` — DONE 2026-06-11 (T10).**
+      Built as the pure `MembersClient` port + `WorkerMembersClient` fetch adapter (types hand-derived from
+      `api/openapi.yaml`; the wire types live in the client-safe `$lib/members-types`) + a seedable
+      in-memory fake + the fail-closed `selectMembersClient`, with its UI consumer (the `(app)` member
+      routes) + Playwright e2e + a `members_client_request_shape.test.ts` unit. Plan §6's TS-provenance
+      decision stands (hand-rolled-but-derived for v1; openapi-typescript codegen still scaffold). The live
+      deployed round-trip is the T10-shell item (see the T10 register below).
 
 - [ ] **The Rust wire response DTOs + the `audited.rs` `AuditedResponse` allowlist extension.** The new
       admin wire response shapes the Worker serializes (`IssueMemberResponseWire`/`MemberIssued`,
@@ -2101,10 +2102,13 @@
 > `worker` CI job. New worker deps: `rand_core` 0.9.5 (traits) + `getrandom` 0.4.2 (`wasm_js`). Everything
 > below was deliberately left out; each carries a WHEN.
 
-- [ ] **The real SvelteKit→Worker BFF call (ADR-0026).** T09 built + miniflare-tested the Worker side (the
-      `ADMIN_API_SECRET` + `X-Admin-Id` are injected in tests). Wiring the WebAuthn-verified SvelteKit
-      admin tier to actually call the Worker with the shared secret + the verified admin id is **T10**.
-  - **WHEN:** **T10** (the SvelteKit admin UI / server routes).
+- [~] **The real SvelteKit→Worker BFF call (ADR-0026).** T09 built + miniflare-tested the Worker side (the
+      `ADMIN_API_SECRET` + `X-Admin-Id` are injected in tests). **T10 (2026-06-11) shipped the BFF
+      adapter** (`WorkerMembersClient` presents `Bearer <ADMIN_API_SECRET>` + the verified `X-Admin-Id`;
+      request shape unit-tested; selected fail-closed). **Remaining:** the **live deployed round-trip**
+      (the SvelteKit Worker actually calling the deployed Rust Worker over the network) — needs the deploy
+      + a Cloudflare account; the UI e2e drives the in-memory fake until then.
+  - **WHEN:** the deploy-hardening pass / **T11** (see the T10 register below).
 
 - [ ] **KEK from a real Secrets Store binding on the deployed edge (ADR-0025 R3).** `@cloudflare/vitest-
       pool-workers`/miniflare does **not** emulate a Secrets Store binding (verified via docs-researcher,
@@ -2158,6 +2162,100 @@
       deployed-edge proof (a Group-A admin token cannot read Group-B members) needs ≥2 seeded Groups on the
       deployed Worker — **T11**.
   - **WHEN:** **T11** (operator-gated, with ≥2 issued Groups).
+
+## Admin web / SvelteKit member-management (spec 008 T10 — out-of-scope register)
+
+> T10 shipped the **admin member-management UI slice**: the authenticated `(app)` route group
+> (`/admin/members`, `/admin/members/[id]`, `/admin/audit-log`) — the member list (search/filter via the
+> frozen `?search=&role=&status=` params + a semantic `<table>`), the **melt-ui** add/edit dialogs +
+> per-row actions menu, the audited detail read, regenerate-code, the first-class audit-log view, and the
+> 17 i18n keys (+ affordance/status keys). Per P4/ADR-0026 the tier is a **BFF**: `members.ts` (the
+> `MembersClient` port + `WorkerMembersClient` fetch adapter carrying the shared secret + `X-Admin-Id` +
+> a seedable in-memory fake + fail-closed `selectMembersClient`) — wiring the "real SvelteKit→Worker BFF
+> call" T09 handed forward. **Decided:** TanStack NOT adopted (Svelte-5 adapter beta-only — see
+> stack-matrix); **melt-ui** `@melt-ui/svelte` 0.86.6 + `@melt-ui/pp` 0.3.2 preprocessor. 8 Playwright
+> e2e + 2 vitest units + the catalog-parity extension; full suite **21 e2e + 93 vitest green**;
+> typecheck 0/0; build clean; allow-list clean (6 locks). Same functional-core / imperative-shell split
+> as T07–T12. Everything below was deliberately left out (the **T10-shell**); each carries a WHEN.
+
+- [ ] **Live deployed BFF→Worker round-trip (the real `WorkerMembersClient` over the network).** T10
+      builds + unit-tests the request shape (`members_client_request_shape.test.ts`: it sends `Bearer
+      <ADMIN_API_SECRET>` + `X-Admin-Id` + the right method/URL/body, maps each frozen-contract status to
+      its typed outcome) and selects it fail-closed (`selectMembersClient` throws in prod with no
+      `ADMIN_WORKER_BASE`/`ADMIN_API_SECRET`), but the UI e2e drives the **in-memory fake** (no deployed
+      Worker/account this side). The live deployed round-trip — the real SvelteKit Worker calling the real
+      Rust Worker with the wrangler-set secret over Hyperdrive→Neon — is the deploy-hardening proof.
+      Closes the T09-register "real SvelteKit→Worker BFF call (ADR-0026)" item end-to-end once live.
+  - **WHEN:** the deploy-hardening pass (with the deployed Rust Worker) / **T11**.
+
+- [ ] **`ADMIN_WORKER_BASE` + `ADMIN_API_SECRET` web bindings + the persistent admin-session store.** The
+      BFF reads both from `$env/dynamic/private` (unset in dev → the fake; the wrangler secrets at deploy).
+      Declaring them in `web/wrangler.toml` + `wrangler secret put` + a service binding (or the Worker URL)
+      is the deploy slice. Also: the admin **session data** still lives in an in-memory map
+      (`src/lib/server/session.ts`, the T15-shell carry-forward) — persist it (KV/Postgres) + add
+      expiry/rotation. And remove the dev-only `/api/test/{seed-member,seed-session,reset}` seams once the
+      real backend + a proper test-fixture path land (they are `dev`-gated → 404 in any prod build).
+  - **WHEN:** **T10-shell** / the deploy slice (rides the T15-shell persistent-session item).
+
+- [ ] **Server-side member search/filter is BFF-passed but Worker-NOOP.** The list `load` forwards
+      `?search=&role=&status=` to `WorkerMembersClient.list` (and the **in-memory fake DOES filter**, so
+      the e2e exercises the controls), but the real Worker/`core::list_members` does **not** yet apply them
+      (the T07/T09-register deferral — `list_members` takes no filter). So against the live Worker the
+      filters are currently inert until the core gains a `WHERE` + filter param. Wire the SQL filter + the
+      core signature, then the BFF path is already correct.
+  - **WHEN:** **T07/T09** core+store filter (the BFF + UI already pass the params).
+
+- [ ] **Real `gsw`/RTL/`zz-ZZ` translations (Weblate + signed KV, ADR-0014).** Only the `en` catalog ships;
+      `zz-ZZ` is generated (pseudoize), `ar` renders RTL via source-fallback. The shipping locales arrive
+      through the translation pipeline + the signed KV manifest.
+  - **WHEN:** the translation pipeline / manifest-service spec.
+
+- [ ] **Manual NVDA/VoiceOver + Lighthouse pass (pre-GA).** The automated axe + keyboard-ceremony +
+      400%-reflow + aria-live legs are green in CI; the a11y-bar's manual screen-reader walkthrough +
+      Lighthouse ≥95 (advisory) remain a pre-GA persona-acceptance checklist item.
+  - **WHEN:** the persona-acceptance / a11y review pass before GA.
+
+- [ ] **~34 catalog keys (17 spec + ~17 added) — product-owner review.** T10 authored the spec's 17
+      `admin.members.*`/`admin.member.*` keys plus the affordance/status/onboarding-status/audit/nav keys
+      the screens require (e.g. `admin.member.{view,edit,cancel,saving,issued,saved,actions_for,
+      code_explainer,status_*}`, `admin.audit.{when,admin,member,fields,request,empty,explainer}`,
+      `admin.nav.{skip,brand}`, the `*_invalid`/`roles_required`/`not_found`/`group_key_missing`/
+      `error_generic` error copy) — all voice-and-tone-checked, trivially editable pre-release. Mirrors the
+      T11/T12/T15 added-keys flag. The `admin.member.address_invalid` copy is the T01-review owner-confirm
+      item (now authored).
+  - **WHEN:** surface for confirmation; adjust copy if the owner prefers different wording.
+
+- [ ] **The `/admin` placeholder home is unchanged (no redirect to `/admin/members`).** T10 left the
+      spec-001 `/admin/+page.svelte` ("You're signed in.") as-is (non-breaking — the T15 e2e asserts that
+      copy) and added the member surface under `/admin/members`. A future polish: redirect `/admin` →
+      `/admin/members` post-sign-in (or make the home a dashboard). Not needed for v1.
+  - **WHEN:** a navigation-polish pass (optional).
+
+- [ ] **melt-ui dialogs render client-only (SSR caveat).** The add/edit dialog + menu content is behind
+      `{#if $open}` and mounts on the client (melt builders + `use:melt` need the browser); the axe test
+      opens the Add dialog and re-runs axe to cover its a11y, but the dialog markup is not in the SSR HTML.
+      Fine for modals; noted so a future reader doesn't expect server-rendered dialog content.
+  - **WHEN:** N/A (documented behavior).
+
+- [ ] **Carry-forwards from the T10 review (reviewer — H1 fixed in-slice; the rest non-blocking).**
+      The H1 finding (`roleKey('admin')` mislabelled a dual-role member's Admin badge as "Rider") was
+      **fixed in-slice** (exhaustive `roleKey` + an `admin.member.role_admin` "Admin" key). The reviewer's
+      remaining non-blocking findings, deferred with rationale: (M1) **regenerate-code on a missing Group
+      key surfaces an opaque 500**, not the calm `admin.member.group_key_missing` copy the other three
+      member endpoints surface — the frozen contract documents only `200/404/401` for regenerate (no 503),
+      so the BFF throws on a Worker 500; fix is Worker/contract-side (add a 503/`ADMIN_GROUP_KEY_MISSING`
+      arm to regenerate + a `group_key_missing` `RegenerateOutcome`). (M2) the `?edit=1` deep-link
+      auto-open uses `onMount` → opens only on a **full** navigation (the always-available "Edit" button is
+      the non-JS affordance); a `$effect` keyed on `page.url` would also re-open on SPA nav. (M3) the
+      melt `$description` is attached to a branch-transient element in the add dialog (melt re-registers on
+      remount; low impact) and to the member name in the edit dialog (identifies the subject but isn't a
+      "description") — anchor it on a stable element / use a real description key for cleaner a11y wiring.
+      (L2) `WorkerMembersClient` parses `res.json()` on 400/409 without a try — a non-JSON error body would
+      throw an uncaught error instead of the value-free `fail()`; the Worker always returns JSON `{error_
+      code}` so it's latent. (L3) the server-side BFF `fetch` has no `AbortSignal.timeout` — a hung Worker
+      stalls the request until the platform timeout.
+  - **WHEN:** M1 — a contract+Worker regenerate-503 slice; M2/M3 — an a11y-polish pass; L2/L3 — the
+    deploy-hardening pass (the Worker is ours, so both are latent).
 
 ## Constitution
 

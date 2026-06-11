@@ -5,7 +5,7 @@
 // **persistent** server-side session store (Cloudflare KV / Postgres) is the T15-shell (DEFERRED).
 // Admin sessions are separate from and shorter-lived than member sessions (ADR-0016).
 
-import type { Cookies } from '@sveltejs/kit';
+import { redirect, type Cookies } from '@sveltejs/kit';
 
 export const ADMIN_SESSION_COOKIE = 'boundless_admin_session';
 
@@ -44,4 +44,15 @@ export function getSession(id: string | undefined): { readonly adminId: string }
 /** Test-only: clear all sessions (the dev `/api/test/reset` seam). */
 export function resetSessions(): void {
 	sessions = new Map<string, SessionRecord>();
+}
+
+/**
+ * Resolve the acting admin id or redirect to sign-in. Used by authenticated `(app)` loads AND form
+ * actions — actions don't run the layout `load` that gates the group, so they must re-check the session
+ * (and it yields the `adminId` that becomes the `X-Admin-Id` actor on the I5 audit row, ADR-0026).
+ */
+export function requireAdminId(cookies: Cookies): string {
+	const session = getSession(cookies.get(ADMIN_SESSION_COOKIE));
+	if (session === null) redirect(307, '/admin/signin');
+	return session.adminId;
 }

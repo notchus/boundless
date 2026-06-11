@@ -16,8 +16,12 @@ describe('t() — ICU message formatting', () => {
 	});
 
 	it('returns a string for every shipped key (no rich-element arrays leaking through)', () => {
+		// spec 008 (T10) introduced the first ICU-arg keys (e.g. `admin.member.code_expires` → `{when}`,
+		// `admin.member.actions_for` → `{name}`); supply sample args so every key — plain or ICU —
+		// formats to a plain non-empty string.
+		const sampleArgs = { when: 'soon', name: 'Sarah', adminName: 'Sarah', count: 1 };
 		for (const key of Object.keys(en) as (keyof typeof en)[]) {
-			const out = t(key, 'en');
+			const out = t(key, 'en', sampleArgs);
 			expect(typeof out).toBe('string');
 			expect(out.length).toBeGreaterThan(0);
 		}
