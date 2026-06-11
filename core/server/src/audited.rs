@@ -41,7 +41,10 @@
 
 use serde::{Serialize, Serializer};
 
-use crate::member::{AuditEntry, MemberSummary};
+use crate::member::{
+    AuditEntry, AuditLogView, DuplicatePhoneLinkView, MemberIssuedView, MemberListView,
+    MemberSummary, RegenerateCodeView,
+};
 
 /// Module-private supertrait so [`AuditedResponse`] is **sealed**: only `boundless-server-core`
 /// can decide what is sendable to an admin, so no downstream crate (the T09 Worker, the web tier)
@@ -124,6 +127,28 @@ impl AuditedResponse for Vec<MemberSummary> {}
 /// The audit-log read (AC9) — field **names**, never values, so it is not a recursive PII read.
 impl sealed::Sealed for Vec<AuditEntry> {}
 impl AuditedResponse for Vec<AuditEntry> {}
+
+// ── T09 admin wire envelopes (the HTTP response bodies the Worker serializes through the seam). Each
+// is PII-free in the I5 sense — `MemberSummary` (display name only; the duplicate-phone disclosure's
+// audit is store-enforced), `AuditEntry` (field names only), or a show-once `onboarding_code`
+// credential (a P2 secret, not a disclosed member field). Blessing them here means the Worker emits
+// EVERY admin response through `admin_response_body` — it hand-rolls no member-PII JSON (I5). ──────
+
+/// `GET /api/admin/members` body (AC8).
+impl sealed::Sealed for MemberListView {}
+impl AuditedResponse for MemberListView {}
+/// `POST /api/admin/members` 201 body (AC1/AC5) — carries the show-once code, no decrypted member field.
+impl sealed::Sealed for MemberIssuedView {}
+impl AuditedResponse for MemberIssuedView {}
+/// `POST /api/admin/members` 409 body — the duplicate-phone surface-and-link (audited in the store).
+impl sealed::Sealed for DuplicatePhoneLinkView {}
+impl AuditedResponse for DuplicatePhoneLinkView {}
+/// `POST /api/admin/members/{id}/regenerate-code` body (AC6) — show-once code only.
+impl sealed::Sealed for RegenerateCodeView {}
+impl AuditedResponse for RegenerateCodeView {}
+/// `GET /api/admin/audit-log` body (AC9) — field names only.
+impl sealed::Sealed for AuditLogView {}
+impl AuditedResponse for AuditLogView {}
 
 /// Serialize an admin response body — the **single seam** the T09 router emits admin responses
 /// through (P4: PII-response serialization single-sourced here). The `R: AuditedResponse + Serialize`

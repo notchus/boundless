@@ -23,6 +23,13 @@ const WORKER_TEST_PG =
 
 // Obviously-a-test value (32 bytes of 0xAB as hex). Never deployed — deploy uses `wrangler secret`.
 const TEST_HMAC_KEY_HEX = 'ab'.repeat(32);
+// The KEK (spec 008 T09) the Worker unwraps the seeded per-Group key with — 32 bytes of 0xCD as hex.
+// MUST match `WORKER_TEST_KEK_HEX` / `SEED_KEK_HEX` in scripts/setup-worker-test-db.sh (which wraps the
+// Group key under it). A LOCAL TEST value — at deploy the KEK is a `wrangler secret` / Secrets Store.
+const TEST_KEK_HEX = 'cd'.repeat(32);
+// The ADR-0026 SvelteKit→Worker shared secret the admin BFF presents. Obviously-a-test value; at deploy
+// it is a `wrangler secret` (the admin BFF holds the same value).
+const TEST_ADMIN_API_SECRET = 'test-admin-shared-secret-do-not-deploy';
 
 export default defineConfig({
 	plugins: [
@@ -30,7 +37,11 @@ export default defineConfig({
 			wrangler: { configPath: './wrangler.toml' },
 			miniflare: {
 				hyperdrives: { HYPERDRIVE: WORKER_TEST_PG },
-				bindings: { HMAC_KEY: TEST_HMAC_KEY_HEX },
+				bindings: {
+					HMAC_KEY: TEST_HMAC_KEY_HEX,
+					KEK: TEST_KEK_HEX,
+					ADMIN_API_SECRET: TEST_ADMIN_API_SECRET,
+				},
 			},
 		}),
 	],

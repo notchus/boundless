@@ -11,20 +11,16 @@ help: the trait `AuditedResponse` is not implemented for `ForgedMemberBody`
    |
  8 | struct ForgedMemberBody {
    | ^^^^^^^^^^^^^^^^^^^^^^^
-help: the following other types implement trait `AuditedResponse`
-  --> src/audited.rs
-   |
-   | impl<T> AuditedResponse for PiiDisclosure<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PiiDisclosure<T>`
-...
-   | impl AuditedResponse for MemberSummary {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemberSummary`
-...
-   | impl AuditedResponse for Vec<MemberSummary> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Vec<MemberSummary>`
-...
-   | impl AuditedResponse for Vec<AuditEntry> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Vec<AuditEntry>`
+   = help: the following other types implement trait `AuditedResponse`:
+             AuditLogView
+             DuplicatePhoneLinkView
+             MemberIssuedView
+             MemberListView
+             MemberSummary
+             PiiDisclosure<T>
+             RegenerateCodeView
+             Vec<AuditEntry>
+             Vec<MemberSummary>
 note: required by a bound in `admin_response_body`
   --> src/audited.rs
    |

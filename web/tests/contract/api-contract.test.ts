@@ -182,8 +182,9 @@ describe('ADR-0023 — auth requests carry the plaintext phone, not a client-com
 const ERROR_CODES_PATH = fileURLToPath(new URL('../../../docs/error-codes.md', import.meta.url));
 const RAW_OPENAPI = readFileSync(OPENAPI_PATH, 'utf8');
 
-// The seven stable spec-008 issuance codes (docs/error-codes.md "Admin member-management" section).
-// Append-only + stable, so listing them here pins registry completeness, not just the contract literals.
+// The stable spec-008 admin member-management codes (docs/error-codes.md "Admin member-management"
+// section). Append-only + stable, so listing them here pins registry completeness, not just the
+// contract literals. `ADMIN_MEMBER_NOT_FOUND` is the Worker's 404 body code (T09).
 const EXPECTED_ADMIN_ISSUANCE_CODES = [
   'ADMIN_MEMBER_PHONE_INVALID',
   'ADMIN_MEMBER_ADDRESS_INVALID',
@@ -192,6 +193,9 @@ const EXPECTED_ADMIN_ISSUANCE_CODES = [
   'ADMIN_MEMBER_EDIT_STALE',
   'ADMIN_MEMBER_ROLE_FORBIDDEN',
   'ADMIN_GROUP_KEY_MISSING',
+  'ADMIN_MEMBER_NOT_FOUND',
+  'ADMIN_UNAUTHORIZED', // T09 — the ADR-0026 gate's 401 body code
+  'ADMIN_BAD_REQUEST', // T09 — malformed admin request (bad JSON / bad X-Admin-Id) 400 body code
 ] as const;
 
 // Every `#/components/schemas/<Name>` reachable from `node` through $ref / allOf·oneOf·anyOf / items /

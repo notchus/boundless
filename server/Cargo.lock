@@ -129,6 +129,8 @@ dependencies = [
  "boundless-domain",
  "boundless-server-core",
  "boundless-server-store",
+ "getrandom 0.4.2",
+ "rand_core 0.9.5",
  "serde",
  "serde_json",
  "tokio-postgres",

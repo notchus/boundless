@@ -259,6 +259,106 @@ pub struct MemberDetailView {
     updated_at: UnixSeconds,
 }
 
+// ===== Wire response envelopes (the admin HTTP response shapes — T08 contract / T09 Worker) ========
+//
+// The serializable wire bodies the T09 Worker emits, mirrored ONE-FOR-ONE by the `api/openapi.yaml`
+// admin schemas (T08). Like [`MemberDetailView`] they live HERE (not the Worker) so the field names
+// are single-sourced in this drift-tracked crate (P4 — the seam the spec-001 `ManifestPointer` miss
+// came through), and each is blessed [`AuditedResponse`](crate::AuditedResponse) in `audited.rs` so the
+// Worker serializes EVERY admin response through the sealed `admin_response_body` seam — there is no
+// hand-rolled member-PII JSON in the Worker (the I5 posture). All are PII-free in the I5 sense (no
+// decrypted address/phone): [`MemberSummary`] carries only a display name (and the duplicate-phone
+// disclosure's audit is written atomically in the store, not here), and the show-once
+// `onboarding_code` is a freshly-minted credential, not a disclosed member field. The code fields are
+// still **secrets** (P2) — a constructed view must NEVER be logged. The two code-bearing views expose
+// the code via `expose_secret` only inside their `new` (the single sanctioned boundary).
+
+/// `GET /api/admin/members` → `{ members: [...] }` (AC8).
+#[derive(Serialize)]
+pub struct MemberListView {
+    members: Vec<MemberSummary>,
+}
+
+impl MemberListView {
+    /// Wrap the PII-free member summaries.
+    pub fn new(members: Vec<MemberSummary>) -> Self {
+        Self { members }
+    }
+}
+
+/// `POST /api/admin/members` 201 → `{ member, onboarding_code, code_expires_at }` (AC1/AC5). The
+/// show-once Onboarding Code is revealed via `expose_secret` inside [`new`](Self::new) (the single
+/// sanctioned boundary); the constructed view holds it as a plain `String` and must NEVER be logged (P2).
+#[derive(Serialize)]
+pub struct MemberIssuedView {
+    member: MemberSummary,
+    onboarding_code: String,
+    code_expires_at: UnixSeconds,
+}
+
+impl MemberIssuedView {
+    /// Project an `Issued` outcome to the wire, exposing the show-once code at this boundary.
+    pub fn new(
+        member: MemberSummary,
+        onboarding_code: &OnboardingCode,
+        code_expires_at: UnixSeconds,
+    ) -> Self {
+        Self {
+            member,
+            onboarding_code: onboarding_code.expose_secret().to_string(),
+            code_expires_at,
+        }
+    }
+}
+
+/// `POST /api/admin/members` 409 → `{ error_code, existing }` — the duplicate-phone surface-and-link
+/// (I5-audited in the store atomically with the conflict detection; admin-surface-only, never on `/api/auth/*`).
+#[derive(Serialize)]
+pub struct DuplicatePhoneLinkView {
+    error_code: &'static str,
+    existing: MemberSummary,
+}
+
+impl DuplicatePhoneLinkView {
+    /// Build the duplicate-phone link body around the existing member's name-only summary.
+    pub fn new(existing: MemberSummary) -> Self {
+        Self {
+            error_code: "ADMIN_MEMBER_DUPLICATE_PHONE",
+            existing,
+        }
+    }
+}
+
+/// `POST /api/admin/members/{id}/regenerate-code` → `{ onboarding_code, code_expires_at }` (AC6).
+#[derive(Serialize)]
+pub struct RegenerateCodeView {
+    onboarding_code: String,
+    code_expires_at: UnixSeconds,
+}
+
+impl RegenerateCodeView {
+    /// Project a `Regenerated` outcome to the wire, exposing the show-once code at this boundary.
+    pub fn new(onboarding_code: &OnboardingCode, code_expires_at: UnixSeconds) -> Self {
+        Self {
+            onboarding_code: onboarding_code.expose_secret().to_string(),
+            code_expires_at,
+        }
+    }
+}
+
+/// `GET /api/admin/audit-log` → `{ entries: [...] }` (AC9) — field names only, never values.
+#[derive(Serialize)]
+pub struct AuditLogView {
+    entries: Vec<AuditEntry>,
+}
+
+impl AuditLogView {
+    /// Wrap the audit entries (names only).
+    pub fn new(entries: Vec<AuditEntry>) -> Self {
+        Self { entries }
+    }
+}
+
 // ===== Audit (I5) =================================================================================
 
 /// A member-PII field, recorded in an [`AuditEntry`] by **name**, never value (AC9 / R6). The single

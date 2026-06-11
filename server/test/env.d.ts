@@ -12,5 +12,10 @@ declare module 'cloudflare:test' {
 		HYPERDRIVE: Hyperdrive;
 		HMAC_KEY: string;
 		GROUP_ID: string;
+		// Spec 008 T09: the KEK that wraps the per-Group secretbox key (ADR-0025), and the ADR-0026
+		// SvelteKit→Worker shared secret the admin BFF presents. Injected as test bindings in
+		// vitest.config.ts; at deploy both are `wrangler secret`s.
+		KEK: string;
+		ADMIN_API_SECRET: string;
 	}
 }

@@ -184,6 +184,14 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - name: Install worker-build (the Rust→wasm bundler)
         run: cargo install worker-build --version 0.8.3 --locked
+      - name: Wrangler committed-credential gate (spec 008 T09 / ADR-0026) + meta-test
+        # No root secret (HMAC_KEY/KEK/ADMIN_API_SECRET/GROUP_KEY) value or non-localhost Postgres
+        # connection string may be committed in server/wrangler.toml — each is a `wrangler secret` /
+        # injected test binding. Self-locating scripts → run from repo root.
+        working-directory: ${{ github.workspace }}
+        run: |
+          bash scripts/check-wrangler-credentials.sh
+          bash scripts/test-wrangler-credentials.sh
       - name: Test the Neon provisioning script (account-free; throwaway DB + RLS proof as the app role)
         # Proves scripts/provision-neon.sh produces a locked-down boundless_app role that isolates
         # cross-tenant reads AS the real LOGIN role (the account-free analog of the deployed-edge

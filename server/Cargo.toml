@@ -66,6 +66,14 @@ worker = { version = "0.8.3", features = ["queue"] }
 # already use — no new getrandom major); `with-uuid-1` matches the store's set (Cargo unifies anyway).
 boundless-server-store = { path = "store" }
 tokio-postgres = { version = "0.7", default-features = false, features = ["with-uuid-1", "js"] }
+# The live Worker CSPRNG (spec 008 T09, ADR-0021): the Worker — NOT the core — holds randomness, so a
+# getrandom-backed `RngCore + CryptoRng` (`GetrandomRng` in runtime/members.rs) is injected into the
+# core's `RngSecretSource` (member-issuance nonces + Onboarding Codes). `rand_core` is traits-only
+# (`default-features = false` → no getrandom of its own); `getrandom`'s `wasm_js` backend (Web Crypto,
+# present in workerd) is the SAME 0.4 backend core-crypto/dryoc + tokio-postgres already use — no new
+# getrandom major. Both already resolve in the lock (rand_core 0.9.5 / getrandom 0.4.2).
+rand_core = { version = "0.9", default-features = false }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 # T08 — the N-2 compatibility replay harness (AC9, `tests/compat/`). It replays the frozen

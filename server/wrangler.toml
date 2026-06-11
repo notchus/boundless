@@ -63,9 +63,17 @@ binding = "ADMIN_ALERTS"
 queue = "boundless-admin-alerts"
 
 # This install's single Group id (glossary: one install = one Group) — the tenant every PgAuthStore
-# query is RLS-scoped to. Committed default for local/CI; set the real id at deploy. NB: the HMAC_KEY
-# (I3 per-instance secret) is NOT here — it is a `wrangler secret` at deploy and a test value injected
-# by the vitest harness (`miniflare.bindings`); `env.var("HMAC_KEY")` reads either as plaintext.
+# query is RLS-scoped to. Committed default for local/CI; set the real id at deploy. NB: the secrets
+# below are NOT here — each is a `wrangler secret` at deploy and a test value injected by the vitest
+# harness (`miniflare.bindings`); `env.var(...)` reads either as plaintext:
+#   * HMAC_KEY        — the I3 per-instance keyed-hash secret.
+#   * KEK             — the spec-008 Key-Encryption-Key that wraps the per-Group secretbox key
+#                       (ADR-0025 R3; ideally a Secrets Store binding once the runtime emulates it —
+#                       DEFERRED.md → T09). The root of the whole PII envelope: a missing binding fails
+#                       the request closed (no member row written/read).
+#   * ADMIN_API_SECRET — the ADR-0026 SvelteKit→Worker shared secret the admin BFF presents on
+#                       /api/admin/*; the Worker checks it constant-time and fails closed without it.
+# scripts/check-wrangler-credentials.sh forbids a real value for any of these landing in this file.
 [vars]
 GROUP_ID = "00000000-0000-0000-0000-000000000001"
 

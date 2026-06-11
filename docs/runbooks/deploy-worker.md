@@ -137,6 +137,31 @@ openssl rand -hex 32            # copy the output
 npx wrangler secret put HMAC_KEY   # paste it at the interactive prompt
 ```
 
+### 4b — Set the KEK (spec 008 — the per-Group key-encryption key, ADR-0025)
+
+The root of the whole PII envelope: it wraps the per-Group secretbox key in `delegated_keys`. A 32-byte
+hex value, set as a secret (never a `[vars]` entry, never committed — the `check-wrangler-credentials.sh`
+gate forbids that). **This MUST be the same KEK the Group was bootstrapped under** (`provision-neon.sh` /
+the issuance bootstrap wrap the Group key with it) — if it differs, every admin issuance fails closed
+(`ADMIN_GROUP_KEY_MISSING`). (Once the runtime emulates a Secrets Store binding locally, migrate `KEK`
+there per DEFERRED.md → T09; until then it is a `wrangler secret`, like `HMAC_KEY`.)
+
+```bash
+openssl rand -hex 32            # copy the output — and keep it: the Group bootstrap must use the SAME value
+npx wrangler secret put KEK
+```
+
+### 4c — Set `ADMIN_API_SECRET` (spec 008 — the admin BFF shared secret, ADR-0026)
+
+The server-to-server secret the WebAuthn-verified SvelteKit admin BFF presents to the Worker on
+`/api/admin/*`; the Worker fails closed without it. The SvelteKit tier must hold the **same** value (its
+own secret store). A high-entropy random string:
+
+```bash
+openssl rand -hex 32
+npx wrangler secret put ADMIN_API_SECRET
+```
+
 ### 5 — `GROUP_ID`
 
 Leave the `[vars]` default (`00000000-…-0001`) for now. It is an opaque tenant UUID, not a secret, and

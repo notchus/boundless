@@ -96,6 +96,21 @@ pub(crate) fn load_hmac_key(env: &Env) -> worker::Result<HmacKey> {
     Ok(HmacKey::from_bytes(bytes))
 }
 
+/// Load the KEK (Key-Encryption-Key, ADR-0025 R3) that wraps the per-Group secretbox key — a 64-char
+/// hex string. At deploy this is a `wrangler secret` (ideally a Secrets Store binding once the runtime
+/// emulates it — DEFERRED.md → T09); for local/CI tests a `[vars]`/`miniflare.bindings` entry —
+/// `env.var` reads both as plaintext. The KEK is the root of the whole PII envelope, so a missing/
+/// malformed binding **fails closed** (the request errors; no member row is written or read).
+pub(crate) fn load_kek(env: &Env) -> worker::Result<boundless_crypto::Kek> {
+    let raw = env
+        .var("KEK")
+        .map_err(|_| worker::Error::RustError("KEK missing".into()))?
+        .to_string();
+    let bytes =
+        decode_hex_32(&raw).ok_or_else(|| worker::Error::RustError("KEK malformed".into()))?;
+    Ok(boundless_crypto::Kek::from_bytes(bytes))
+}
+
 /// Load this install's single Group id (glossary: one install = one Group) from the `GROUP_ID`
 /// binding — the tenant every `PgAuthStore` query is RLS-scoped to.
 pub(crate) fn load_group_id(env: &Env) -> worker::Result<Uuid> {

@@ -244,3 +244,77 @@ fn member_detail_view_wire_keys_are_pinned() {
         ]
     );
 }
+
+#[test]
+fn admin_wire_envelope_keys_are_pinned() {
+    // The T09 Worker serializes EVERY admin response through `admin_response_body`; pin the wire key
+    // sets + the show-once-code projection here so a Worker-side rename can't drift from
+    // `api/openapi.yaml` (the ManifestPointer-miss class), and the code is exposed exactly at the view
+    // `new` boundary.
+    use boundless_auth::UnixSeconds;
+    use boundless_domain::{OnboardingCode, Role};
+    use boundless_server_core::{
+        AuditEntry, AuditLogView, DuplicatePhoneLinkView, MemberIssuedView, MemberListView,
+        RegenerateCodeView,
+    };
+
+    fn keys(v: &serde_json::Value) -> Vec<&str> {
+        let mut k: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        k.sort_unstable();
+        k
+    }
+
+    let summary = MemberSummary {
+        member_id: member_id(7),
+        name: "Maria".into(),
+        roles: vec![Role::Rider],
+        onboarding_status: OnboardingStatus::IssuedNotOnboarded,
+    };
+
+    // List: { members: [...] }
+    let list = serde_json::to_value(MemberListView::new(vec![summary.clone()])).unwrap();
+    assert_eq!(keys(&list), vec!["members"]);
+    assert_eq!(list["members"][0]["name"], "Maria");
+
+    // Issued: { member, onboarding_code, code_expires_at } — the show-once code is the plaintext.
+    let issued = serde_json::to_value(MemberIssuedView::new(
+        summary.clone(),
+        &OnboardingCode::new("CODE-XYZ"),
+        UnixSeconds::new(1234),
+    ))
+    .unwrap();
+    assert_eq!(
+        keys(&issued),
+        vec!["code_expires_at", "member", "onboarding_code"]
+    );
+    assert_eq!(issued["onboarding_code"], "CODE-XYZ");
+    assert_eq!(issued["code_expires_at"], 1234);
+
+    // Duplicate-phone link: { error_code, existing } (the disclosure's audit is store-enforced).
+    let dup = serde_json::to_value(DuplicatePhoneLinkView::new(summary.clone())).unwrap();
+    assert_eq!(keys(&dup), vec!["error_code", "existing"]);
+    assert_eq!(dup["error_code"], "ADMIN_MEMBER_DUPLICATE_PHONE");
+    assert_eq!(dup["existing"]["name"], "Maria");
+
+    // Regenerate: { onboarding_code, code_expires_at }
+    let regen = serde_json::to_value(RegenerateCodeView::new(
+        &OnboardingCode::new("FRESH-9"),
+        UnixSeconds::new(99),
+    ))
+    .unwrap();
+    assert_eq!(keys(&regen), vec!["code_expires_at", "onboarding_code"]);
+    assert_eq!(regen["onboarding_code"], "FRESH-9");
+
+    // Audit log: { entries: [...] } — field names only (no values).
+    let entry = AuditEntry {
+        timestamp: UnixSeconds::new(10),
+        admin_id: member_id(2),
+        member_id: member_id(7),
+        fields: vec![AuditField::Name],
+        request_id: "rq".into(),
+    };
+    let log = serde_json::to_value(AuditLogView::new(vec![entry])).unwrap();
+    assert_eq!(keys(&log), vec!["entries"]);
+    assert_eq!(log["entries"][0]["fields"][0], "name");
+    assert_eq!(log["entries"][0]["request_id"], "rq");
+}

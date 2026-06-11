@@ -2084,6 +2084,81 @@
       prove runtime conformance is the deploy-hardening pass (with T09's Worker + T11's seeded Groups).
   - **WHEN:** the deploy-hardening pass / **T11**.
 
+## Server / Worker — admin member endpoints (spec 008 T09 — out-of-scope register)
+
+> T09 shipped the deployable `/api/admin/members/*` + `/api/admin/audit-log` routes
+> (`server/src/runtime/members.rs`) composing the **real** core `MemberService` over the **real**
+> `PgMemberStore` (P4), with the live `GetrandomRng` CSPRNG injected into `RngSecretSource` (ADR-0021),
+> the KEK loaded per-request + the Group key unwrapped per-request, the new core wire DTOs
+> (`MemberListView`/`MemberIssuedView`/`DuplicatePhoneLinkView`/`RegenerateCodeView`/`AuditLogView`,
+> blessed `AuditedResponse` so every admin response goes through the sealed `admin_response_body` seam —
+> no hand-rolled member-PII JSON, I5), and the ADR-0026 shared-secret + `X-Admin-Id` fail-closed gate.
+> Proven by **6 miniflare tests over real PG18** (`server/test/admin-members.spec.ts`: issue→encrypt→
+> store→audited-detail-decrypt round-trip, the I5 audit row, regenerate, duplicate-phone link, no
+> submitted-PII in error bodies, the 401-without-secret + admin-role-forbidden gate) + a Rust seed
+> example (`server/store/examples/seed_worker_test_pg.rs`) that bootstraps the test Group. The
+> wrangler-credential gate (`scripts/check-wrangler-credentials.sh` + meta-test) is wired into the
+> `worker` CI job. New worker deps: `rand_core` 0.9.5 (traits) + `getrandom` 0.4.2 (`wasm_js`). Everything
+> below was deliberately left out; each carries a WHEN.
+
+- [ ] **The real SvelteKit→Worker BFF call (ADR-0026).** T09 built + miniflare-tested the Worker side (the
+      `ADMIN_API_SECRET` + `X-Admin-Id` are injected in tests). Wiring the WebAuthn-verified SvelteKit
+      admin tier to actually call the Worker with the shared secret + the verified admin id is **T10**.
+  - **WHEN:** **T10** (the SvelteKit admin UI / server routes).
+
+- [ ] **KEK from a real Secrets Store binding on the deployed edge (ADR-0025 R3).** `@cloudflare/vitest-
+      pool-workers`/miniflare does **not** emulate a Secrets Store binding (verified via docs-researcher,
+      2026-06-11), so T09 loads the KEK via `env.var("KEK")` — the same plaintext-binding mechanism
+      `HMAC_KEY` already uses (a `wrangler secret` at deploy, injected in tests). Migrating `KEK` (and
+      ideally `HMAC_KEY`) to a real `[[secrets_store_secrets]]` binding (`env.secret_store(...)?.get()`) is
+      deferred until either the runtime emulates it locally or a deployed-edge-only test path exists. The
+      deploy is operator-gated regardless (`docs/runbooks/deploy-worker.md` step 4b).
+  - **WHEN:** when miniflare emulates Secrets Store / a deploy-hardening pass.
+
+- [ ] **GroupHub DO GroupKey cache (the task-title "GroupKey cache").** T09 deliberately unwraps the
+      Group key **per request** (inside `MemberService::load_group_key`), NOT a long-lived plaintext key
+      cached in the `GroupHub` DO. Rationale: R2's threat is a DO memory snapshot, so caching the
+      plaintext key in the DO *widens* the exposure window — per-request unwrap-then-drop (the key
+      zeroizes on `Drop`) minimizes the plaintext lifetime (zeroize/P3 aligned). The DO cache is a perf
+      optimization (saves one `delegated_keys` SELECT + one unwrap per request); revisit only if the
+      per-request unwrap is a measured hot spot, and only with a write-through/evict-on-rotate guard.
+  - **WHEN:** a perf pass, if the per-request unwrap is measured as a bottleneck.
+
+- [ ] **Defense-in-depth: the Worker verifies the asserted `X-Admin-Id` actually holds `role=admin`
+      (ADR-0026).** Today the Worker trusts the BFF-asserted admin id (the shared secret is the trust
+      boundary). A cheap follow-up: a `members` lookup asserting the asserted id is a real Admin in the
+      Group, so a leaked secret cannot forge an arbitrary actor on the I5 audit trail. Not required for v1.
+  - **WHEN:** a security-hardening pass (with the T10 real BFF call, where the admin session is established).
+
+- [ ] **`edit_member` into a duplicate phone returns an opaque 500, not a calm conflict (T07/T05 carry-
+      forward).** Moving a member's phone onto a number already enrolled hits the `(group_id,
+      phone_lookup_hash)` unique index → `PgMemberStore::edit_member` → `StoreError::Db` → the Worker maps
+      it to a generic 500. The clean mapping (a distinguishable `EditMemberOutcome` conflict arm in the
+      core, surfaced like issuance's `ADMIN_MEMBER_DUPLICATE_PHONE`, audited) requires a core change (the
+      store would need to return a typed conflict, not an opaque `Db` error) — out of scope for the T09
+      Worker slice. No data risk (the UPDATE fails atomically, no partial write); only the UX is poor.
+  - **WHEN:** a focused edit-conflict slice (core `EditMemberOutcome` + a `pg_member_store_edit_into_duplicate_phone` test).
+
+- [ ] **Server-side member search/filter (`?search=&role=&status=`).** The list route accepts the query
+      filters but does **not** apply them (the core `list_members` takes no filter — the T07/T05 register's
+      deferral). The list returns all non-Admin members regardless. Wiring the SQL `WHERE` + the params is
+      a T07/T10 concern.
+  - **WHEN:** **T07/T10** (server-side filtering + the UI that drives it).
+
+- [ ] **Live `emit()` sink + the member-issuance I10 scrubber fixture + the StoreError/PII-off-logs
+      wiring.** T09's routes keep the inbound raw `name`/`address`/`phone` off the log path (tainted types,
+      value-free error codes — R10) and never echo them (the `worker_error_response_contains_no_submitted_pii`
+      test). The deployable scrubbed `boundless::logging::emit()` sink + routing `StoreError` + the
+      KEK-load `SecretboxError` variant (the T04 L1 carry-forward) through it + a member-issuance red-team
+      fixture are the shared T07-shell-B logging track.
+  - **WHEN:** **T07-shell-B** (the live `emit()` sink).
+
+- [ ] **Deployed-edge cross-tenant proof (AC16) as the live `boundless_app` role.** T07's in-process
+      `rls_isolates_member_reads_by_tenant` + the 2-group proptest prove the RLS *policy*; the live
+      deployed-edge proof (a Group-A admin token cannot read Group-B members) needs ≥2 seeded Groups on the
+      deployed Worker — **T11**.
+  - **WHEN:** **T11** (operator-gated, with ≥2 issued Groups).
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a

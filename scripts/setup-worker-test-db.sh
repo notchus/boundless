@@ -30,6 +30,12 @@ APP_ROLE="boundless_app"
 # not a secret — like the postgres:postgres in common/mod.rs).
 APP_PW="${WORKER_TEST_APP_PASSWORD:-boundless_app}"
 MIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../server/migrations" && pwd)"
+SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../server" && pwd)"
+# The single-install tenant the Worker is RLS-scoped to (the wrangler.toml `[vars] GROUP_ID`), and the
+# test KEK the Worker unwraps the seeded Group key with. The KEK MUST match `server/vitest.config.ts`'s
+# `KEK` binding (a LOCAL TEST value, not a secret — like the boundless_app password). Spec 008 T09.
+SEED_GROUP_ID="${WORKER_TEST_GROUP_ID:-00000000-0000-0000-0000-000000000001}"
+SEED_KEK_HEX="${WORKER_TEST_KEK_HEX:-cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd}"
 
 echo "→ provisioning worker test DB via ${SU_URL%@*}@… (role=${APP_ROLE}, schema=public)"
 
@@ -61,9 +67,9 @@ for f in "$MIG_DIR"/*.up.sql; do
   $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -q --single-transaction < "$f"
   mig_count=$((mig_count + 1))
 done
-# Guards a glob/path bug (server/tests/migrations.rs validates the set itself). Bump when 0009+ lands.
-if [ "$mig_count" -ne 8 ]; then
-  echo "✗ expected 8 up-migrations, applied ${mig_count}" >&2
+# Guards a glob/path bug (server/tests/migrations.rs validates the set itself). Bump when 0012+ lands.
+if [ "$mig_count" -ne 11 ]; then
+  echo "✗ expected 11 up-migrations, applied ${mig_count}" >&2
   exit 1
 fi
 
@@ -73,4 +79,16 @@ GRANT USAGE ON SCHEMA public TO ${APP_ROLE};
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${APP_ROLE};
 SQL
 
-echo "✓ worker test DB ready (role=${APP_ROLE}, 8 migrations applied, unseeded)"
+# Seed a bootstrapped Group (a `groups` row + a KEK-wrapped `delegated_keys` row) so the spec-008 T09
+# admin-issuance tests can encrypt/decrypt PII (issuance fails closed without a per-Group key, AC12).
+# Done in Rust (the Group-key wrap is `boundless_crypto::wrap_group_key`, P4 — not an opaque SQL blob)
+# via a never-shipped example. Connects over TCP to SU_URL, so SU_URL must be host-reachable (the same
+# port the Worker's Hyperdrive binding uses — local :55432 / CI :5432).
+echo "→ seeding bootstrapped Group ${SEED_GROUP_ID} (KEK-wrapped delegated key)"
+( cd "$SERVER_DIR" && \
+  WORKER_TEST_SUPERUSER_URL="$SU_URL" \
+  WORKER_TEST_GROUP_ID="$SEED_GROUP_ID" \
+  WORKER_TEST_KEK_HEX="$SEED_KEK_HEX" \
+  cargo run -q -p boundless-server-store --example seed_worker_test_pg )
+
+echo "✓ worker test DB ready (role=${APP_ROLE}, 11 migrations applied, 1 bootstrapped Group seeded)"

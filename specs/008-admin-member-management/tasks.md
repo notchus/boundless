@@ -236,6 +236,24 @@ T09 is in flight, but its e2e needs T09's Worker.
 - **Blockers:** T05 (projection shapes), references T06's audit set. **Parallel:** with T06/T07.
 
 ### T09 — Worker endpoints + KEK binding + GroupKey cache + live CSPRNG `[shell]`
+- **Status:** ✅ DONE 2026-06-11 — `server/src/runtime/members.rs` (the 6 routes wired into the `Router`)
+  composes the real core `MemberService` over the real `PgMemberStore` (P4), with the live `GetrandomRng`
+  CSPRNG injected into `RngSecretSource` (ADR-0021), the KEK + Group key loaded/unwrapped **per request**
+  (no DO cache — per-request unwrap minimizes the plaintext-key window, R2; deferred-with-rationale), and
+  the **ADR-0026** shared-secret + `X-Admin-Id` fail-closed gate (`admin_guard`, constant-time, runs
+  before any DB connect). Every admin response serializes through the sealed `admin_response_body` seam:
+  new core wire DTOs (`MemberListView`/`MemberIssuedView`/`DuplicatePhoneLinkView`/`RegenerateCodeView`/
+  `AuditLogView`) blessed `AuditedResponse` (T06 allowlist extended; `.stderr` golden re-blessed) — the
+  Worker hand-rolls **no** member-PII JSON (I5). Proven by **6 miniflare tests over real PG18**
+  (`server/test/admin-members.spec.ts`): issue→encrypt→store→audited-detail-decrypt round-trip, the I5
+  audit row (`worker_detail_read_emits_audit`), regenerate, duplicate-phone link, no-submitted-PII-in-
+  error-body (R10), and the 401-without-secret + `ADMIN_MEMBER_ROLE_FORBIDDEN` gate. Harness:
+  `seed_worker_test_pg` Rust example (bootstraps the test Group's KEK-wrapped `delegated_keys`),
+  `setup-worker-test-db.sh` (→ 11 migrations + seed), vitest `KEK`/`ADMIN_API_SECRET` bindings. Gate:
+  `check-wrangler-credentials.sh` (+ meta-test) wired into CI. New worker deps `rand_core` 0.9.5 +
+  `getrandom` 0.4.2 (`wasm_js`); `ADMIN_MEMBER_NOT_FOUND` registered (the 404 body code). All native +
+  wasm + miniflare green. ADR-0026 authored. Deferred shells (real BFF call → T10; Secrets Store KEK;
+  edit-into-duplicate clean mapping; live `emit()`; AC16 deployed-edge) in `DEFERRED.md` → T09.
 - **What:** The deployable `/api/admin/members/*` routes composing `MemberService` over the Pg stores;
   loads the KEK from **Secrets Store**, caches the unwrapped `GroupKey` in the `GroupHub` DO; wires the
   **live injected CSPRNG** (the nonce/key source — R1, wired here, not deferred).
@@ -288,16 +306,16 @@ T09 is in flight, but its e2e needs T09's Worker.
 
 | AC | Covered by | Status |
 |---|---|---|
-| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…persists_member_with_roles_and_created_by`, RLS-scoped insert); T09 shell pending |
+| AC1 create member (roles[], created_by, RLS-scoped) | T05 (core), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…persists_member_with_roles_and_created_by`, RLS-scoped insert); **T09 ✓ shell** (`worker_issue_member_round_trip`: real Worker → encrypt → store → decrypt over real PG18) |
 | AC2 address encrypted at rest (`i1_addresses_encrypted`) | T02 (crypto), T03 (column), T07 (DB) | T02·T03 ✓; **T07 ✓ DB** (`…address_encrypted_round_trip`: ciphertext≠plaintext, decrypt via Group key) |
 | AC3 name encrypted at rest | T02, T03, T05, T07 | T02·T03 ✓; T05 ✓; **T07 ✓ DB** (name ciphertext round-trips through `name_encrypted bytea`) |
 | AC4 phone two-fold (I3) | T05, T07 | T05 ✓; **T07 ✓ DB** (`…phone_two_fold`: lookup hash + ciphertext; `PgAuthStore::find_member_by_phone` then matches — issuance feeds sign-in) |
-| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…issue_is_atomic`: one member + one live code, one txn); T09 shell pending |
-| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); T09 shell pending |
-| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); **T08 ✓ OpenAPI-coverage** (`openapi_pii_handlers_all_require_audit`: every `MemberDetail`-returning handler is `x-requires-audit`); T09 shell live-emit pending |
+| AC5 mint one live Onboarding Code | T05 (decision), T07 (DB), T09 [shell] | T05 ✓; **T07 ✓ DB** (`…issue_is_atomic`: one member + one live code, one txn); **T09 ✓ shell** (issuance returns the show-once code over the live Worker) |
+| AC6 regenerate atomic supersede-then-insert | T05, T07, T09 [shell] | T05 ✓; **T07 ✓ DB** (`…regenerate_supersede_then_insert_atomic` + `…concurrent_regenerate_keeps_one_live` advisory-lock proof); **T09 ✓ shell** (`worker_regenerate_code`: fresh code supersedes the prior) |
+| AC7 PII reads audit-logged + `#[require_audit]` compile + OpenAPI coverage | T06 (compile), T05 (decision), T07 (DB), T08 (coverage), T09 [shell emit] | T05 ✓; T06 ✓ (compile gate); **T07 ✓ DB** (`pg_audit_store_writes_row_on_detail_read`: audit INSERT atomic with the ciphertext SELECT, I5/§7); **T08 ✓ OpenAPI-coverage** (`openapi_pii_handlers_all_require_audit`); **T09 ✓ shell live-emit** (`worker_detail_read_emits_audit`: a real detail read writes the `audit_log` row over real PG, names only) |
 | AC8 `MemberSummary` no tainted type | T05 (compile assert), T08 (schema) | T05 ✓ (compile assert + no-PII prop); **T08 ✓ contract** (`member_summary_schema_has_no_tainted_field`: schema has name/roles/status, no phone/address) |
 | AC9 read audit log (names not values) | T03 (shape), T05, T07, T08 | T03 ✓; T05 ✓; **T07 ✓ DB** (`pg_audit_store_read_returns_no_pii`: `fields` are names, no PII value persisted/returned); **T08 ✓ contract** (`AuditEntry.fields` enum `[name,phone,address]` — names only) |
-| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); **T08 ✓ no-path** (`openapi_admin_surface_has_no_admin_creation_path`: issuance `roles` = `IssuableRole` {rider,driver}, no admin); T10 shell UI pending |
+| AC10 no admin-creation affordance (I11) | T05 (role reject), T08 (no path), T09 (HTTP reject), T10 [shell UI] | T05 ✓ (Admin unrepresentable at issuance); **T08 ✓ no-path** (`openapi_admin_surface_has_no_admin_creation_path`); **T09 ✓ HTTP** (the issuance route rejects `roles:[admin]` → `ADMIN_MEMBER_ROLE_FORBIDDEN` 400, worker test); T10 shell UI pending |
 | AC11 edit re-encrypts + recompute hash + optimistic concurrency | T05 (decision), T07 (DB) | T05 ✓; **T07 ✓ DB** (`…optimistic_concurrency_stale_reject` whole-second token + `…edit_recomputes_phone_lookup`) |
 | AC12 Group bootstrap + per-Group key, fail-closed | T02, T03, T04, T07 | T02·T03·T04 ✓; T05 ✓; **T07 ✓ DB** (`pg_delegated_key_store_persists_only_wrapped`: wrapped-only, `None`→fail-closed) |
 | AC13 roles[] at issuance, swap out of scope | T05, T07 | T05 ✓; **T07 ✓ DB** (`…roles_array_round_trip`: multi-role set through `member_role[]`) |

@@ -76,12 +76,13 @@ pub use bootstrap::{
 };
 pub use hub::{GroupHubState, CODE_ATTEMPT_WINDOW_SECS};
 pub use member::{
-    issuable_roles, AdminRoleForbidden, AuditEntry, AuditField, AuditStore, DelegatedKeyStore,
-    DetailRead, DuplicateDisclosureAudit, EditApplied, EditMemberInput, EditMemberOutcome,
-    InsertMemberOutcome, IssuableRole, IssueMemberInput, IssueMemberOutcome, MemberConfig,
-    MemberDetail, MemberDetailView, MemberEditWrite, MemberError, MemberService, MemberStore,
-    MemberSummary, NewMemberWrite, OnboardingStatus, RegenerateOutcome, StoredMemberPii,
-    StoredMemberSummary, ONBOARDING_CODE_TTL_SECS,
+    issuable_roles, AdminRoleForbidden, AuditEntry, AuditField, AuditLogView, AuditStore,
+    DelegatedKeyStore, DetailRead, DuplicateDisclosureAudit, DuplicatePhoneLinkView, EditApplied,
+    EditMemberInput, EditMemberOutcome, InsertMemberOutcome, IssuableRole, IssueMemberInput,
+    IssueMemberOutcome, MemberConfig, MemberDetail, MemberDetailView, MemberEditWrite, MemberError,
+    MemberIssuedView, MemberListView, MemberService, MemberStore, MemberSummary, NewMemberWrite,
+    OnboardingStatus, RegenerateCodeView, RegenerateOutcome, StoredMemberPii, StoredMemberSummary,
+    ONBOARDING_CODE_TTL_SECS,
 };
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{

@@ -33,6 +33,7 @@
 // The `#[durable_object]` macro in `group_hub` emits the `GroupHub` JS-class export inline, so the
 // module need only be compiled — no re-export is required for wrangler/worker-build to find it.
 mod group_hub;
+mod members;
 mod pg;
 
 use boundless_auth::{SignInResult, VersionRequirement};
@@ -144,6 +145,18 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 .get_stub()?;
             stub.fetch_with_request(req).await
         })
+        // ── Admin member-management (spec 008 T09) — the ADR-0026 shared-secret BFF surface. Each
+        // handler runs `admin_guard` first (fail-closed) and composes the real `MemberService` over
+        // `PgMemberStore`. The `:id` segment is read via `ctx.param("id")`.
+        .get_async("/api/admin/members", members::list)
+        .post_async("/api/admin/members", members::issue)
+        .get_async("/api/admin/members/:id", members::detail)
+        .patch_async("/api/admin/members/:id", members::edit)
+        .post_async(
+            "/api/admin/members/:id/regenerate-code",
+            members::regenerate,
+        )
+        .get_async("/api/admin/audit-log", members::audit_log)
         .run(req, env)
         .await
 }

@@ -47,6 +47,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0023](./0023-auth-request-phone-on-wire.md) — Auth requests carry the plaintext `phone` (E.164, over TLS), not a client-computed `phone_lookup_hash`: that hash is HMAC-SHA256 keyed by a per-instance server secret (I3/ADR-0018) a client cannot hold, so the server hashes the received phone and drops the plaintext (P2 tainted type); reconciles the frozen OpenAPI/spec/fixtures with the as-built engine. Rejects a client keyless pre-hash (unsalted low-entropy hash is brute-forceable + violates P4 single-source normalization)
 - [ADR-0024](./0024-hyperdrive-unnamed-statements.md) — Worker→Postgres uses `tokio-postgres`'s unnamed-statement `query_typed*` family (no driver fork); refines ADR-0019 and corrects its named/unnamed polarity
 - [ADR-0025](./0025-per-group-key-lifecycle.md) — Per-Group field-encryption key lifecycle: a symmetric secretbox key, KEK-wrapped in Cloudflare Secrets Store, generated at Group bootstrap (spec 008), rotation runbook-driven (I1)
+- [ADR-0026](./0026-admin-worker-shared-secret-trust.md) — Admin→Worker trust for `/api/admin/*` is a shared-secret BFF gate (`ADMIN_API_SECRET`, constant-time, fail-closed) + the WebAuthn-verified-BFF-asserted `X-Admin-Id` (the I5 audit actor); group from the single-install `GROUP_ID`. The real SvelteKit→Worker call is T10 (I5/I11; spec 008 T09)
 
 ## Suggested early ADRs to author (stubs)
 
