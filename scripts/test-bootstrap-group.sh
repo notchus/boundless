@@ -37,6 +37,9 @@ fi
 # --- 1. fresh throwaway DB + migrations (as the superuser; tables owned by it, BYPASSRLS) ----------
 SU_PREFIX="${SU_URL%/*}"                                  # …@host:port (drop /db)
 SU_TARGET="${SU_PREFIX}/${BOOT_DB}"                       # superuser → throwaway DB (the "owner" we bootstrap as)
+# The bootstrap now connects with a real TLS connector (Neon requires TLS). The LOCAL test PG may not offer
+# TLS, so force `sslmode=disable` (plaintext) for it. (The operator's Neon URL carries `?sslmode=require`.)
+BOOT_URL="${SU_TARGET}?sslmode=disable"
 $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "DROP DATABASE IF EXISTS ${BOOT_DB} WITH (FORCE)" >/dev/null
 $PSQL "$SU_URL" -v ON_ERROR_STOP=1 -tAc "CREATE DATABASE ${BOOT_DB}" >/dev/null
 shopt -s nullglob
@@ -48,7 +51,7 @@ done
 
 # --- 2. first bootstrap — must mint a key (the SU_TARGET owner is BYPASSRLS, so the insert lands) ---
 err1="$(mktemp)"; trap 'rm -f "$err1" "${err2:-}"' EXIT
-BOOTSTRAP_KEK_HEX="$KEK_HEX" bash scripts/bootstrap-group.sh "$SU_TARGET" "$GID" "$GNAME" 2>"$err1" \
+BOOTSTRAP_KEK_HEX="$KEK_HEX" bash scripts/bootstrap-group.sh "$BOOT_URL" "$GID" "$GNAME" 2>"$err1" \
   || { cat "$err1" >&2; fail "first bootstrap exited non-zero"; }
 grep -q "bootstrapped" "$err1" || { cat "$err1" >&2; fail "first run did not report a bootstrap"; }
 grep -q "already" "$err1" && { cat "$err1" >&2; fail "first run reported 'already' on an empty DB"; }
@@ -63,7 +66,7 @@ key1="$(q "$SU_TARGET" "SELECT encode(wrapped_key,'hex') FROM delegated_keys WHE
 
 # --- 3. second bootstrap — IDEMPOTENT, NEVER overwrites --------------------------------------------
 err2="$(mktemp)"
-BOOTSTRAP_KEK_HEX="$KEK_HEX" bash scripts/bootstrap-group.sh "$SU_TARGET" "$GID" "$GNAME" 2>"$err2" \
+BOOTSTRAP_KEK_HEX="$KEK_HEX" bash scripts/bootstrap-group.sh "$BOOT_URL" "$GID" "$GNAME" 2>"$err2" \
   || { cat "$err2" >&2; fail "second bootstrap exited non-zero"; }
 grep -q "already bootstrapped" "$err2" || { cat "$err2" >&2; fail "second run did not report 'already bootstrapped'"; }
 [ "$(q "$SU_TARGET" "SELECT count(*) FROM delegated_keys WHERE group_id='${GID}'")" = "1" ] || fail "second run created a duplicate/extra key row"

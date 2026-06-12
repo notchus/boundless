@@ -2351,6 +2351,12 @@
       no-getrandom CI gate is unaffected). Meta-test `scripts/test-bootstrap-group.sh` (wired into the CI
       `worker` job) proves: mints a 72-byte (NONCE+MAC+KEY) wrapped key, idempotent, **never overwrites**
       (byte-identical across runs); proven on real PG18. Runbook **step 5b** documents the operator run.
+      **TLS follow-up (2026-06-12):** the first operator run hit `NoTlsError` — the example used `NoTls` but
+      Neon REQUIRES TLS (the meta-test connects to a local no-TLS PG, so it didn't catch the gap). Fixed by
+      swapping to a `native-tls` connector (`postgres-native-tls`): verifies the server cert against the OS
+      trust store (no `danger_accept_invalid_*`), `sslmode=require` for Neon and `sslmode=disable` for the
+      local meta-test. The two TLS crates are **dev-only** (the example never builds for wasm; the Worker
+      still uses Hyperdrive) — off the production + wasm trees; allow-list clean.
 
 - [ ] **The operator's prod run (their DB writes; agent won't run unprompted).** Against the deployed Neon:
       re-run `provision-neon.sh` (owner DIRECT URL → applies 0009–0011 + re-grants), then `bootstrap-group.sh`

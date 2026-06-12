@@ -56,6 +56,16 @@ tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "tim
 # `wasm_js` needed). Already resolved as 0.4.2 in Cargo.lock (the Worker's `wasm_js` backend) → no new
 # crate version. Not on the non-dev wasm tree (the no-getrandom CI gate is unaffected). Not a tracker.
 getrandom = "0.4"
+# TLS for the Group-bootstrap example's DIRECT Postgres connection — Neon REQUIRES TLS (`sslmode=require`),
+# which the `NoTls` connector cannot satisfy. native-tls verifies the server cert against the OS trust store
+# (Security.framework on macOS, OpenSSL on Linux), which already trusts Neon's Let's Encrypt cert — no
+# bundled roots, no MITM (we never set `danger_accept_invalid_*`). The SAME connector serves a local no-TLS
+# Postgres via `sslmode=disable` (the meta-test). DEV-only + native/host (the example never builds for wasm;
+# the deployed Worker uses Hyperdrive, not a direct connector — this is off the production + wasm trees).
+# MIT OR Apache-2.0. Verified 2026-06-12 via docs-researcher (postgres-native-tls 0.5.3 / native-tls 0.2,
+# tokio-postgres 0.7-compatible); lock = ground truth.
+native-tls = "0.2"
+postgres-native-tls = "0.5"
 # Property tests (P9): the random two-group RLS-isolation proof (`prop_rls_isolates_random_two_group_configs`).
 # Same major as the core crates' proptest (1.11.x in the core lock); host/native dev-only — never on the
 # wasm path. Failing seeds persist to `server/store/proptest-regressions/` (committed; P9 reproducibility).

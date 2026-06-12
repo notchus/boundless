@@ -20,14 +20,13 @@
 //! - non-zero/panic — a bad KEK / URL / connection (the `.expect`s below).
 //!
 //! Env (set by `scripts/bootstrap-group.sh`; the `KEK` MUST match the Worker's `KEK` secret):
-//! - `BOOTSTRAP_OWNER_URL` — the DB OWNER DIRECT URL (neondb_owner; BYPASSRLS lands the insert under FORCE RLS). NOT `boundless_app`.
+//! - `BOOTSTRAP_OWNER_URL` — the DB OWNER DIRECT URL incl. `?sslmode=require` (neondb_owner; BYPASSRLS lands the insert under FORCE RLS). NOT `boundless_app`.
 //! - `BOOTSTRAP_GROUP_ID` — the Group uuid (this install's `GROUP_ID` Worker binding).
 //! - `BOOTSTRAP_KEK_HEX` — the 64-char-hex KEK the Worker unwraps the Group key with.
 //! - `BOOTSTRAP_GROUP_NAME` — the Group's human-readable name (glossary: groups have a `name`).
 
 use boundless_crypto::{unwrap_group_key, wrap_group_key, GroupKey, Kek, Nonce};
 use std::process::ExitCode;
-use tokio_postgres::NoTls;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -56,7 +55,13 @@ async fn main() -> ExitCode {
     // here (a loud panic) instead of letting issuance later fail closed with an opaque key error.
     unwrap_group_key(&wrapped, &kek).expect("wrapped key must round-trip with the provided KEK");
 
-    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+    // Neon REQUIRES TLS (`sslmode=require`). native-tls verifies the server cert against the OS trust
+    // store (no MITM — we never set `danger_accept_invalid_*`); it trusts Neon's Let's Encrypt cert with
+    // no bundled roots. The SAME connector serves a local no-TLS Postgres (`sslmode=disable`) — the
+    // meta-test path. tokio-postgres honors the URL's `sslmode` itself.
+    let tls = native_tls::TlsConnector::new().expect("build the TLS connector");
+    let connector = postgres_native_tls::MakeTlsConnector::new(tls);
+    let (client, conn) = tokio_postgres::connect(&url, connector)
         .await
         .expect("connect to the owner DB (use the DIRECT/unpooled endpoint, as neondb_owner)");
     tokio::spawn(async move {
