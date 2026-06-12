@@ -2274,8 +2274,10 @@
 > a **"step 8 — AC16 cross-tenant isolation check"** section (seed ≥2 Groups + run the block). All
 > host/CI-testable; no core/Worker/migration change; no new deps. Everything below was left out.
 
-- [ ] **The LIVE deployed-edge run of the cross-tenant proof (the only thing that turns AC16 live-green;
-      operator-gated).** Cloudflare MCP is read-only — the human runs `wrangler`. **Prerequisite (surfaced
+- [x] **The LIVE deployed-edge run of the cross-tenant proof — DONE 2026-06-12 (AC16 is live-green).**
+      The operator ran it against the deployed edge → the Group-A admin got a clean **404** (cannot read or
+      list the seeded Group-B member); RLS isolation proven end-to-end in production. The historical detail
+      (Cloudflare MCP is read-only — the human ran `wrangler`) and what it took is below. **Prerequisite (surfaced
       2026-06-11 when the operator first deployed the T09 Worker and the member endpoints 500'd): the
       deployed Neon was provisioned 2026-06-09, before the member migrations existed, so it lacks
       0009–0011 AND the Group is not bootstrapped.** The "Deploy tooling" register below closes that — the
@@ -2286,8 +2288,8 @@
       issuance, or the throwaway probe row the runbook's step 8 SQL documents); (3) run
       `smoke-deployed-edge.sh` with `ADMIN_API_SECRET` + `CROSS_TENANT_MEMBER_ID` set. A `200` (the cross-tenant row returned) would mean the Worker connects as a superuser/
       `BYPASSRLS` role — but the W2 boot guard (`ensure_least_privilege`) already refuses such a role at
-      `/readyz`, so this is the belt-and-suspenders end-to-end proof. **AC16 stays `[shell]` until this
-      runs live.** (Supersedes the T07-shell-B / T09 registers' "live deployed-edge cross-tenant
+      `/readyz`, so this is the belt-and-suspenders end-to-end proof. **AC16 is now live-green — closed
+      2026-06-12** (the live run returned the clean 404). (Supersedes the T07-shell-B / T09 registers' "live deployed-edge cross-tenant
       isolation smoke (sec-audit F5)" items — the artifacts to run it now exist.)
   - **WHEN:** the operator's next deploy + first issuance (or the throwaway-probe seed), per
     `docs/runbooks/deploy-worker.md` → step 8.
@@ -2358,11 +2360,24 @@
       local meta-test. The two TLS crates are **dev-only** (the example never builds for wasm; the Worker
       still uses Hyperdrive) — off the production + wasm trees; allow-list clean.
 
-- [ ] **The operator's prod run (their DB writes; agent won't run unprompted).** Against the deployed Neon:
-      re-run `provision-neon.sh` (owner DIRECT URL → applies 0009–0011 + re-grants), then `bootstrap-group.sh`
-      with the **saved KEK** + `GROUP_ID` (mints Group A's key). Then the member endpoints work and the AC16
-      cross-tenant smoke returns the clean 404. (This is the (0) prerequisite folded into the T11 live-run
-      item above.) **WHEN:** the operator's next deploy session.
+- [x] **The operator's prod run — DONE 2026-06-12.** Against the deployed Neon the operator re-ran
+      `provision-neon.sh` (owner DIRECT URL → applied 0009–0011 + re-granted; this also rotated the
+      `boundless_app` password, so they followed with `wrangler hyperdrive update` to re-point the Worker),
+      then `bootstrap-group.sh` with the saved KEK + `GROUP_ID` (minted Group A's key). The member endpoints
+      then worked, the deployed smoke returned `/readyz db:ok`, and the AC16 cross-tenant smoke returned the
+      clean **404** — closing the T11 live-run item above. (Two operator-experience notes for the runbook,
+      below.)
+  - [ ] **Runbook UX hardening from the live run (2026-06-12).** The operator hit several avoidable
+        snags that a runbook note could pre-empt: (a) **re-running `provision-neon.sh` without pinning
+        `BOUNDLESS_APP_DB_PASSWORD` rotates the app password** → the Worker's Hyperdrive config goes stale
+        → must `wrangler hyperdrive update` (and the printed new password is a credential — the operator
+        pasted it into chat once). The runbook's step-0 "Re-running…" note covers it but should LEAD with
+        "pin `BOUNDLESS_APP_DB_PASSWORD` to your saved value on every re-run, or you must update Hyperdrive."
+        (b) The bootstrap example's **`NoTls` → `NoTlsError`** against Neon (fixed same day — see the TLS
+        follow-up above). (c) **Long-connection-string paste** repeatedly wrapped/inserted a space and the
+        **`OWNER_URL=` variable didn't persist** across separate command invocations — the runbook should
+        recommend grabbing the full string from the Neon dashboard (pooling OFF) and running each step as a
+        single self-contained command (no cross-command shell variables). **WHEN:** a runbook-polish pass.
 
 - [ ] **Review carry-forwards (reviewer S2; both reviews otherwise clean — 0 crit/high/warning, sec-auditor
       "ship it").** `bootstrap-group.sh` takes the **owner URL (with its password) as `$1`** — visible in
