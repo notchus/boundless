@@ -679,6 +679,45 @@
 
 ---
 
+## Admin web deploy — B1 contract freeze (spec 009 T03 — out-of-scope register)
+
+> T03 (the `/api/admin/webauthn/*` OpenAPI freeze + the B1 contract describe-block, AC13) is DONE; these
+> are the deferrals it recorded. The T02→T03 doc-reconciliation carry-forward was **closed in-slice**
+> (AC4b + ADR-0027 now describe `admin_invitation_token_hash` + unique-index equality, not `_matches`).
+
+- [ ] **Session-bearing backup-key B1 ops are intentionally NOT frozen yet.** T03 froze only the 4
+  pre-session ops (the ADR-0027 freeze target). The authenticated additive backup-key enrollment flow
+  needs a `GET /api/admin/webauthn/credentials?admin_id=` *list* + a standalone `revoke-all` wire op —
+  both **session-bearing** (they WOULD carry `X-Admin-Id`, unlike the four). Freezing them now would be
+  contract for an out-of-scope feature (spec.md "Out of scope"). When that flow is specced: add the ops,
+  give each the `AdminIdHeader` param, and **update the contract test's `FROZEN_B1_OPS` list + the
+  "exactly 4" count pin + the pre-session negative assertion** (those session-bearing ops must be excluded
+  from the no-`X-Admin-Id` negative set).
+  - **WHEN:** the additive backup-key enrollment spec (spec 001 T15 register).
+
+- [ ] **No response-envelope types were introduced — T04's `AuditedResponse` blessing list is exactly the
+  bare DTOs.** The B1 responses `$ref` the bare DTOs directly (`AdminInviteRecord`, `AdminCredential`,
+  `AdminRegisterCompleteResult`; `sign-count` is 204-no-body; rejects are the existing `ErrorBody`). So
+  the T02-register "bless the B1 wire DTOs" item resolves to blessing those three (no `{credentials:[…]}`/
+  `{invite:…}` envelope wrappers exist to bless). If T04 adds a list endpoint later, its envelope joins
+  the allowlist then.
+  - **WHEN:** **T04** (the deployable router serializes through `admin_response_body`).
+
+- [ ] **Strict fixture/Rust ↔ OpenAPI conformance cross-check (hardening).** T03 pins the B1 wire shapes
+  on BOTH sides independently — the Rust keyed-serde tests (`core/server/src/admin_webauthn.rs`) and the
+  OpenAPI-side `b1_wire_dtos_are_pii_free_and_shaped` field-set assertion — but nothing programmatically
+  proves the two agree (a reviewer did, by eye). Fold the B1 DTOs into the deferred host-only
+  "fixture↔OpenAPI conformance" check (spec 001 T10 register): serialize an `AdminInviteRecord`/
+  `AdminCredential` and validate it against the de-`$ref`'d OpenAPI schema, so a one-sided drift fails CI.
+  - **WHEN:** the contract-hardening pass (rides the spec-001 T10 fixture↔OpenAPI item).
+
+- [ ] **Live deployed-edge contract-conformance for the B1 surface.** T03 checks only the contract
+  *document*; replaying real B1 responses (resolve/register-complete/lookup) against the deployed Worker
+  to prove runtime conformance rides the deploy-hardening pass.
+  - **WHEN:** **T13** (edge) / the deploy-hardening pass.
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.

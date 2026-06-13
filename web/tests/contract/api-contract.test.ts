@@ -366,3 +366,158 @@ describe('spec 008 — admin member-management surface (additive)', () => {
     }
   });
 });
+
+// ── Spec 009 — Admin WebAuthn store surface (Option B1, ADR-0027) — additive freeze ──────────
+// The new server-to-server persistence routes (/api/admin/webauthn/*) the WebAuthn-verified SvelteKit
+// BFF calls over the ADR-0026 shared secret (web tier = zero Postgres, D1). They are a DIFFERENT
+// surface from the frozen /api/admin/auth/* browser ceremony, so the spec-008 member-surface gates
+// above do NOT cover them — this dedicated block is AC13. Four properties (plus a DTO-shape pin):
+// (1) the four ops exist + are frozen (no silent surface growth); (2) adminSharedSecret on every op;
+// (3) they are PRE-SESSION — NO X-Admin-Id — with the member ops as the positive control (ADR-0027);
+// (4) the I5 NEGATIVE gate (F2): no B1 response reaches a member-PII schema or a phone/address field.
+
+const WEBAUTHN_OP_TOKEN = ' /api/admin/webauthn/';
+
+// The frozen B1 wire surface (ADR-0027's "Endpoint shape" table). All four are pre-session,
+// shared-secret-only. The standalone consume/insert/revoke-all are INTERNAL store methods (not wire
+// ops); register-complete is the single atomic combined op (R11). Session-bearing backup-key ops
+// (credentials?admin_id= list + revoke-all) are out of scope (spec.md) and intentionally NOT frozen.
+const FROZEN_B1_OPS = [
+  'POST /api/admin/webauthn/invite/resolve',
+  'POST /api/admin/webauthn/register-complete',
+  'POST /api/admin/webauthn/credentials/lookup',
+  'POST /api/admin/webauthn/credentials/{id}/sign-count',
+] as const;
+
+function b1Ops(): OpCase[] {
+  return allOps().filter(({ id }) => id.includes(WEBAUTHN_OP_TOKEN));
+}
+
+function declaresAdminSharedSecret(op: Json): boolean {
+  const security = op['security'];
+  return Array.isArray(security) && security.some((s) => isObject(s) && 'adminSharedSecret' in s);
+}
+
+function hasAdminIdHeader(op: Json): boolean {
+  const params = op['parameters'];
+  return (
+    Array.isArray(params) &&
+    params.some((p) => isObject(p) && p['$ref'] === '#/components/parameters/AdminIdHeader')
+  );
+}
+
+// Every `properties` key reachable from a node through $ref / allOf·oneOf·anyOf / items / properties
+// (component-deref'd, cycle-terminating). Used for the I5 field-name negative gate (no `phone`/
+// `address` slot anywhere a B1 response can reach) — a structural complement to the schema-ref check.
+function reachablePropertyNames(node: unknown, acc = new Set<string>(), seen = new Set<unknown>()): Set<string> {
+  if (Array.isArray(node)) {
+    for (const x of node) reachablePropertyNames(x, acc, seen);
+    return acc;
+  }
+  const s = deref(node);
+  if (!isObject(s) || seen.has(s)) return acc;
+  seen.add(s);
+  const props = s['properties'];
+  if (isObject(props)) for (const [k, v] of Object.entries(props)) { acc.add(k); reachablePropertyNames(v, acc, seen); }
+  for (const key of ['allOf', 'oneOf', 'anyOf', 'items']) if (key in s) reachablePropertyNames(s[key], acc, seen);
+  return acc;
+}
+
+describe('spec 009 — admin WebAuthn store surface (Option B1, ADR-0027)', () => {
+  it('b1_ops_exist_and_are_frozen', () => {
+    // Non-vacuity + no silent surface growth: EXACTLY the four ADR-0027 ops are frozen. Adding a fifth
+    // (e.g. a future session-bearing backup-key op) must consciously update this list AND the
+    // pre-session assertion below (it would carry X-Admin-Id, unlike these four).
+    const ids = new Set(b1Ops().map(({ id }) => id));
+    for (const expected of FROZEN_B1_OPS) {
+      expect(ids.has(expected), `${expected} must be frozen in api/openapi.yaml (AC13)`).toBe(true);
+    }
+    expect(b1Ops().length, 'exactly the four frozen B1 ops — no silent surface growth').toBe(FROZEN_B1_OPS.length);
+  });
+
+  it('b1_every_op_requires_shared_secret', () => {
+    // ADR-0026/ADR-0027: OpenAPI with no global `security` is fail-OPEN, so every B1 op must declare the
+    // shared-secret scheme explicitly — a forgotten one would be unauthenticated.
+    const ops = b1Ops();
+    expect(ops.length).toBeGreaterThanOrEqual(FROZEN_B1_OPS.length);
+    for (const { id, op } of ops) {
+      expect(declaresAdminSharedSecret(op), `${id} must declare security: [adminSharedSecret] (fail-closed)`).toBe(true);
+    }
+  });
+
+  it('b1_ops_are_pre_session_no_admin_id_header', () => {
+    // ADR-0027: every spec-009 B1 op runs PRE-SESSION (the admin is being registered or authenticated),
+    // so it carries the shared secret but NO X-Admin-Id (there is no verified acting admin yet). This is
+    // the deliberate difference from /api/admin/members/* (which carry both — the I5 audit actor).
+    // NEGATIVE: no B1 op carries the header.
+    for (const { id, op } of b1Ops()) {
+      expect(hasAdminIdHeader(op), `${id} is pre-session → must NOT carry X-Admin-Id (ADR-0027)`).toBe(false);
+    }
+    // POSITIVE CONTROL: the session-bearing member ops DO carry it — so the negative above is a real
+    // probe, not vacuously passing on a broken `hasAdminIdHeader` (and it pins the deliberate contrast).
+    const memberOps = allOps().filter(({ id }) => id.includes(' /api/admin/members'));
+    expect(memberOps.length, 'expected the member surface as the positive control').toBeGreaterThanOrEqual(4);
+    for (const { id, op } of memberOps) {
+      expect(hasAdminIdHeader(op), `${id} is session-bearing → must carry X-Admin-Id (positive control)`).toBe(true);
+    }
+  });
+
+  it('b1_responses_disclose_no_member_pii', () => {
+    // F2 / I5 negative gate — made STRUCTURAL by ADR-0027's separate PII-free DTOs: no B1 response graph
+    // may reach a member-PII schema OR a tainted field, so the B1 surface can never silently become an
+    // unaudited PII path by a careless $ref. (These ops are correctly NOT x-requires-audit.)
+    const FORBIDDEN_SCHEMAS = ['MemberDetail', 'MemberSummary', 'DuplicatePhoneLink'];
+    // `name` belongs here too (not just phone/address): it is member PII on this surface — the sole
+    // disclosed field of DuplicatePhoneLink, a plaintext field of MemberSummary/MemberDetail, tagged
+    // "still PII for LOGGING" in the contract. A `name` home reached via $ref is already caught by
+    // FORBIDDEN_SCHEMAS; including it here also catches a member-name field added INLINE on a future B1
+    // response (the case layer-2 exists for). Matches the three-field set the DTO-shape pin uses below.
+    const FORBIDDEN_FIELDS = ['phone', 'address', 'name'];
+    const ops = b1Ops();
+    expect(ops.length).toBeGreaterThanOrEqual(FROZEN_B1_OPS.length);
+    for (const { id, op } of ops) {
+      const refs = new Set<string>();
+      const propNames = new Set<string>();
+      for (const s of responseSchemas(op)) {
+        collectSchemaRefs(s, refs);
+        reachablePropertyNames(s, propNames);
+      }
+      for (const forbidden of FORBIDDEN_SCHEMAS) {
+        expect(refs.has(forbidden), `${id}: B1 response must not reach ${forbidden} (I5 negative gate, F2)`).toBe(false);
+      }
+      for (const field of FORBIDDEN_FIELDS) {
+        expect(propNames.has(field), `${id}: B1 response must not expose a ${field} field (I5 negative gate, F2)`).toBe(false);
+      }
+    }
+  });
+
+  it('b1_wire_dtos_are_pii_free_and_shaped', () => {
+    // The OpenAPI-side freeze of the B1 wire DTOs, mirroring the Rust serde pins
+    // (core/server/src/admin_webauthn.rs: admin_invite_record_wire_keys_are_pinned /
+    // admin_credential_wire_keys_are_pinned). A field rename/add/drop on either side breaks one of the
+    // two — together they pin the contract end-to-end. Also re-asserts NO phone/address slot (PII-free).
+    const expected: Record<string, { required: string[]; properties: string[] }> = {
+      AdminInviteRecord: {
+        required: ['admin_id', 'group_id', 'expires_at', 'consumed_at'],
+        properties: ['admin_id', 'group_id', 'expires_at', 'consumed_at'],
+      },
+      AdminCredential: {
+        required: ['credential_id', 'admin_id', 'public_key', 'sign_count', 'revoked_at'],
+        properties: ['credential_id', 'admin_id', 'public_key', 'sign_count', 'transports', 'aaguid', 'revoked_at'],
+      },
+      NewAdminCredential: {
+        required: ['credential_id', 'public_key', 'sign_count'],
+        properties: ['credential_id', 'public_key', 'sign_count', 'transports', 'aaguid'],
+      },
+      AdminRegisterCompleteResult: { required: ['admin_id'], properties: ['admin_id'] },
+    };
+    for (const [name, shape] of Object.entries(expected)) {
+      const { required, properties } = ownSchema(name);
+      expect(required, `${name}.required is frozen`).toEqual(new Set(shape.required));
+      expect(properties, `${name}.properties is frozen`).toEqual(new Set(shape.properties));
+      for (const tainted of ['phone', 'address', 'name']) {
+        expect(properties.has(tainted), `${name} must carry no member-PII field (${tainted})`).toBe(false);
+      }
+    }
+  });
+});

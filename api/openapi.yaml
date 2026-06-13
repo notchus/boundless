@@ -557,6 +557,170 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorBody'
 
+  # ── Admin WebAuthn store (Option B1) — spec 009 / ADR-0027 (additive) ───────────────────
+  # The durable half of the admin passkey onboarding/sign-in: the WebAuthn-verified SvelteKit BFF
+  # calls these server-to-server Worker routes over the SAME ADR-0026 shared secret (adminSharedSecret)
+  # so the web tier holds zero Postgres. These run PRE-SESSION — the admin is being registered or
+  # authenticated — so they carry the shared secret but NO X-Admin-Id (there is no verified acting
+  # admin yet; the deliberate difference from /api/admin/members/*). The invite token rides in the
+  # POST body, never the URL (R13). group_id is the single-install GROUP_ID binding (RLS, D3); the
+  # invite-token HMAC compare runs in the Rust core (ADR-0017 P4 carve-out). These disclose admin
+  # credential/invite METADATA, never member PII, so they are NOT x-requires-audit (D2/AC13). The
+  # standalone consume/insert/revoke-all are INTERNAL store methods, not wire ops — register-complete
+  # is the single atomic combined op (R11). The deployable Worker routes are T04; web adapters T05.
+  /api/admin/webauthn/invite/resolve:
+    post:
+      operationId: adminWebauthnInviteResolve
+      summary: Resolve a presented registration token → its pending-admin invite metadata (B1).
+      description: |
+        Computes the token's keyed at-rest hash IN THE CORE (`admin_invitation_token_hash`; the
+        ADR-0017 P4 carve-out — never edge-TS, AC4b) and looks it up by the unique `token_hash` index
+        inside the GROUP_ID-scoped RLS transaction (D3). Returns the PII-free [`AdminInviteRecord`]
+        (`expires_at`/`consumed_at` for the edge-TS `evaluateInvite` verdict). An unknown OR
+        cross-tenant token returns the same value-free 404 — NO existence oracle (R16). The token is
+        in the body, never the URL or a log line (R13/I10).
+      security:
+        - adminSharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveInviteRequest'
+      responses:
+        '200':
+          description: A matching invitation in this tenant — its PII-free metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminInviteRecord'
+        '404':
+          description: No matching live invitation (unknown or cross-tenant) — value-free, no oracle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026, fails closed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/webauthn/register-complete:
+    post:
+      operationId: adminWebauthnRegisterComplete
+      summary: Consume the invite + revoke prior credentials + insert the new one — ONE txn (B1, R11).
+      description: |
+        After the edge-TS ceremony verification succeeds, this performs the three-statement invariant
+        atomically in ONE server-side transaction (R11): re-resolve + single-use consume
+        (`consumed_at IS NULL`, RETURNING admin_id), revoke the admin's prior credentials (ADR-0016 D4),
+        and insert the new credential. The `admin_id` is DERIVED from the just-consumed invitation row,
+        never web-supplied. A token matching no live invitation in this tenant rolls back with nothing
+        written and returns the value-free `ADMIN_INVITE_CONSUMED` (the TOCTOU backstop after the edge
+        `evaluateInvite`). The token is in the body, never logged (R13).
+      security:
+        - adminSharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterCompleteRequest'
+      responses:
+        '200':
+          description: The invitation was consumed and the credential stored — returns the admin id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRegisterCompleteResult'
+        '400':
+          description: |
+            The token matched no live invitation (already consumed / expired / unknown) — value-free
+            `ADMIN_INVITE_CONSUMED`; nothing was written (the txn rolled back). No existence oracle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026, fails closed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/webauthn/credentials/lookup:
+    post:
+      operationId: adminWebauthnCredentialLookup
+      summary: Resolve a presented credential_id → the active credential for assertion sign-in (B1).
+      description: |
+        The usernameless/discoverable sign-in lookup: the admin assertion supplies no admin id, so the
+        active credential is resolved by its presented `credential_id` (and the admin id is read OFF the
+        resolved credential — hence pre-session, no X-Admin-Id). Returns the PII-free [`AdminCredential`]
+        (admin id, COSE public key, sign-count) for the edge-TS `@simplewebauthn` assertion verifier. A
+        revoked / unknown / cross-tenant credential returns the value-free 404 (RLS-scoped, D3).
+      security:
+        - adminSharedSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialLookupRequest'
+      responses:
+        '200':
+          description: The active credential (PII-free) for assertion verification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminCredential'
+        '404':
+          description: No active credential with this id in this tenant — value-free.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026, fails closed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /api/admin/webauthn/credentials/{id}/sign-count:
+    post:
+      operationId: adminWebauthnBumpSignCount
+      summary: Bump a credential's signature counter, only-if-greater (clone-detection backstop, B1/R10).
+      description: |
+        Advances the stored WebAuthn signature counter during assertion verification, ONLY IF strictly
+        greater (the clone-detection backstop, R10) and only while the credential is active — a replayed
+        assertion carrying a stale/equal counter is a no-op. Best-effort and idempotent: the result is
+        not surfaced (204), mirroring the store method's unit return. RLS-scoped by GROUP_ID (D3).
+      security:
+        - adminSharedSecret: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The credential id (base64url-no-pad of the `credential_id` bytea — URL-safe).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignCountBumpRequest'
+      responses:
+        '204':
+          description: The bump was applied (or no-op'd, only-if-greater) — no body.
+        '401':
+          description: Missing/invalid admin shared-secret credential (ADR-0026, fails closed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
 components:
   securitySchemes:
     developerWebAuthn:
@@ -1214,3 +1378,157 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+
+    # ── Admin WebAuthn store (Option B1) — spec 009 / ADR-0027 ──────────────────────────────
+    # PII-FREE wire DTOs, byte-faithful to the core/server keyed-serde pins
+    # (core/server/src/admin_webauthn.rs: admin_invite_record_wire_keys_are_pinned /
+    # admin_credential_wire_keys_are_pinned). snake_case keys; `bytea` → base64url-no-pad strings;
+    # timestamps → epoch-second integers; `consumed_at`/`revoked_at` present-but-nullable; the optional
+    # `transports`/`aaguid` are OMITTED when absent. These never reuse a member-PII schema
+    # (MemberDetail/MemberSummary/DuplicatePhoneLink), so the I5 negative gate is structural (D2/AC13).
+    AdminInviteRecord:
+      type: object
+      description: |
+        A pending-admin invitation row as invite-resolve returns it (PII-free → doubles as the wire
+        DTO). The TTL/consumed *verdict* is computed edge-TS from `expires_at`/`consumed_at`; the HMAC
+        token match ran in the core. Mirrors `core::server::AdminInviteRecord`.
+      required: [admin_id, group_id, expires_at, consumed_at]
+      properties:
+        admin_id:
+          type: string
+          format: uuid
+          description: The pending Admin (member) this invitation is for.
+        group_id:
+          type: string
+          format: uuid
+          description: The Group (the Worker's single-install GROUP_ID, D3); never a security input.
+        expires_at:
+          type: integer
+          format: int64
+          description: Server-side TTL instant (epoch seconds).
+        consumed_at:
+          type: [integer, 'null']
+          format: int64
+          description: Single-use marker (epoch seconds); `null` while live.
+
+    AdminCredential:
+      type: object
+      description: |
+        A stored admin WebAuthn credential (PII-free → doubles as the wire DTO). An admin may hold more
+        than one active credential (passkey + hardware backup, AC20). The COSE public key + credential
+        id are public, not secret. Mirrors `core::server::AdminCredential`.
+      required: [credential_id, admin_id, public_key, sign_count, revoked_at]
+      properties:
+        credential_id:
+          type: string
+          description: The WebAuthn credential id (`bytea`) — base64url-no-pad on the wire.
+        admin_id:
+          type: string
+          format: uuid
+          description: The owning Admin (member) id.
+        public_key:
+          type: string
+          description: The COSE public key (`bytea`) — base64url-no-pad. Public, not secret.
+        sign_count:
+          type: integer
+          format: int64
+          description: The WebAuthn signature counter; advanced only-if-greater (R10).
+        transports:
+          type: array
+          description: The authenticator transports, if known (OMITTED when absent).
+          items:
+            type: string
+        aaguid:
+          type: string
+          description: The authenticator AAGUID (`bytea`) — base64url-no-pad (OMITTED when absent).
+        revoked_at:
+          type: [integer, 'null']
+          format: int64
+          description: Revocation instant (epoch seconds); `null` while active.
+
+    NewAdminCredential:
+      type: object
+      description: |
+        The material to persist for a newly-registered credential (register-complete request leg).
+        PII-free. No `admin_id` (derived from the consumed invitation row, never web-supplied) and no
+        `revoked_at`. Mirrors `core::server::NewAdminCredential`.
+      required: [credential_id, public_key, sign_count]
+      properties:
+        credential_id:
+          type: string
+          description: The WebAuthn credential id (`bytea`) — base64url-no-pad.
+        public_key:
+          type: string
+          description: The COSE public key (`bytea`) — base64url-no-pad.
+        sign_count:
+          type: integer
+          format: int64
+          description: The initial signature counter from the registration ceremony.
+        transports:
+          type: array
+          description: The authenticator transports, if the ceremony reported them.
+          items:
+            type: string
+        aaguid:
+          type: string
+          description: The authenticator AAGUID (`bytea`) — base64url-no-pad, if reported.
+
+    AdminRegisterCompleteResult:
+      type: object
+      description: |
+        A successful register-complete: the invitation was consumed, prior credentials revoked, and the
+        new credential inserted (one txn, R11). Carries the admin id DERIVED from the consumed invitation
+        row (the audited actor, post-registration). PII-free.
+      required: [admin_id]
+      properties:
+        admin_id:
+          type: string
+          format: uuid
+
+    ResolveInviteRequest:
+      type: object
+      description: |
+        The presented registration token, in the BODY (never the URL or a log line — R13/I10). Opaque,
+        single-use, no PII (ADR-0015). The Worker hashes it in the core and looks it up by `token_hash`.
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The opaque invitation token presented by the registering admin.
+
+    RegisterCompleteRequest:
+      type: object
+      description: |
+        The token to consume (in the body, R13) plus the new credential material from the
+        already-verified edge-TS ceremony. The Worker derives the admin id from the consumed invitation
+        — it is never supplied here.
+      required: [token, credential]
+      properties:
+        token:
+          type: string
+          description: The opaque invitation token to consume (single-use).
+        credential:
+          $ref: '#/components/schemas/NewAdminCredential'
+
+    CredentialLookupRequest:
+      type: object
+      description: |
+        The presented `credential_id` for the usernameless sign-in lookup (in the body). Not secret, but
+        kept off the URL for log/Referer hygiene. The admin id is read off the resolved credential.
+      required: [credential_id]
+      properties:
+        credential_id:
+          type: string
+          description: The WebAuthn credential id (`bytea`) — base64url-no-pad.
+
+    SignCountBumpRequest:
+      type: object
+      description: |
+        The new signature counter from the verified assertion; applied only-if-greater (R10). The target
+        credential is identified by the `{id}` path segment (base64url credential_id).
+      required: [sign_count]
+      properties:
+        sign_count:
+          type: integer
+          format: int64
+          description: The assertion's reported signature counter.

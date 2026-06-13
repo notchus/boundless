@@ -30,7 +30,7 @@
 | AC10 — live full E2E | **T13 (edge)** | ☐ |
 | AC11 — RP_ID/origin/Referrer-Policy | T09/T12 (local rp-config) · **T13 (edge)** | ☐ |
 | AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ☐ |
-| AC13 — B1 contract-freeze + I5 negative gate | T03 | ☐ |
+| AC13 — B1 contract-freeze + I5 negative gate | T03 | ✓ |
 | AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG leg done |
 | AC15 — wrangler-types/binding drift CI | T09 | ☐ |
 
@@ -103,6 +103,27 @@ a new code proves necessary — expected: none).
 invite-resolve/consume (positive AND negative); (4) **no B1 response schema reaches a member-PII schema**
 (`MemberDetail`/`MemberSummary`/`DuplicatePhoneLink`/`phone`/`address`) — the I5 negative gate (F2).
 · **Blockers:** T01 (route names). **∥** yes (parallel with T02).
+- **Status:** ✅ DONE 2026-06-13. Froze the **4 pre-session ops** under `/api/admin/webauthn/*`
+  (`invite/resolve` → `AdminInviteRecord`; `register-complete` → `AdminRegisterCompleteResult`, the
+  atomic R11 combined op; `credentials/lookup` → `AdminCredential`, usernameless; `credentials/{id}/
+  sign-count` → 204) in `api/openapi.yaml` — EXACTLY the ADR-0027 table, all `adminSharedSecret`-only,
+  no `X-Admin-Id`. 8 new **PII-free** schemas byte-faithful to the T02 keyed-serde pins (snake_case,
+  base64url-no-pad `bytea`, epoch-int timestamps, `consumed_at`/`revoked_at` present-but-nullable 3.1
+  `type:[integer,"null"]`, `transports`/`aaguid` omitted-when-absent); token in the **body** (R13).
+  No new error code (invite-verdict + BFF-gate codes already registered). **No frozen shape touched**
+  (purely additive). **Tests:** 5 `it()`s in the new B1 describe-block of
+  `web/tests/contract/api-contract.test.ts` — ops-exist-and-frozen (count pinned to exactly 4, no silent
+  growth) · `adminSharedSecret` on every op · **pre-session no-`X-Admin-Id`** (negative + member-ops
+  positive control) · **I5 negative gate** (no B1 response reaches `MemberDetail`/`MemberSummary`/
+  `DuplicatePhoneLink` or a `phone`/`address` field — schema-ref + recursive property-name walk) ·
+  wire-DTO shape freeze (mirrors the Rust serde pins). Web suite 98/98; strict typecheck clean;
+  binding-drift lock regenerated + green. **Decision (recorded):** only the 4 pre-session ops are frozen
+  (the ADR-0027 freeze target); the session-bearing backup-key ops (`credentials?admin_id=` list +
+  standalone `revoke-all`) are **out of scope** (spec.md) → deferred. **Doc reconciliation:** closed the
+  T02→T03 carry-forward — AC4b + ADR-0027 now describe the as-built token match
+  (`admin_invitation_token_hash` + unique-index equality, timing-safe — the `find_member_by_phone`
+  precedent), not a call to `admin_invitation_token_matches`. **Review:** 3-lens adversarial workflow
+  (reviewer · security-auditor · platform-parity), per-finding refutation.
 
 ## T04 — Worker: B1 admin endpoints + pre-session guard
 **Does:** `server/src/runtime/admin_auth.rs` (handlers composing the T02 store methods) + register routes

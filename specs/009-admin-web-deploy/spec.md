@@ -233,9 +233,13 @@ unavailable). This spec changes only the **durability** of the state behind them
   token is rejected (`ADMIN_INVITE_CONSUMED`); an expired token is rejected (`ADMIN_INVITE_EXPIRED`); the
   consume stamps `consumed_at` atomically on first successful registration. (Round-trips the two reject
   codes through the Worker-backed adapter.)
-- [ ] AC4b: The invite-token match routes through the Rust core (`admin_invitation_token_matches`), not
-  edge-TS (Worker-side assertion); the production web `InviteStore` is the **Worker-backed** adapter, not
-  the memory fake (web-side assertion); the TTL/consumed *verdict* (`evaluateInvite`) stays edge-TS.
+- [ ] AC4b: The invite-token match routes through the Rust core — as built (T02), the Worker computes
+  the token's keyed at-rest hash via `core::crypto::admin_invitation_token_hash` and matches it by
+  equality on the unique `token_hash` index (timing-safe on a secret-keyed HMAC — the
+  `find_member_by_phone` precedent; *not* the scan-style `admin_invitation_token_matches`, and never
+  re-implemented in edge-TS) (Worker-side assertion); the production web `InviteStore` is the
+  **Worker-backed** adapter, not the memory fake (web-side assertion); the TTL/consumed *verdict*
+  (`evaluateInvite`) stays edge-TS.
 - [ ] AC5: The production build contains no reachable `/api/test/*` seam — each returns 404 and the
   handler bodies are tree-shaken (`dev === false` inlined). (Build-artifact assertion + a deployed-edge
   probe.)
