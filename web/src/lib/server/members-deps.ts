@@ -25,7 +25,8 @@ import {
 let fake = new InMemoryMembersClient();
 
 /** The members client for this request: the real Worker client when configured, else the dev fake,
- *  else fail closed (mirrors `webauthn-deps.ts::challengeStore`). */
+ *  else fail closed (mirrors `webauthn-deps.ts::challengeStore`). The WebAuthn invite/credential
+ *  stores fail closed the same way via `selectInviteStore`/`selectCredentialStore` (spec 009 T05). */
 export function getMembersClient(): MembersClient {
 	return selectMembersClient(env.ADMIN_WORKER_BASE, env.ADMIN_API_SECRET, fake, dev);
 }

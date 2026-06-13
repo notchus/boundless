@@ -17,11 +17,11 @@
 
 | AC | Closed by | Status |
 |---|---|---|
-| AC1 — member BFF fail-closed selector | T05 | ☐ |
+| AC1 — member BFF fail-closed selector | T05 | ✓ |
 | AC2 — KV session persist / TTL / revoke | T06 | ☐ |
 | AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
 | AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ✓ |
-| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ◐ T02 core + T04 worker legs done |
+| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ✓ all legs done |
 | AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ☐ |
 | AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ☐ |
 | AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ☐ |
@@ -173,6 +173,30 @@ selector (`selectMembersClient`) still fails closed.
 `MemoryInviteStore`); adapter request-shape tests (mock `fetch`, mirror `members.test.ts`); a CI lint /
 `grep` asserting no `hmac`/`createHmac`/`subtle.sign` in `web/src/lib/server/webauthn/**` (AC4b structural
 backstop). · **Blockers:** T03 (contract). **∥** yes (parallel with T06, T08).
+- **Status:** ✅ DONE 2026-06-13. New `web/src/lib/server/webauthn/worker-stores.ts` — `WorkerInviteStore`
+  + `WorkerCredentialStore` implementing the existing `InviteStore`/`CredentialStore` ports against the 4
+  frozen B1 ops (`invite/resolve`, `register-complete`, `credentials/lookup`, `credentials/{id}/sign-count`),
+  mirroring `WorkerMembersClient` (Bearer shared secret, **pre-session — NO `X-Admin-Id`**, base from
+  `ADMIN_WORKER_BASE`, value-free `fail(res)`); token in the POST **body** (R13). The three-call
+  registration tail (`markConsumed`→`revokeAllForAdmin`→`insert`) coalesces into the single atomic
+  `register-complete` via a shared per-request **`WorkerRegistrationHandshake`** (R11) so `register.ts`
+  stays unchanged (R12): `markConsumed` stashes the token (no network), `insert` fires register-complete,
+  `revokeAllForAdmin` is a no-op (revoke is server-side in that txn). base64url asymmetry honored
+  (`public_key` decode↔encode; `credential_id` string; **`aaguid` converted dashed-hex UUID ↔ base64url-
+  of-16-bytes** in both directions, malformed omitted). `listActiveByAdmin`→`[]` (no frozen pre-session
+  list op; revoke-and-replace makes excludeCredentials moot). Fail-closed `selectInviteStore`/
+  `selectCredentialStore` (real when base+secret; in-memory only in dev; else throw). `members-deps.ts`
+  cross-ref comment (member selector still fails closed — AC1). **Tests:** `worker-stores.test.ts` (17:
+  request shapes for every op, register-complete coalescing fires exactly one call, handshake single-use,
+  400→`WebAuthnError(ADMIN_INVITE_CONSUMED)`, aaguid UUID↔base64url both directions + malformed-omit,
+  value-free throws, both selectors fail-closed) + `production-invite-store-is-worker-backed.test.ts`
+  (AC4b: prod selector → `WorkerInviteStore` never `MemoryInviteStore`; the no-`hmac`/`subtle`-in-edge-TS
+  structural lint, comment-stripped). Full web suite 118/118; strict typecheck clean. No `core/**`/`api/**`
+  touched → no binding-drift regen. **Review:** 3-lens adversarial workflow (reviewer · security-auditor ·
+  platform-parity) + per-finding refutation — 3 confirmed findings, all the SAME real defect (the aaguid
+  encode asymmetry: register.ts feeds @simplewebauthn's dashed-hex UUID into a base64url-bytea wire field,
+  which the Worker would silently decode to garbage) **fixed in-slice** with a symmetric UUID↔bytea
+  converter + tests (verified oracle); the 1 refuted "untested aaguid path" dissolved by those tests.
 
 ## T06 — Web: KV-backed admin session store
 **Does:** Replace the in-memory `Map` in `web/src/lib/server/session.ts` with `KvSessionStore` over

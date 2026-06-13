@@ -759,6 +759,38 @@
 
 ---
 
+## Admin web deploy — B1 web stores (spec 009 T05 — out-of-scope register)
+
+> T05 (the Worker-backed `WorkerInviteStore`/`WorkerCredentialStore` + the fail-closed
+> `selectInviteStore`/`selectCredentialStore`) is DONE. The **aaguid encode/decode asymmetry** the
+> 3-lens review surfaced was **fixed in-slice** — the adapter now converts the `@simplewebauthn`
+> dashed-hex UUID ↔ the wire's base64url-of-16-bytes in both directions (malformed → omitted), so it is
+> NOT a carry-forward.
+
+- [ ] **Wire the selectors + a per-request `WorkerRegistrationHandshake` into `webauthn-deps.ts` (T07).**
+  T05 ships the adapters + selectors tested in isolation (mock `fetch`); the composition root still
+  constructs the in-memory `MemoryInviteStore`/`MemoryCredentialStore`. T07 swaps them via the selectors
+  and **MUST create ONE `WorkerRegistrationHandshake` per request, passing the SAME instance to both**
+  `selectInviteStore` and `selectCredentialStore` — the `markConsumed`→`insert` `register-complete`
+  coalescing (R11) depends on the shared instance; `register.ts`/`authenticate.ts` stay unchanged (R12).
+  - **WHEN:** **T07** (deps swap + dev-seam removal).
+
+- [ ] **Live deployed BFF→Worker round-trip for the WebAuthn stores.** The adapters are unit-tested with
+  mock `fetch`; the real SvelteKit Worker calling the deployed Rust Worker over the network (with the
+  wrangler-set `ADMIN_API_SECRET`) is the deferred deploy leg (mirrors the member `WorkerMembersClient`
+  T10-register item) — including the end-to-end **aaguid byte round-trip against a real authenticator**
+  (the adapter's UUID↔base64url converter is unit-proven; the live edge proves the full register→lookup
+  fidelity).
+  - **WHEN:** **T13** (edge) / the deploy-hardening pass.
+
+- [ ] **Session-bearing additive backup-key ops are not wired.** `listActiveByAdmin` returns `[]` (no
+  frozen pre-session list op — `excludeCredentials` is moot on the invite-gated revoke-and-replace path)
+  and the standalone `insert` (no invite handshake) throws value-free. The authenticated add-credential
+  flow (a session-bearing list + standalone insert/revoke) lands with the backup-key enrollment flow.
+  - **WHEN:** the additive backup-key enrollment spec (spec 001 T15 register).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.
