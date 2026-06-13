@@ -30,6 +30,15 @@ send_metrics = false
 binding = "CHALLENGES"
 id = "challenges_placeholder_replaced_at_deploy"
 
+# Durable admin-session store (spec 009 D5/T06). Same KV pattern as CHALLENGES: Miniflare emulates it
+# locally BY BINDING NAME (so `getPlatformProxy()` in `vite dev`/tests gives a live KV with no account);
+# the `id` is a placeholder used only by `wrangler deploy` (deferred) — replaced with the real namespace
+# id at deploy time (T09/T13). The binding name MUST stay "ADMIN_SESSIONS" (App.Platform + KvSessionStore
+# depend on it).
+[[kv_namespaces]]
+binding = "ADMIN_SESSIONS"
+id = "admin_sessions_placeholder_replaced_at_deploy"
+
 # Deferred (T15-shell leg B): the Postgres invite/credential stores run over Hyperdrive via the Worker
 # runtime (T07-shell-B). Uncomment + wire when that slice lands.
 # [[hyperdrive]]

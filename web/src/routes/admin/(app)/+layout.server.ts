@@ -10,8 +10,8 @@ import { redirect } from '@sveltejs/kit';
 import { ADMIN_SESSION_COOKIE, getSession } from '$lib/server/session';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = ({ cookies, locals }) => {
-	const session = getSession(cookies.get(ADMIN_SESSION_COOKIE));
+export const load: LayoutServerLoad = async ({ cookies, locals, platform }) => {
+	const session = await getSession(cookies.get(ADMIN_SESSION_COOKIE), platform);
 	if (session === null) redirect(307, '/admin/signin');
 	return { locale: locals.locale, adminId: session.adminId };
 };

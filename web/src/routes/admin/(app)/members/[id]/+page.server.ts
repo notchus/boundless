@@ -14,8 +14,8 @@ function asIssuableRoles(values: FormDataEntryValue[]): IssuableRole[] {
 	return values.map(String).filter((r): r is IssuableRole => r === 'rider' || r === 'driver');
 }
 
-export const load: PageServerLoad = async ({ params, url, cookies }) => {
-	const adminId = requireAdminId(cookies);
+export const load: PageServerLoad = async ({ params, url, cookies, platform }) => {
+	const adminId = await requireAdminId(cookies, platform);
 	const outcome = await getMembersClient().detail(adminId, params.id);
 	const openEdit = url.searchParams.get('edit') === '1';
 	if (outcome.kind === 'detail') return { member: outcome.detail, errorCode: null, openEdit };
@@ -25,8 +25,8 @@ export const load: PageServerLoad = async ({ params, url, cookies }) => {
 };
 
 export const actions: Actions = {
-	edit: async ({ request, params, cookies }) => {
-		const adminId = requireAdminId(cookies);
+	edit: async ({ request, params, cookies, platform }) => {
+		const adminId = await requireAdminId(cookies, platform);
 		const fd = await request.formData();
 		const req: EditMemberRequest = {
 			name: String(fd.get('name') ?? '').trim(),
@@ -54,8 +54,8 @@ export const actions: Actions = {
 		}
 	},
 
-	regenerate: async ({ params, cookies }) => {
-		const adminId = requireAdminId(cookies);
+	regenerate: async ({ params, cookies, platform }) => {
+		const adminId = await requireAdminId(cookies, platform);
 		const outcome = await getMembersClient().regenerateCode(adminId, params.id);
 		if (outcome.kind === 'regenerated')
 			return {

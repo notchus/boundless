@@ -1,49 +1,78 @@
-// Post-assertion admin session (spec 001 T15; plan §10-F). After a verified WebAuthn sign-in
+// Post-assertion admin session (spec 001 T15; spec 009 T06). After a verified WebAuthn sign-in
 // assertion the route mints a session id and sets it as an **httpOnly + Secure + SameSite=Strict**
 // cookie — the web leg of security R5's at-rest credential storage (never localStorage —
-// forbidden-patterns). The session DATA lives in an in-memory map here for the buildable slice; the
-// **persistent** server-side session store (Cloudflare KV / Postgres) is the T15-shell (DEFERRED).
-// Admin sessions are separate from and shorter-lived than member sessions (ADR-0016).
+// forbidden-patterns). Admin sessions are separate from and shorter-lived than member sessions
+// (ADR-0016).
+//
+// IMPERATIVE SHELL: the durable store + the fail-closed selection live in the pure
+// `./kv-admin-session-store` (unit-tested under bare Vitest); this shell reads `dev` + the request
+// `platform`, supplies the real clock + the dev fallback singleton, and exposes the async route-facing
+// helpers. The session DATA persists in the `ADMIN_SESSIONS` Cloudflare KV (spec 009 D5) — surviving
+// Worker cold starts (AC2) — falling back to a per-isolate in-memory store only in dev/test.
 
+import { dev } from '$app/environment';
 import { redirect, type Cookies } from '@sveltejs/kit';
 
-export const ADMIN_SESSION_COOKIE = 'boundless_admin_session';
+import {
+	type Clock,
+	MemorySessionStore,
+	selectSessionStore,
+	type SessionStore,
+	type SessionView,
+} from './kv-admin-session-store';
 
-/** §10-F cookie flags. `secure: true` is the contract; SvelteKit transparently relaxes it on
- * http://localhost for local dev/tests, so the wire bytes there omit `Secure` while the policy
- * (asserted in session.test.ts) stays `secure: true`. */
-export const SESSION_COOKIE_OPTIONS: Parameters<Cookies['set']>[2] = {
-	httpOnly: true,
-	secure: true,
-	sameSite: 'strict',
-	path: '/',
-};
+// Re-export the cookie policy from the pure core so route imports stay `$lib/server/session`.
+export { ADMIN_SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from './kv-admin-session-store';
+import { ADMIN_SESSION_COOKIE } from './kv-admin-session-store';
 
-interface SessionRecord {
-	readonly adminId: string;
-	readonly createdAt: number;
+/**
+ * Admin session lifetime. ADR-0016: admin sessions are "separate and shorter-lived" than the indefinite
+ * member sessions — Sarah re-asserts her passkey when she returns (the laptop surface). 12 hours covers a
+ * working day and expires by the next morning; a tunable constant, not a wire contract.
+ */
+const SESSION_TTL_SECS = 12 * 60 * 60;
+
+/** Real server clock (unix seconds) — the only ambient input; the store takes it injected for tests. */
+const clock: Clock = { now: () => Math.floor(Date.now() / 1000) };
+
+// Dev/test fallback used ONLY when no `ADMIN_SESSIONS` binding is present (adapterless/bare runs). `let`
+// so the dev `/api/test/reset` seam can swap it for per-test isolation. In `vite dev`/Playwright the
+// adapter exposes a real Miniflare KV, so the live path is KV-backed even locally.
+let fallback = new MemorySessionStore(clock, SESSION_TTL_SECS);
+
+/** The session store for this request: the real KV store when `ADMIN_SESSIONS` is bound, else the dev
+ *  fallback, else fail closed (mirrors `members-deps.ts`/`webauthn-deps.ts`). */
+function sessionStore(platform: App.Platform | undefined): SessionStore {
+	return selectSessionStore(platform?.env?.ADMIN_SESSIONS, clock, SESSION_TTL_SECS, fallback, dev);
 }
-
-// Interim in-memory session store — replaced by the persistent KV/Postgres store in the shell.
-let sessions = new Map<string, SessionRecord>();
 
 /** Mint a session for a verified admin and return its opaque id (the cookie value). */
-export function createSession(adminId: string): string {
-	const id = globalThis.crypto.randomUUID();
-	sessions.set(id, { adminId, createdAt: Date.now() });
-	return id;
+export async function createSession(adminId: string, platform: App.Platform | undefined): Promise<string> {
+	return sessionStore(platform).create(adminId);
 }
 
-/** Resolve a session cookie value to its admin, or null if absent/unknown. */
-export function getSession(id: string | undefined): { readonly adminId: string } | null {
+/** Resolve a session cookie value to its admin, or null if absent/unknown/expired (server-side TTL). */
+export async function getSession(
+	id: string | undefined,
+	platform: App.Platform | undefined,
+): Promise<SessionView | null> {
+	// Short-circuit an absent cookie before constructing the store, so a no-session request stays a calm
+	// null (→ redirect to sign-in) and never trips the fail-closed throw on a misconfigured prod (the
+	// store's get() also guards undefined defensively — this is the no-store-construction fast path).
 	if (id === undefined) return null;
-	const record = sessions.get(id);
-	return record === undefined ? null : { adminId: record.adminId };
+	return sessionStore(platform).get(id);
 }
 
-/** Test-only: clear all sessions (the dev `/api/test/reset` seam). */
+/** Revoke (sign-out) a session — best-effort within KV's propagation window (D5/R3). No-op if absent. */
+export async function revokeSession(id: string | undefined, platform: App.Platform | undefined): Promise<void> {
+	if (id === undefined) return;
+	await sessionStore(platform).revoke(id);
+}
+
+/** Test-only: clear the in-memory fallback (the dev `/api/test/reset` seam). KV-backed sessions in
+ *  `vite dev` are isolated per test by their fresh-random ids, not by this reset. */
 export function resetSessions(): void {
-	sessions = new Map<string, SessionRecord>();
+	fallback = new MemorySessionStore(clock, SESSION_TTL_SECS);
 }
 
 /**
@@ -51,8 +80,8 @@ export function resetSessions(): void {
  * actions — actions don't run the layout `load` that gates the group, so they must re-check the session
  * (and it yields the `adminId` that becomes the `X-Admin-Id` actor on the I5 audit row, ADR-0026).
  */
-export function requireAdminId(cookies: Cookies): string {
-	const session = getSession(cookies.get(ADMIN_SESSION_COOKIE));
+export async function requireAdminId(cookies: Cookies, platform: App.Platform | undefined): Promise<string> {
+	const session = await getSession(cookies.get(ADMIN_SESSION_COOKIE), platform);
 	if (session === null) redirect(307, '/admin/signin');
 	return session.adminId;
 }

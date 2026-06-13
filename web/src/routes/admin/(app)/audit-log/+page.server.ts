@@ -6,8 +6,8 @@ import { getMembersClient } from '$lib/server/members-deps';
 import { requireAdminId } from '$lib/server/session';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url, cookies }) => {
-	const adminId = requireAdminId(cookies);
+export const load: PageServerLoad = async ({ url, cookies, platform }) => {
+	const adminId = await requireAdminId(cookies, platform);
 	const memberId = url.searchParams.get('member_id') ?? undefined;
 	const entries = await getMembersClient().auditLog(adminId, { memberId });
 	return { entries, memberId: memberId ?? '' };

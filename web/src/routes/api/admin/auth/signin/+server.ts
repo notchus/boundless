@@ -41,7 +41,7 @@ export const POST: RequestHandler = async ({ request, url, cookies, platform }) 
 		});
 		cookies.delete(CEREMONY_COOKIE, { path: '/' });
 		// Post-assertion session (§10-F): httpOnly + Secure + SameSite=Strict.
-		cookies.set(ADMIN_SESSION_COOKIE, createSession(outcome.adminId), SESSION_COOKIE_OPTIONS);
+		cookies.set(ADMIN_SESSION_COOKIE, await createSession(outcome.adminId, platform), SESSION_COOKIE_OPTIONS);
 		return json({ admin_id: outcome.adminId });
 	} catch (e) {
 		cookies.delete(CEREMONY_COOKIE, { path: '/' });

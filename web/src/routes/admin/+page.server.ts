@@ -6,8 +6,8 @@ import { redirect } from '@sveltejs/kit';
 import { ADMIN_SESSION_COOKIE, getSession } from '$lib/server/session';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ cookies }) => {
-	if (getSession(cookies.get(ADMIN_SESSION_COOKIE)) === null) {
+export const load: PageServerLoad = async ({ cookies, platform }) => {
+	if ((await getSession(cookies.get(ADMIN_SESSION_COOKIE), platform)) === null) {
 		redirect(307, '/admin/signin');
 	}
 	return {};

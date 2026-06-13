@@ -791,6 +791,50 @@
 
 ---
 
+## Admin web deploy — KV admin session store (spec 009 T06 — out-of-scope register)
+
+> T06 (the `KvSessionStore` over `ADMIN_SESSIONS` + the fail-closed `selectSessionStore` + the async
+> call-site ripple) is DONE; these are the deferrals it recorded. The one confirmed review nit (the
+> `getSession(undefined)` isolated assertion) was **closed in-slice** by lifting the guard into the
+> pure-core `get()` contract + tests — NOT a carry-forward.
+
+- [ ] **No sign-out / logout HTTP route is wired yet — `revokeSession` is store-tested only.** AC2's
+  revoke leg is proven at the store level (`KvSessionStore.revoke` → `kv.delete` → `get` resolves null),
+  but no `/api/admin/auth/signout` route calls it (none exists in the repo). The deployed-edge smoke
+  (T12) drives sign-out and asserts the revoked cookie returns the `/admin/signin` redirect, so the
+  route lands with the deps-swap / smoke flow. When it lands it must `cookies.delete(ADMIN_SESSION_COOKIE)`
+  AND `await revokeSession(cookies.get(ADMIN_SESSION_COOKIE), platform)` (delete the KV key, not just the
+  cookie).
+  - **WHEN:** **T07** (deps swap) / **T12** (the smoke flow it drives).
+
+- [ ] **`resetSessions()` has no isolated bare-Vitest assertion (shell-only; e2e-covered).** The
+  singleton-swap reset lives in the shell (`session.ts`), which imports `$app/environment` and so can't
+  load under bare Vitest; it is exercised functionally by the Playwright e2e (`/api/test/reset` →
+  `resetSessions()`). Acceptable trade — the store contract (round-trip/TTL/revoke/undefined) is fully
+  unit-tested in the pure core. If isolated coverage is later wanted, add a shell-level test under the
+  integration/Playwright tier.
+  - **WHEN:** N/A (documented behavior) / a test-tier-hardening pass.
+
+- [ ] **R3 / R5 — KV revocation is best-effort within the propagation window; no admin-session
+  device-binding (plan §7, ADR-0016 laptop model).** Sign-out deletes the KV key, but a delete can lag
+  across edge isolates (D5) — there is no instant global revoke, and sessions are not bound to a device.
+  Acceptable for a shorter-lived admin session; recorded, not a bug.
+  - **WHEN:** if a Worker-native admin session / instant global revoke (R3) or a bulk-revoke need (R5)
+    arises — would move the session backend behind the Worker (ADR-0026), out of B1's KV model.
+
+- [ ] **`SESSION_TTL_SECS = 12h` is a chosen default (ADR-0016 "shorter-lived"), not a pinned product
+  decision.** A working-day session that expires by the next morning; tunable in one constant. Confirm /
+  adjust with the owner if a different admin-session lifetime (or a configurable one) is wanted.
+  - **WHEN:** product review / if a configurable admin-session TTL is requested.
+
+- [ ] **`ADMIN_SESSIONS` is hand-typed in `app.d.ts` + a placeholder id in `wrangler.toml`.** T06 added
+  the binding so its Miniflare test boots; T09 finalizes — the real namespace `id`, the
+  `wrangler types`-generated `App.Platform` (D6, so a binding rename fails the build), and the full
+  platform-parity F5 comment cleanup. (Already tracked under T09; noted here that the binding now exists.)
+  - **WHEN:** **T09** (wrangler config + type-drift CI) / **T13** (the real id at deploy).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.

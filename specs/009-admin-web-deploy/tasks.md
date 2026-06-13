@@ -18,7 +18,7 @@
 | AC | Closed by | Status |
 |---|---|---|
 | AC1 — member BFF fail-closed selector | T05 | ✓ |
-| AC2 — KV session persist / TTL / revoke | T06 | ☐ |
+| AC2 — KV session persist / TTL / revoke | T06 | ✓ |
 | AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
 | AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ✓ |
 | AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ✓ all legs done |
@@ -212,6 +212,32 @@ fail-closed. Make `createSession`/`getSession`/`requireAdminId` async and **audi
 TTL via injected `Clock` (expired id → `null` → redirect); revoke; selector fail-closed branches; entropy
 (two mints differ, not `adminId`-derived); ceremony-cookie ≠ session-cookie (R4). · **Blockers:** none.
 **∥** yes (parallel with T05, T08).
+- **Status:** ✅ DONE 2026-06-13. New pure-core `web/src/lib/server/kv-admin-session-store.ts`
+  (`SessionStore` port; `KvSessionStore`/`MemorySessionStore`; fail-closed `selectSessionStore`; the
+  `ADMIN_SESSION_COOKIE`/`SESSION_COOKIE_OPTIONS` constants) — no `$app`/`$env` virtuals, so bare-Vitest
+  testable (mirrors `kv-challenge-store.ts`). **Two-layer TTL:** KV `expirationTtl` (eviction backstop,
+  floored to KV's 60s min) **plus** an in-value `expiresAt` checked server-side on every `get` — the
+  authoritative logical expiry (R2). `revoke` = `kv.delete` (best-effort, D5/R3). Rewrote the shell
+  `session.ts`: imports `dev`; `SESSION_TTL_SECS = 12h` (ADR-0016 shorter-lived; tunable); real `clock`;
+  `MemorySessionStore` fallback singleton; `sessionStore(platform)` = `selectSessionStore(platform?.env
+  ?.ADMIN_SESSIONS, clock, TTL, fallback, dev)`; async `createSession`/`getSession`/`revokeSession`/
+  `requireAdminId`; `resetSessions()` resets the fallback; re-exports the cookie constants. Threaded
+  `platform` + `await` through the 7 call sites (`admin/+page`, `(app)/+layout` — both now async,
+  `audit-log`, `members`, `members/[id]`×3, `signin`, `seed-session`); `reset/+server.ts` unchanged
+  (`resetSessions()` stays sync). Added the `ADMIN_SESSIONS` binding to `app.d.ts` (`App.Platform.env`)
+  + `web/wrangler.toml` (placeholder id; real id + the `wrangler types`-generated `App.Platform` are T09).
+  **Deleted** `session.test.ts` (its assertions migrated — it can no longer load under bare Vitest once
+  `session.ts` imports `$app/environment`). **Tests:** `kv-admin-session-store.test.ts` (18: §10-F cookie
+  policy; pure selector fail-closed/dev branches; `MemorySessionStore` round-trip/unknown/undefined/TTL/
+  revoke/entropy; real-Miniflare-KV `KvSessionStore` round-trip, **cold-start** (fresh store over the same
+  KV resolves the id — AC2), **server-side TTL** via injected movable clock (R2), revoke, absent/undefined,
+  R1 entropy + R4 no-fixation). Full web suite 131/131; strict typecheck clean. No `core/**`/`api/**`
+  touched → no binding-drift regen. **Review:** 3-lens adversarial workflow (reviewer · security-auditor ·
+  correctness/parity) + per-finding refutation — **0 crit/high/med/low**; 1 confirmed nit (the
+  `getSession(undefined)` + `resetSessions()` isolated-unit assertions lost in the migration) **actioned
+  in-slice** by lifting the `undefined`-id guard into the pure-core `get()` contract + 2 isolated tests
+  (the `resetSessions()` singleton-swap stays e2e-covered — genuinely shell-only); the other 4 findings
+  refuted/out-of-scope. AC1's session-selector fail-closed leg is also re-confirmed here.
 
 ## T07 — Web: swap deps, remove authority dev-seams, keep e2e green
 **Does:** `webauthn-deps.ts` swaps the memory stores for the selected Worker-backed ones (ceremony files

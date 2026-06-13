@@ -29,8 +29,8 @@ function asIssuableRoles(values: FormDataEntryValue[]): IssuableRole[] {
 	return values.map(String).filter((r): r is IssuableRole => r === 'rider' || r === 'driver');
 }
 
-export const load: PageServerLoad = async ({ url, cookies }) => {
-	const adminId = requireAdminId(cookies);
+export const load: PageServerLoad = async ({ url, cookies, platform }) => {
+	const adminId = await requireAdminId(cookies, platform);
 	const search = url.searchParams.get('search')?.trim() || undefined;
 	const role = asRole(url.searchParams.get('role'));
 	const status = asStatus(url.searchParams.get('status'));
@@ -42,8 +42,8 @@ export const load: PageServerLoad = async ({ url, cookies }) => {
 };
 
 export const actions: Actions = {
-	issue: async ({ request, cookies }) => {
-		const adminId = requireAdminId(cookies);
+	issue: async ({ request, cookies, platform }) => {
+		const adminId = await requireAdminId(cookies, platform);
 		const fd = await request.formData();
 		const name = String(fd.get('name') ?? '').trim();
 		const phone = String(fd.get('phone') ?? '').trim();
