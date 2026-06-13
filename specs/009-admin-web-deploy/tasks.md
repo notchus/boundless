@@ -20,18 +20,18 @@
 | AC1 — member BFF fail-closed selector | T05 | ☐ |
 | AC2 — KV session persist / TTL / revoke | T06 | ☐ |
 | AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
-| AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ◐ T02 PG leg done |
-| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T05 (web) | ◐ T02 core leg done |
+| AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ✓ |
+| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ◐ T02 core + T04 worker legs done |
 | AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ☐ |
 | AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ☐ |
 | AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ☐ |
-| AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ☐ |
+| AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ◐ T04 worker leg done |
 | AC9 — build + deploy reachable | **T13 (edge)** | ☐ |
 | AC10 — live full E2E | **T13 (edge)** | ☐ |
 | AC11 — RP_ID/origin/Referrer-Policy | T09/T12 (local rp-config) · **T13 (edge)** | ☐ |
 | AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ☐ |
 | AC13 — B1 contract-freeze + I5 negative gate | T03 | ✓ |
-| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG leg done |
+| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG + T04 miniflare legs done |
 | AC15 — wrangler-types/binding drift CI | T09 | ☐ |
 
 ---
@@ -136,6 +136,29 @@ cross-tenant). · **Tests:** `server/test/admin-webauthn.spec.ts` (resolve/consu
 round-trips; `invite_resolve_error_body_has_no_token`); `server/test/admin-webauthn-cross-tenant.spec.ts`
 (`worker_cross_tenant_invite_resolve_isolated`) — mirror `server/test/cross-tenant.spec.ts`; seed a
 Group-B invite/credential via `setup-worker-test-db.sh`. · **Blockers:** T02, T03. **∥** no.
+- **Status:** ✅ DONE 2026-06-13. New `server/src/runtime/admin_auth.rs` — 4 pre-session handlers
+  (`invite_resolve`/`register_complete`/`credential_lookup`/`bump_sign_count`) composing the T02
+  `AdminWebAuthnStore` over `PgAuthStore`, RLS-scoped via `build_admin_store` (connect + W2
+  `ensure_least_privilege` + `GROUP_ID`, R16/R17); token in the POST body → tainted
+  `AdminInvitationToken` on parse, value-free codes only (R13). Added `pub(crate) admin_secret_guard`
+  to `members.rs` (shared-secret only, NO `X-Admin-Id`) — `admin_guard` now layers the X-Admin-Id leg
+  on it (single-sourced constant-time compare); `err_code`/`audited_body` made `pub(crate)`. Routes
+  registered in `mod.rs`. New core wire DTO `AdminRegisterCompleteResult` (`core/server`,
+  keyed-serde pinned) + the 3 B1 DTOs blessed `AuditedResponse` (the Worker emits every B1 200 through
+  `admin_response_body`). `base64` added to the Worker's wasm deps (inbound base64url decode — existing
+  workspace version, no new crate). 2 new value-free 404 codes registered:
+  `ADMIN_INVITE_NOT_FOUND`/`ADMIN_CREDENTIAL_NOT_FOUND` (no client surface, no existence oracle).
+  Seed: new `server/store/examples/seed_worker_test_b1_pg.rs` (P4 — token hashes computed in the core)
+  + `setup-worker-test-db.sh` seeds a Group-A resolve invite + a register-invite POOL (re-run-safe) +
+  a Group-B cross-tenant invite & credential. **Tests:** `server/test/admin-webauthn.spec.ts` (5:
+  resolve round-trip + value-free 404 · register-complete→lookup→only-if-greater bump→single-use
+  reject R10/R11/AC4a · pre-session no-`X-Admin-Id` · fail-closed 401 · `invite_resolve_error_body_has_no_token`
+  AC8) + `server/test/admin-webauthn-cross-tenant.spec.ts` (`worker_cross_tenant_invite_resolve_isolated`:
+  Group-A Worker can't resolve/consume a Group-B invite nor look up a Group-B credential, non-vacuous,
+  AC14). Full server miniflare suite 19/19 green (verified re-run-safe across 2 runs); core 9/9
+  admin_webauthn + full core suite green; wasm + native clippy `-D warnings` clean; binding-drift lock
+  regenerated (core/** input); the I5 trybuild golden re-blessed (the new types appear in rustc's
+  "other types implement `AuditedResponse`" hint — cosmetic, the E0277 compile-fail is unchanged).
 
 ## T05 — Web: Worker-backed invite/credential stores + fail-closed selectors
 **Does:** `web/src/lib/server/webauthn/worker-stores.ts` — `WorkerInviteStore`/`WorkerCredentialStore`

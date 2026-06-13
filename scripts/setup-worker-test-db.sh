@@ -36,6 +36,11 @@ SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../server" && pwd)"
 # `KEK` binding (a LOCAL TEST value, not a secret — like the boundless_app password). Spec 008 T09.
 SEED_GROUP_ID="${WORKER_TEST_GROUP_ID:-00000000-0000-0000-0000-000000000001}"
 SEED_KEK_HEX="${WORKER_TEST_KEK_HEX:-cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd}"
+# The per-instance HMAC key (I3) the Worker resolves admin-invite tokens under (spec 009 T04, ADR-0027).
+# MUST match `server/vitest.config.ts`'s HMAC_KEY binding (TEST_HMAC_KEY_HEX = `'ab'.repeat(32)`) — the
+# B1 seed below computes each invitation's token_hash with it IN THE CORE, so the Worker's resolve
+# matches. A LOCAL TEST value, not a secret (at deploy HMAC_KEY is a `wrangler secret`).
+SEED_HMAC_KEY_HEX="${WORKER_TEST_HMAC_KEY_HEX:-abababababababababababababababababababababababababababababababab}"
 # A SECOND Group (B) + a Group-B member, seeded so the spec-008 **T11** cross-tenant test
 # (server/test/cross-tenant.spec.ts) can prove the Worker — scoped to GROUP_ID = the Group-A
 # SEED_GROUP_ID above — cannot list/read/edit them (AC16 / sec-audit F5). Group B deliberately gets NO
@@ -120,4 +125,18 @@ INSERT INTO members (id, group_id, roles, phone_lookup_hash, updated_at)
   ON CONFLICT (id) DO NOTHING;
 SQL
 
-echo "✓ worker test DB ready (role=${APP_ROLE}, 11 migrations applied, Group A bootstrapped + Group B cross-tenant seeded)"
+# Seed the Option B1 admin-WebAuthn fixtures (spec 009 T04, ADR-0027) so the new /api/admin/webauthn/*
+# endpoint tests can run: live Group-A invites (resolve + register round-trips) + a cross-tenant Group-B
+# invite & credential (AC14). Each invitation's token_hash is computed IN THE CORE under
+# SEED_HMAC_KEY_HEX (P4 — so the Worker's resolve matches it; not a hand-rolled SQL/openssl blob), so it
+# is a Rust example (never shipped). Runs AFTER both groups exist (Group A bootstrap + Group B above).
+# Connects over TCP to SU_URL (host-reachable — same as the Group-A bootstrap example).
+echo "→ seeding B1 admin-WebAuthn fixtures (Group-A invites + Group-B cross-tenant invite/credential)"
+( cd "$SERVER_DIR" && \
+  WORKER_TEST_SUPERUSER_URL="$SU_URL" \
+  WORKER_TEST_GROUP_ID="$SEED_GROUP_ID" \
+  WORKER_TEST_XTENANT_GROUP_ID="$XTENANT_GROUP_ID" \
+  WORKER_TEST_HMAC_KEY_HEX="$SEED_HMAC_KEY_HEX" \
+  cargo run -q -p boundless-server-store --example seed_worker_test_b1_pg )
+
+echo "✓ worker test DB ready (role=${APP_ROLE}, 11 migrations applied, Group A bootstrapped + Group B cross-tenant seeded + B1 admin-WebAuthn fixtures)"

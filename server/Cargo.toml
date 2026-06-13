@@ -74,6 +74,12 @@ tokio-postgres = { version = "0.7", default-features = false, features = ["with-
 # getrandom major. Both already resolve in the lock (rand_core 0.9.5 / getrandom 0.4.2).
 rand_core = { version = "0.9", default-features = false }
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# base64url-no-pad DECODE of the inbound B1 admin-WebAuthn wire bytes (`credential_id`/`public_key`/
+# `aaguid` — spec 009 T04, ADR-0027). The `core/server` DTOs ENCODE with this same convention; the
+# Worker only decodes inbound. Already a workspace dep (promoted to a runtime dep of `core/server` at
+# spec 009 T02) — adding this edge introduces NO new crate version (0.22.1 in the lock). Pure-Rust,
+# wasm32-safe, no getrandom. MIT OR Apache-2.0.
+base64 = "0.22"
 
 [dev-dependencies]
 # T08 — the N-2 compatibility replay harness (AC9, `tests/compat/`). It replays the frozen

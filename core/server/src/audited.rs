@@ -41,6 +41,7 @@
 
 use serde::{Serialize, Serializer};
 
+use crate::admin_webauthn::{AdminCredential, AdminInviteRecord, AdminRegisterCompleteResult};
 use crate::member::{
     AuditEntry, AuditLogView, DuplicatePhoneLinkView, MemberIssuedView, MemberListView,
     MemberSummary, RegenerateCodeView,
@@ -149,6 +150,23 @@ impl AuditedResponse for RegenerateCodeView {}
 /// `GET /api/admin/audit-log` body (AC9) — field names only.
 impl sealed::Sealed for AuditLogView {}
 impl AuditedResponse for AuditLogView {}
+
+// ── spec 009 T04 — the Option B1 admin-WebAuthn wire response DTOs (ADR-0027). PII-free in the I5
+// sense (opaque WebAuthn bytes + counters + server-time instants — no decrypted member name/phone/
+// address), so the new `/api/admin/webauthn/*` endpoints are not `x-requires-audit` (AC13). Blessing
+// them here means the Worker emits EVERY admin response — member AND webauthn — through
+// `admin_response_body`, hand-rolling no JSON (the same single-seam discipline as the member views). ─
+
+/// `POST /api/admin/webauthn/invite/resolve` 200 body — invite metadata, no PII.
+impl sealed::Sealed for AdminInviteRecord {}
+impl AuditedResponse for AdminInviteRecord {}
+/// `POST /api/admin/webauthn/credentials/lookup` 200 body — the active credential (opaque COSE
+/// public key + counter), no PII.
+impl sealed::Sealed for AdminCredential {}
+impl AuditedResponse for AdminCredential {}
+/// `POST /api/admin/webauthn/register-complete` 200 body — the server-derived admin id only.
+impl sealed::Sealed for AdminRegisterCompleteResult {}
+impl AuditedResponse for AdminRegisterCompleteResult {}
 
 /// Serialize an admin response body — the **single seam** the T09 router emits admin responses
 /// through (P4: PII-response serialization single-sourced here). The `R: AuditedResponse + Serialize`

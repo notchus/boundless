@@ -129,6 +129,7 @@ dependencies = [
 name = "boundless-worker"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "boundless-auth",
  "boundless-crypto",
  "boundless-domain",

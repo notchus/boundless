@@ -32,6 +32,7 @@
 
 // The `#[durable_object]` macro in `group_hub` emits the `GroupHub` JS-class export inline, so the
 // module need only be compiled — no re-export is required for wrangler/worker-build to find it.
+mod admin_auth;
 mod group_hub;
 mod members;
 mod pg;
@@ -157,6 +158,23 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             members::regenerate,
         )
         .get_async("/api/admin/audit-log", members::audit_log)
+        // ── Admin WebAuthn persistence (spec 009 T04, ADR-0027 Option B1) — the SvelteKit edge's
+        // durable invite + credential store, behind the same ADR-0026 shared-secret BFF. These are
+        // PRE-SESSION (shared secret only, NO X-Admin-Id): the admin is being registered/authenticated
+        // (`admin_auth::admin_secret_guard`). Token in the POST body, never the URL (R13).
+        .post_async("/api/admin/webauthn/invite/resolve", admin_auth::invite_resolve)
+        .post_async(
+            "/api/admin/webauthn/register-complete",
+            admin_auth::register_complete,
+        )
+        .post_async(
+            "/api/admin/webauthn/credentials/lookup",
+            admin_auth::credential_lookup,
+        )
+        .post_async(
+            "/api/admin/webauthn/credentials/:id/sign-count",
+            admin_auth::bump_sign_count,
+        )
         .run(req, env)
         .await
 }

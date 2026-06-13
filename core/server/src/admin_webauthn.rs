@@ -130,6 +130,18 @@ pub enum RegisterCompleteOutcome {
     InviteNotConsumable,
 }
 
+/// The wire result of a successful [`register_complete`](crate::AdminWebAuthnStore::register_complete)
+/// — the B1 `AdminRegisterCompleteResult` schema (frozen, spec 009 T03). PII-free (just the admin id
+/// **derived from the consumed invitation row**, the audited actor post-registration), so it doubles
+/// as the wire DTO. The Worker (T04) builds it from [`RegisterCompleteOutcome::Completed`] and
+/// serializes it through `admin_response_body`; it lives HERE (not the Worker) so the field name is
+/// single-sourced in this drift-tracked crate (P4), like the other B1 DTOs above.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdminRegisterCompleteResult {
+    /// The Admin the consumed invitation named (server-derived, never web-supplied).
+    pub admin_id: MemberId,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +208,17 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&minimal).unwrap(),
             r#"{"credential_id":"AQID","admin_id":"00000000-0000-0000-0000-000000000011","public_key":"BAUG","sign_count":0,"revoked_at":1234}"#
+        );
+    }
+
+    #[test]
+    fn admin_register_complete_result_wire_keys_are_pinned() {
+        // The register-complete 200 body — frozen to `{"admin_id":"<uuid>"}` (the T03
+        // `AdminRegisterCompleteResult` schema). A rename breaks here, like the DTOs above.
+        let r = AdminRegisterCompleteResult { admin_id: admin() };
+        assert_eq!(
+            serde_json::to_string(&r).unwrap(),
+            r#"{"admin_id":"00000000-0000-0000-0000-000000000011"}"#
         );
     }
 }

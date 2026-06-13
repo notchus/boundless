@@ -100,12 +100,18 @@ async fn build_member_service(env: &Env) -> Result<AdminService> {
 
 // ===== the ADR-0026 shared-secret admin gate =====================================================
 
-/// The shared-secret + asserted-admin-id gate (ADR-0026). Returns the verified acting [`MemberId`], or
-/// an early reject `Response` (the inner `Err`). Fails **closed**: a missing `ADMIN_API_SECRET` binding
-/// → 500 (misconfig); a missing/wrong bearer → 401; a missing/bad `X-Admin-Id` → 400. The secret
-/// compare is constant-time (no content-timing leak). The outer `Result` is for genuinely-fallible
-/// header/Response construction.
-fn admin_guard(req: &Request, env: &Env) -> Result<core::result::Result<MemberId, Response>> {
+/// The **pre-session** admin gate (ADR-0027): the ADR-0026 shared secret is required, but **no**
+/// `X-Admin-Id`. The B1 admin-WebAuthn ops (`/api/admin/webauthn/*`) run *before* a verified admin
+/// session exists — the admin is being registered (`invite/resolve`, `register-complete`) or
+/// authenticated (`credentials/lookup`, `sign-count`) — so there is no acting admin id to assert.
+/// Fails **closed**: a missing `ADMIN_API_SECRET` binding → 500 (misconfig); a missing/wrong bearer →
+/// 401. The secret compare is constant-time. Returns `Ok(())` on success, else the early reject
+/// `Response` (the inner `Err`). Used by [`admin_auth`](super::admin_auth); the session-bearing member
+/// ops layer the `X-Admin-Id` leg on top via [`admin_guard`].
+pub(crate) fn admin_secret_guard(
+    req: &Request,
+    env: &Env,
+) -> Result<core::result::Result<(), Response>> {
     let Ok(expected) = env.var("ADMIN_API_SECRET").map(|v| v.to_string()) else {
         // Misconfigured deploy — fail closed with a value-free 500 (never reveal the binding state).
         return Ok(Err(Response::error("admin api not configured", 500)?));
@@ -117,6 +123,19 @@ fn admin_guard(req: &Request, env: &Env) -> Result<core::result::Result<MemberId
         .unwrap_or_default();
     if !constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
         return Ok(Err(err_code("ADMIN_UNAUTHORIZED", 401)?));
+    }
+    Ok(Ok(()))
+}
+
+/// The shared-secret + asserted-admin-id gate (ADR-0026 — the *session-bearing* member ops). Builds on
+/// [`admin_secret_guard`] (single-sourcing the constant-time secret compare) and **adds** the
+/// `X-Admin-Id` leg. Returns the verified acting [`MemberId`] (the I5 audit actor, trusted because the
+/// shared secret verified), or an early reject `Response`. Fails closed identically, plus a
+/// missing/bad `X-Admin-Id` → 400. The outer `Result` is for genuinely-fallible header/Response
+/// construction.
+fn admin_guard(req: &Request, env: &Env) -> Result<core::result::Result<MemberId, Response>> {
+    if let Err(resp) = admin_secret_guard(req, env)? {
+        return Ok(Err(resp));
     }
     // The BFF-asserted acting admin id (trusted because the shared secret verified) — the I5 audit actor.
     match req
@@ -157,7 +176,10 @@ macro_rules! guard_admin {
 /// Emit a body already serialized through the sealed [`admin_response_body`] seam (the I5 gate) with a
 /// JSON content-type + status. The `R: AuditedResponse + Serialize` bound means a bare PII DTO cannot
 /// be sent here — only a blessed envelope or a `PiiDisclosure` (which an audit minted).
-fn audited_body<R: AuditedResponse + serde::Serialize>(view: &R, status: u16) -> Result<Response> {
+pub(crate) fn audited_body<R: AuditedResponse + serde::Serialize>(
+    view: &R,
+    status: u16,
+) -> Result<Response> {
     let body = admin_response_body(view)
         .map_err(|_| worker::Error::RustError("serialize admin body".into()))?;
     let headers = Headers::new();
@@ -168,7 +190,7 @@ fn audited_body<R: AuditedResponse + serde::Serialize>(view: &R, status: u16) ->
 }
 
 /// A PII-free [`ErrorBody`](https://) envelope — only a stable code, never the submitted value (P2/R10).
-fn err_code(code: &str, status: u16) -> Result<Response> {
+pub(crate) fn err_code(code: &str, status: u16) -> Result<Response> {
     Ok(Response::from_json(&serde_json::json!({ "error_code": code }))?.with_status(status))
 }
 

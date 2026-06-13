@@ -671,12 +671,6 @@
   register / a settings UI). Intentional (ADR-0027) — noted so they are not mistaken for unused methods.
   - **WHEN:** the backup-key enrollment flow.
 
-- [ ] **Bless the B1 wire DTOs `AuditedResponse` + envelope shapes.** `AdminInviteRecord`/`AdminCredential`
-  are PII-free `Serialize` DTOs but are **not** yet on the `audited.rs` sealed `AuditedResponse` allowlist —
-  deferred to T04, where the Worker serializes them (and any `{credentials:[...]}`/`{invite:…}` envelopes
-  T03 freezes) through `admin_response_body`. T04 adds the `impl AuditedResponse`/`sealed::Sealed` for each.
-  - **WHEN:** **T04** (the deployable router) + **T03** (envelope shapes).
-
 ---
 
 ## Admin web deploy — B1 contract freeze (spec 009 T03 — out-of-scope register)
@@ -695,14 +689,6 @@
   from the no-`X-Admin-Id` negative set).
   - **WHEN:** the additive backup-key enrollment spec (spec 001 T15 register).
 
-- [ ] **No response-envelope types were introduced — T04's `AuditedResponse` blessing list is exactly the
-  bare DTOs.** The B1 responses `$ref` the bare DTOs directly (`AdminInviteRecord`, `AdminCredential`,
-  `AdminRegisterCompleteResult`; `sign-count` is 204-no-body; rejects are the existing `ErrorBody`). So
-  the T02-register "bless the B1 wire DTOs" item resolves to blessing those three (no `{credentials:[…]}`/
-  `{invite:…}` envelope wrappers exist to bless). If T04 adds a list endpoint later, its envelope joins
-  the allowlist then.
-  - **WHEN:** **T04** (the deployable router serializes through `admin_response_body`).
-
 - [ ] **Strict fixture/Rust ↔ OpenAPI conformance cross-check (hardening).** T03 pins the B1 wire shapes
   on BOTH sides independently — the Rust keyed-serde tests (`core/server/src/admin_webauthn.rs`) and the
   OpenAPI-side `b1_wire_dtos_are_pii_free_and_shaped` field-set assertion — but nothing programmatically
@@ -714,6 +700,61 @@
 - [ ] **Live deployed-edge contract-conformance for the B1 surface.** T03 checks only the contract
   *document*; replaying real B1 responses (resolve/register-complete/lookup) against the deployed Worker
   to prove runtime conformance rides the deploy-hardening pass.
+  - **WHEN:** **T13** (edge) / the deploy-hardening pass.
+
+---
+
+## Admin web deploy — B1 Worker endpoints (spec 009 T04 — out-of-scope register)
+
+> T04 (the `/api/admin/webauthn/*` Worker handlers + the pre-session `admin_secret_guard`) is DONE.
+> **Closed in-slice:** the T02-register "bless the B1 wire DTOs" item and the T03-register
+> "AuditedResponse blessing list" item — T04 added `AdminRegisterCompleteResult` (`core/server`) and
+> blessed all three bare B1 DTOs `AuditedResponse` (no envelope wrappers exist). The I5 trybuild
+> `.stderr` golden was re-blessed (the new types appear in rustc's "other types implement the trait"
+> hint — the same mechanism as the T06-register toolchain-bump re-bless; the E0277 compile-fail is
+> unchanged). The two new value-free 404 codes (`ADMIN_INVITE_NOT_FOUND`/`ADMIN_CREDENTIAL_NOT_FOUND`)
+> are registered in `docs/error-codes.md`.
+
+- [ ] **The web Worker-backed adapters (`WorkerInviteStore`/`WorkerCredentialStore`) consume these
+  endpoints — built at T05.** T04 ships only the Worker side; the SvelteKit adapters that POST the token
+  in the body + map the value-free 404 → `null` (and the `selectInviteStore`/`selectCredentialStore`
+  fail-closed selectors) are T05.
+  - **WHEN:** **T05** (web Worker-backed stores + selectors).
+
+- [ ] **Route the B1 `StoreError` through the scrubbed `emit()` sink + an I10 fixture (P2/I10).** T04's
+  handlers map any `StoreError` to a generic value-free 500 and never touch the token on a log path (the
+  presented token is tainted `AdminInvitationToken` + arrives in the body, never logged — R13-clean). But
+  the deployable scrubbed `boundless::logging::emit()` sink doesn't exist yet, so `StoreError` isn't
+  routed through `detect_pii`. When the sink lands, route the B1 `StoreError` through it and extend the
+  unique-violation `\x…`-`DETAIL` scrubber fixture to a `credential_id` conflict (folds into the
+  spec-009 T02-register "StoreError via emit()" item).
+  - **WHEN:** **T07-shell-B** (the live `emit()` sink) + the I10 scrubber suite.
+
+- [ ] **`register-complete` on a duplicate `credential_id` surfaces an opaque 500, not a clean code.** A
+  ceremony that (near-impossibly) produced a `credential_id` already in the table makes the
+  `register_complete` insert hit the global unique index → `Err(StoreError::Db)` → generic 500 (the
+  OpenAPI froze only 200/400/401 for register-complete). Acceptable (a fresh-ceremony collision is
+  effectively impossible); revisit only if a clean conflict code is ever wanted.
+  - **WHEN:** only if a `register-complete` duplicate-credential conflict needs a distinct code.
+
+- [ ] **R7 (verify the asserted `X-Admin-Id` is a real admin) does NOT apply to the B1 ops.** The
+  pre-session B1 endpoints carry **no** `X-Admin-Id` (the admin is being registered/authenticated), so
+  there is nothing to verify — noted so a future reader doesn't flag the pre-existing member-surface R7
+  item as missing here. (The `register-complete` admin id is derived from the consumed invitation row,
+  never web-supplied.)
+  - **WHEN:** N/A for B1 (the member-surface R7 item stands on its own — DEFERRED spec 008 T09).
+
+- [ ] **The register-invite POOL (24 tokens) is a test-harness convenience.** `seed_worker_test_b1_pg.rs`
+  seeds `boundless-test-invite-register-{0..24}` so the single-use register-complete round-trip survives
+  re-runs without a re-seed; the test claims the first still-live one. These are TEST invites only — the
+  operator seed (T10) mints real invites via `create_pending_admin_with_invitation`. If a dev exhausts
+  the pool (24+ `pnpm test` runs without re-`setup-worker-test-db.sh`), the test fails with a re-run
+  hint; bump `REGISTER_POOL` (kept in lock-step in the example + the spec) if that ever bites.
+  - **WHEN:** N/A (documented harness behavior) / bump the pool only if exhaustion bites.
+
+- [ ] **Live deployed-edge B1 round-trips + cross-tenant probe (the AC14 edge leg).** T04 proves the
+  miniflare+PG legs (round-trip + `worker_cross_tenant_invite_resolve_isolated`); the deployed-edge
+  versions (against Neon, ≥2 Groups) ride the operator-gated smoke (T12/T13).
   - **WHEN:** **T13** (edge) / the deploy-hardening pass.
 
 ---

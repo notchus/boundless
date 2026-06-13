@@ -56,11 +56,23 @@
 | Code | Meaning | Maps to (state / AC) | Catalog key | Retryable |
 |---|---|---|---|---|
 | `ADMIN_INVITE_EXPIRED` | Admin registration link past its server-side TTL (default 72h). | `InviteExpired` · AC16 | `admin.onboarding.invite_expired` | no (developer re-invite) |
-| `ADMIN_INVITE_CONSUMED` | Admin registration link already used (single-use); consumed on first successful WebAuthn registration. | `InviteExpired` · AC16 | `admin.onboarding.invite_expired` | no (developer re-invite) |
+| `ADMIN_INVITE_CONSUMED` | Admin registration link already used (single-use); consumed on first successful WebAuthn registration. **Also the value-free reject from B1 `POST /api/admin/webauthn/register-complete`** (spec 009 T04) when the presented token matches no live invitation in the tenant — already consumed, expired, unknown, OR cross-tenant — the TOCTOU backstop after the edge `evaluateInvite`; the cases are deliberately collapsed (no existence oracle, R16). | `InviteExpired` · AC16 | `admin.onboarding.invite_expired` | no (developer re-invite) |
 | `ADMIN_WEBAUTHN_UV_REQUIRED` | WebAuthn registration/assertion lacked the user-verification (`uv`) flag; rejected. | AC20 · ADR-0016 D4 | `admin.onboarding.register_credential` | yes |
 | `ADMIN_WEBAUTHN_VERIFICATION_FAILED` | WebAuthn registration or assertion verification failed (bad challenge, signature, or unknown credential). | AC2/AC20 | `admin.onboarding.register_credential` | yes |
 | `ADMIN_WEBAUTHN_CHALLENGE_EXPIRED` | The KV-held WebAuthn challenge expired (5-min TTL) or was already used (one-time). | AC20 · ADR-0017 D3 | `admin.onboarding.register_credential` | yes |
 | `DEV_ADMIN_CREATE_FORBIDDEN` | A non-Developer (unauthenticated **or** admin-authenticated) called the Admin-creation endpoint. Admins are issued only by the Developer (I11). | AC1 · I11 | — (no client surface; there is no signup) | no |
+
+## Admin web deploy — B1 WebAuthn persistence (spec 009, ADR-0027)
+
+> The server-to-server `/api/admin/webauthn/*` 404 body codes. **Value-free + no client surface**: the
+> SvelteKit web adapter (T05) maps the HTTP **status** (404 → `null`), not the code — these exist for
+> operability (P12) and carry **no existence oracle** (an unknown vs. a cross-tenant token/credential
+> return the same code). The TTL/consumed *verdict* + the success path stay edge-TS / the other codes.
+
+| Code | Meaning | Maps to (state / AC) | Catalog key | Retryable |
+|---|---|---|---|---|
+| `ADMIN_INVITE_NOT_FOUND` | `POST /api/admin/webauthn/invite/resolve` matched no invitation in this tenant — unknown OR cross-tenant (RLS-scoped by `GROUP_ID`, D3). Value-free, no existence oracle (R16). The presented token is never echoed or logged (R13/P2). | invite-resolve 404 · AC4b/AC14 | — (no client surface; the web maps 404 → no invite) | no (operator/developer re-invite) |
+| `ADMIN_CREDENTIAL_NOT_FOUND` | `POST /api/admin/webauthn/credentials/lookup` matched no active credential with the presented `credential_id` in this tenant — revoked / unknown / cross-tenant. Value-free. | credential-lookup 404 · AC14 | — (no client surface; the web maps 404 → assertion fails) | no |
 
 ## Admin member-management — issuance (spec 008, ADR-0025)
 

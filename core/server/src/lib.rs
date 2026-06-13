@@ -70,7 +70,8 @@ pub use admin::{
     INVITE_TTL_SECS,
 };
 pub use admin_webauthn::{
-    AdminCredential, AdminInviteRecord, NewAdminCredential, RegisterCompleteOutcome,
+    AdminCredential, AdminInviteRecord, AdminRegisterCompleteResult, NewAdminCredential,
+    RegisterCompleteOutcome,
 };
 pub use alerts::{AdminAlert, AlertKind};
 pub use audited::{admin_response_body, AuditedResponse, PiiDisclosure};
