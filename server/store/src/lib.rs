@@ -49,13 +49,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use boundless_auth::{RefreshPresentation, Session, SessionFamilyStatus, UnixSeconds};
 use boundless_crypto::{
-    refresh_token_hash, AdminInvitationTokenHash, CodeHash, HmacKey, PhoneLookupHash,
-    RefreshTokenHash, HASH_LEN,
+    admin_invitation_token_hash, refresh_token_hash, AdminInvitationTokenHash, CodeHash, HmacKey,
+    PhoneLookupHash, RefreshTokenHash, HASH_LEN,
 };
-use boundless_domain::{MemberId, RefreshToken, Role, SessionFamilyId};
+use boundless_domain::{AdminInvitationToken, MemberId, RefreshToken, Role, SessionFamilyId};
 use boundless_server_core::{
-    AdminProvisioningStore, AuthStore, FamilyInfo, MemberRecord, OnboardingCodeRow,
-    RecoveryCodeRow, RefreshClassification, StoreBackend,
+    AdminCredential, AdminInviteRecord, AdminProvisioningStore, AdminWebAuthnStore, AuthStore,
+    FamilyInfo, MemberRecord, NewAdminCredential, OnboardingCodeRow, RecoveryCodeRow,
+    RefreshClassification, RegisterCompleteOutcome, StoreBackend,
 };
 use tokio_postgres::{types::Type, Client, Transaction};
 use uuid::Uuid;
@@ -677,6 +678,251 @@ impl AdminProvisioningStore for PgAuthStore {
         .await?;
         tx.commit().await?;
         Ok(true)
+    }
+}
+
+/// Build an [`AdminCredential`] from a 7-column `admin_webauthn_credentials` projection (the shape
+/// both reads share). No fallible decode — any `bytea`/`text[]` shape is a valid credential field
+/// (unlike the fixed-length keyed hashes), so this is infallible.
+fn credential_from_row(r: tokio_postgres::Row) -> AdminCredential {
+    let admin_id: Uuid = r.get("admin_id");
+    let revoked_at: Option<SystemTime> = r.get("revoked_at");
+    AdminCredential {
+        credential_id: r.get("credential_id"),
+        admin_id: MemberId::from_uuid(admin_id),
+        public_key: r.get("public_key"),
+        sign_count: r.get("sign_count"),
+        transports: r.get("transports"),
+        aaguid: r.get("aaguid"),
+        revoked_at: revoked_at.map(system_time_to_unix),
+    }
+}
+
+/// Insert one admin credential within an open transaction (shared by `insert_credential` and the
+/// `register_complete` txn). `created_at`/`updated_at` default to the DB clock (record-keeping; the
+/// injected server-time `now` is reserved for the logic fields — consumed/revoked). The
+/// `credential_id` unique index rejects a duplicate (surfaces as a `Db` error, never a silent replace).
+async fn insert_credential_in_tx(
+    tx: &Transaction<'_>,
+    group: Uuid,
+    admin_id: Uuid,
+    cred: &NewAdminCredential,
+) -> Result<()> {
+    tx.execute_typed(
+        "INSERT INTO admin_webauthn_credentials \
+           (id, group_id, admin_id, credential_id, public_key, sign_count, transports, aaguid) \
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)",
+        &[
+            (&group, Type::UUID),
+            (&admin_id, Type::UUID),
+            (&cred.credential_id, Type::BYTEA),
+            (&cred.public_key, Type::BYTEA),
+            (&cred.sign_count, Type::INT8),
+            (&cred.transports, Type::TEXT_ARRAY),
+            (&cred.aaguid, Type::BYTEA),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Revoke all of an admin's active credentials within an open transaction (single-sourced so the
+/// standalone `revoke_all_for_admin` and the `register_complete` revoke-priors leg can never drift).
+async fn revoke_all_for_admin_in_tx(
+    tx: &Transaction<'_>,
+    admin_id: Uuid,
+    now: SystemTime,
+) -> Result<()> {
+    tx.execute_typed(
+        "UPDATE admin_webauthn_credentials SET revoked_at = $2 \
+         WHERE admin_id = $1 AND revoked_at IS NULL",
+        &[(&admin_id, Type::UUID), (&now, Type::TIMESTAMPTZ)],
+    )
+    .await?;
+    Ok(())
+}
+
+/// The `core::server` [`AdminWebAuthnStore`] port, realized over Postgres (spec 009 **T02**,
+/// ADR-0027 — the Option B1 admin-passkey persistence the SvelteKit edge drives over the ADR-0026
+/// BFF). Like [`AdminProvisioningStore`], the rows are PII-free (opaque WebAuthn bytes + counters +
+/// server-time instants), so this ships without field-level encryption. Every method runs in a
+/// single tenant-scoped transaction via [`PgAuthStore::begin`] (per-request RLS, fail-closed — D3),
+/// over the unnamed `query_typed*`/`execute_typed` family (ADR-0024). The byte columns
+/// (`credential_id`/`public_key`/`aaguid`) are `bytea`; `transports` is `text[]`.
+impl AdminWebAuthnStore for PgAuthStore {
+    /// Resolve a presented token to its invitation row. The keyed at-rest hash is computed **in the
+    /// core** (`admin_invitation_token_hash` — the ADR-0017 P4 carve-out, not edge-TS; AC4b) and
+    /// looked up by the unique `token_hash` index. The indexed equality is timing-safe because the
+    /// compared value is a secret-keyed 256-bit HMAC, not the token — the same pattern as
+    /// [`find_member_by_phone`](AuthStore::find_member_by_phone) /
+    /// [`classify_refresh`](AuthStore::classify_refresh). A cross-tenant / unknown token resolves to
+    /// `None` (RLS scopes the row to this tenant) — no existence oracle.
+    async fn resolve_invitation_by_token(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+    ) -> Result<Option<AdminInviteRecord>> {
+        let needle = admin_invitation_token_hash(key, token).as_bytes().to_vec();
+        let tx = self.begin().await?;
+        let row = tx
+            .query_typed_opt(
+                "SELECT admin_id, group_id, expires_at, consumed_at FROM admin_invitations \
+                 WHERE token_hash = $1",
+                &[(&needle, Type::BYTEA)],
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(row.map(|r| {
+            let admin_id: Uuid = r.get("admin_id");
+            let group_id: Uuid = r.get("group_id");
+            let expires_at: SystemTime = r.get("expires_at");
+            let consumed_at: Option<SystemTime> = r.get("consumed_at");
+            AdminInviteRecord {
+                admin_id: MemberId::from_uuid(admin_id),
+                group_id,
+                expires_at: system_time_to_unix(expires_at),
+                consumed_at: consumed_at.map(system_time_to_unix),
+            }
+        }))
+    }
+
+    /// Atomically consume an invitation iff still live. One conditional `UPDATE … WHERE consumed_at
+    /// IS NULL` either hits 1 row (consumed here) or 0 (already consumed / unknown / cross-tenant) —
+    /// single-use under concurrency (R15; the same shape as `consume_onboarding_if_live`).
+    async fn consume_invitation(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+        now: UnixSeconds,
+    ) -> Result<bool> {
+        let needle = admin_invitation_token_hash(key, token).as_bytes().to_vec();
+        let now_ts = to_pg_time(now);
+        let tx = self.begin().await?;
+        let n = tx
+            .execute_typed(
+                "UPDATE admin_invitations SET consumed_at = $2 \
+                 WHERE token_hash = $1 AND consumed_at IS NULL",
+                &[(&needle, Type::BYTEA), (&now_ts, Type::TIMESTAMPTZ)],
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(n == 1)
+    }
+
+    /// The admin's active (non-revoked) credentials, oldest first (AC20 — passkey + hardware backup).
+    async fn list_active_credentials(&mut self, admin: MemberId) -> Result<Vec<AdminCredential>> {
+        let aid = admin.as_uuid();
+        let tx = self.begin().await?;
+        let rows = tx
+            .query_typed(
+                "SELECT credential_id, admin_id, public_key, sign_count, transports, aaguid, \
+                 revoked_at FROM admin_webauthn_credentials \
+                 WHERE admin_id = $1 AND revoked_at IS NULL ORDER BY created_at",
+                &[(&aid, Type::UUID)],
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(rows.into_iter().map(credential_from_row).collect())
+    }
+
+    /// The single active credential with this `credential_id` (the usernameless sign-in lookup), or
+    /// `None` (revoked / unknown / cross-tenant — RLS scopes the read despite the global unique index).
+    async fn find_active_credential(
+        &mut self,
+        credential_id: &[u8],
+    ) -> Result<Option<AdminCredential>> {
+        let cid = credential_id.to_vec();
+        let tx = self.begin().await?;
+        let row = tx
+            .query_typed_opt(
+                "SELECT credential_id, admin_id, public_key, sign_count, transports, aaguid, \
+                 revoked_at FROM admin_webauthn_credentials \
+                 WHERE credential_id = $1 AND revoked_at IS NULL",
+                &[(&cid, Type::BYTEA)],
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(row.map(credential_from_row))
+    }
+
+    /// Insert a newly-registered credential (never replaces — multiple active per admin, AC20).
+    async fn insert_credential(
+        &mut self,
+        admin: MemberId,
+        credential: NewAdminCredential,
+    ) -> Result<()> {
+        let group = self.group_id;
+        let tx = self.begin().await?;
+        insert_credential_in_tx(&tx, group, admin.as_uuid(), &credential).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Revoke all of an admin's active credentials (ADR-0016 D4 lost-key recovery).
+    async fn revoke_all_for_admin(&mut self, admin: MemberId, now: UnixSeconds) -> Result<()> {
+        let now_ts = to_pg_time(now);
+        let tx = self.begin().await?;
+        revoke_all_for_admin_in_tx(&tx, admin.as_uuid(), now_ts).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Bump a credential's signature counter only-if-strictly-greater (clone-detection backstop, R10).
+    /// `sign_count < $2` makes a stale/equal counter a no-op (0 rows; not an error). `revoked_at IS
+    /// NULL` is defence-in-depth: a revoked credential is never asserted against (the sign-in path
+    /// reads via `find_active_credential`, which filters revoked rows), so its counter must never
+    /// advance. No `now` parameter: the `updated_at` column is trigger-stamped on UPDATE, so unlike
+    /// the TS `CredentialStore.bumpSignCount(_, _, now)` port this has no server-time analogue.
+    async fn bump_sign_count(&mut self, credential_id: &[u8], new_count: i64) -> Result<()> {
+        let cid = credential_id.to_vec();
+        let tx = self.begin().await?;
+        tx.execute_typed(
+            "UPDATE admin_webauthn_credentials SET sign_count = $2 \
+             WHERE credential_id = $1 AND sign_count < $2 AND revoked_at IS NULL",
+            &[(&cid, Type::BYTEA), (&new_count, Type::INT8)],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Complete a registration in one transaction (R11): atomically consume the invitation (`consumed_at
+    /// IS NULL`, `RETURNING admin_id`), revoke the admin's prior credentials (D4), and insert the new
+    /// one. The admin id is **derived from the consumed row** — never a web-supplied value, so the
+    /// credential binds to exactly the admin the live invitation names. A token matching no live
+    /// invitation in this tenant returns [`RegisterCompleteOutcome::InviteNotConsumable`] with the txn
+    /// rolled back (nothing written). At most one live invitation per admin exists (the
+    /// `admin_invitations_one_live_per_admin` index), so concurrent completions for one admin cannot
+    /// both consume; the conditional `UPDATE` is the single-use guard (no advisory lock needed).
+    async fn register_complete(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+        credential: NewAdminCredential,
+        now: UnixSeconds,
+    ) -> Result<RegisterCompleteOutcome> {
+        let needle = admin_invitation_token_hash(key, token).as_bytes().to_vec();
+        let now_ts = to_pg_time(now);
+        let group = self.group_id;
+        let tx = self.begin().await?;
+        let consumed = tx
+            .query_typed_opt(
+                "UPDATE admin_invitations SET consumed_at = $2 \
+                 WHERE token_hash = $1 AND consumed_at IS NULL RETURNING admin_id",
+                &[(&needle, Type::BYTEA), (&now_ts, Type::TIMESTAMPTZ)],
+            )
+            .await?;
+        let admin_id: Uuid = match consumed {
+            Some(r) => r.get("admin_id"),
+            None => return Ok(RegisterCompleteOutcome::InviteNotConsumable), // tx drops → rollback
+        };
+        // Revoke the admin's prior active credentials (D4), then insert the new one — same txn (R11).
+        revoke_all_for_admin_in_tx(&tx, admin_id, now_ts).await?;
+        insert_credential_in_tx(&tx, group, admin_id, &credential).await?;
+        tx.commit().await?;
+        Ok(RegisterCompleteOutcome::Completed {
+            admin_id: MemberId::from_uuid(admin_id),
+        })
     }
 }
 

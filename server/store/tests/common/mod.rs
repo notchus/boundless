@@ -302,6 +302,53 @@ pub async fn live_invitation_expiry_secs(c: &Client, admin: Uuid) -> Option<i64>
     .map(|r| r.get::<_, i64>("s"))
 }
 
+// --- spec 009 T02: admin-WebAuthn credential helpers (superuser, bypasses RLS) ---
+
+/// Count an admin's **active** (non-revoked) credentials.
+pub async fn active_credentials(c: &Client, admin: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM admin_webauthn_credentials WHERE admin_id=$1 AND revoked_at IS NULL",
+        admin,
+    )
+    .await
+}
+
+/// Count all of an admin's credential rows (active + revoked) — to prove a revoke does not delete.
+pub async fn total_credentials(c: &Client, admin: Uuid) -> i64 {
+    count(
+        c,
+        "SELECT count(*) FROM admin_webauthn_credentials WHERE admin_id=$1",
+        admin,
+    )
+    .await
+}
+
+/// The stored `sign_count` for a credential id, if the row exists (regardless of revocation).
+pub async fn db_sign_count(c: &Client, credential_id: &[u8]) -> Option<i64> {
+    let cid = credential_id.to_vec();
+    c.query_opt(
+        "SELECT sign_count FROM admin_webauthn_credentials WHERE credential_id=$1",
+        &[&cid],
+    )
+    .await
+    .expect("query sign_count")
+    .map(|r| r.get::<_, i64>("sign_count"))
+}
+
+/// Whether a credential id's row is revoked (`revoked_at IS NOT NULL`). Panics if no such row.
+pub async fn credential_revoked(c: &Client, credential_id: &[u8]) -> bool {
+    let cid = credential_id.to_vec();
+    c.query_one(
+        "SELECT revoked_at IS NOT NULL AS revoked FROM admin_webauthn_credentials \
+         WHERE credential_id=$1",
+        &[&cid],
+    )
+    .await
+    .expect("query credential revoked")
+    .get("revoked")
+}
+
 pub const G: u128 = 1;
 pub fn mid(n: u128) -> MemberId {
     MemberId::from_uuid(Uuid::from_u128(n))

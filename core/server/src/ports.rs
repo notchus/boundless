@@ -28,6 +28,9 @@ use boundless_domain::{
     RefreshToken, Role, SessionFamilyId,
 };
 
+use crate::admin_webauthn::{
+    AdminCredential, AdminInviteRecord, NewAdminCredential, RegisterCompleteOutcome,
+};
 use crate::alerts::AdminAlert;
 
 /// A member as the auth paths need it — **PII-free**: the phone exists only as a lookup hash in
@@ -339,4 +342,102 @@ pub trait AdminProvisioningStore: StoreBackend {
         expires_at: UnixSeconds,
         now: UnixSeconds,
     ) -> Result<bool, Self::Error>;
+}
+
+/// The persistence boundary for **Option B1 admin-WebAuthn invite-resolve + credential CRUD** (spec
+/// 009, ADR-0027) — the durable half of the admin passkey onboarding/sign-in the SvelteKit edge
+/// drives over the ADR-0026 BFF shared secret. Kept separate from [`AdminProvisioningStore`] (the
+/// developer *minting* surface) and [`AuthStore`] (member auth): this is the *registration / sign-in*
+/// surface, reached **pre-session** (no acting admin id) by the Worker on the web tier's behalf. Every
+/// method is tenant-scoped by the Worker's single-install `GROUP_ID` (RLS, D3 — never a client/token
+/// value); the rows are PII-free (opaque WebAuthn bytes + counters + server-time instants), so — like
+/// [`AdminProvisioningStore`] — the Postgres impl needs no field-level encryption.
+///
+/// **Atomicity is a port contract** (mirroring [`AuthStore`]): [`consume_invitation`] is one
+/// conditional `UPDATE` (single-use under concurrency — R15), and [`register_complete`] does
+/// consume-invite + revoke-priors + insert-credential in **one transaction** (R11), deriving the admin
+/// id from the just-consumed invitation row (never a web-supplied id).
+///
+/// [`consume_invitation`]: AdminWebAuthnStore::consume_invitation
+/// [`register_complete`]: AdminWebAuthnStore::register_complete
+// Same non-`Send` AFIT rationale as `AuthStore` above (the wasm `?Send` Worker drives these futures).
+#[allow(async_fn_in_trait)]
+pub trait AdminWebAuthnStore: StoreBackend {
+    /// Resolve a **presented** registration token to its pending-admin invitation row, scoped to this
+    /// tenant (the group from `GROUP_ID`, never the token — D3). The token is matched by computing its
+    /// keyed at-rest hash **in the core** (`admin_invitation_token_hash` — the ADR-0017 P4 carve-out,
+    /// not edge-TS; AC4b) and looking it up by the unique `token_hash` index. That indexed equality is
+    /// timing-safe because the compared value is a secret-keyed 256-bit HMAC, not the token — the same
+    /// pattern as [`AuthStore::find_member_by_phone`] / [`AuthStore::classify_refresh`]. A cross-tenant
+    /// token resolves to `None` (RLS), as does an unknown one — **no existence oracle**. The
+    /// TTL/consumed *verdict* (`evaluateInvite`) stays edge-TS; this returns `expires_at`/`consumed_at`
+    /// for it.
+    async fn resolve_invitation_by_token(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+    ) -> Result<Option<AdminInviteRecord>, Self::Error>;
+
+    /// Atomically consume an invitation **iff still live** (`consumed_at IS NULL`); `true` iff THIS
+    /// call consumed it (`false` = already consumed / unknown / cross-tenant — lost the race or no
+    /// match). One conditional `UPDATE` → single-use under concurrency (R15). Standalone; the combined
+    /// registration path is [`register_complete`](Self::register_complete).
+    async fn consume_invitation(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+        now: UnixSeconds,
+    ) -> Result<bool, Self::Error>;
+
+    /// The admin's **active** (non-revoked) credentials (AC20 — an admin may hold a passkey + a
+    /// hardware backup).
+    async fn list_active_credentials(
+        &mut self,
+        admin: MemberId,
+    ) -> Result<Vec<AdminCredential>, Self::Error>;
+
+    /// The single **active** credential with this `credential_id` (the usernameless sign-in lookup —
+    /// the admin id is read off the resolved credential), or `None` (revoked / unknown / cross-tenant).
+    async fn find_active_credential(
+        &mut self,
+        credential_id: &[u8],
+    ) -> Result<Option<AdminCredential>, Self::Error>;
+
+    /// Insert a newly-registered credential for an admin (never replaces — multiple active per admin,
+    /// AC20). The `credential_id` unique index rejects a duplicate.
+    async fn insert_credential(
+        &mut self,
+        admin: MemberId,
+        credential: NewAdminCredential,
+    ) -> Result<(), Self::Error>;
+
+    /// Revoke **all** of an admin's active credentials (the ADR-0016 D4 lost-key recovery primitive —
+    /// a Developer re-invite registration revokes the prior credentials).
+    async fn revoke_all_for_admin(
+        &mut self,
+        admin: MemberId,
+        now: UnixSeconds,
+    ) -> Result<(), Self::Error>;
+
+    /// Bump a credential's signature counter **only if strictly greater** (the WebAuthn clone-detection
+    /// backstop, R10) — a replayed assertion carrying a stale/equal counter does not advance it.
+    async fn bump_sign_count(
+        &mut self,
+        credential_id: &[u8],
+        new_count: i64,
+    ) -> Result<(), Self::Error>;
+
+    /// Complete a registration in **one transaction** (R11): atomically consume the invitation
+    /// (`consumed_at IS NULL`, `RETURNING admin_id`), revoke the admin's prior credentials (D4), and
+    /// insert the new one. The admin id is **derived from the consumed invitation row**, never a
+    /// web-supplied value. [`RegisterCompleteOutcome::InviteNotConsumable`] (rolled back, nothing
+    /// written) when the token matched no live invitation in this tenant — the TOCTOU backstop after
+    /// the edge `evaluateInvite`.
+    async fn register_complete(
+        &mut self,
+        key: &HmacKey,
+        token: &AdminInvitationToken,
+        credential: NewAdminCredential,
+        now: UnixSeconds,
+    ) -> Result<RegisterCompleteOutcome, Self::Error>;
 }

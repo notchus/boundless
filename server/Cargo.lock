@@ -97,12 +97,14 @@ dependencies = [
 name = "boundless-server-core"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "boundless-auth",
  "boundless-crypto",
  "boundless-domain",
  "rand_core 0.9.5",
  "serde",
  "serde_json",
+ "uuid",
  "zeroize",
 ]
 

@@ -50,6 +50,7 @@
 //! admin issuance (spec 008 — this layer exposes no admin phone read).
 
 mod admin;
+mod admin_webauthn;
 mod alerts;
 mod audited;
 mod bind;
@@ -67,6 +68,9 @@ mod signin;
 pub use admin::{
     authorize_developer, AdminInvitation, DevAdminCreateForbidden, DevCaller, DeveloperAuthority,
     INVITE_TTL_SECS,
+};
+pub use admin_webauthn::{
+    AdminCredential, AdminInviteRecord, NewAdminCredential, RegisterCompleteOutcome,
 };
 pub use alerts::{AdminAlert, AlertKind};
 pub use audited::{admin_response_body, AuditedResponse, PiiDisclosure};
@@ -86,9 +90,9 @@ pub use member::{
 };
 pub use phone::{normalize_phone, PhoneNormalizeError};
 pub use ports::{
-    AdminAlertSink, AdminProvisioningStore, AuthStore, DeviceStore, FamilyInfo, MemberRecord,
-    OnboardingCodeRow, RecoveryCodeRow, RefreshClassification, SecretSource, SessionMaterial,
-    SourceKey, StoreBackend,
+    AdminAlertSink, AdminProvisioningStore, AdminWebAuthnStore, AuthStore, DeviceStore, FamilyInfo,
+    MemberRecord, OnboardingCodeRow, RecoveryCodeRow, RefreshClassification, SecretSource,
+    SessionMaterial, SourceKey, StoreBackend,
 };
 pub use recovery::{RecoveryOutcome, RecoveryRequest, RecoveryResponse};
 pub use refresh::{RefreshOutcome, RefreshRequest, RefreshResponse};

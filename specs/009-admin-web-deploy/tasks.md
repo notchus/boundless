@@ -19,9 +19,9 @@
 |---|---|---|
 | AC1 — member BFF fail-closed selector | T05 | ☐ |
 | AC2 — KV session persist / TTL / revoke | T06 | ☐ |
-| AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ☐ |
-| AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ☐ |
-| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T05 (web) | ☐ |
+| AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
+| AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ◐ T02 PG leg done |
+| AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T05 (web) | ◐ T02 core leg done |
 | AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ☐ |
 | AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ☐ |
 | AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ☐ |
@@ -31,7 +31,7 @@
 | AC11 — RP_ID/origin/Referrer-Policy | T09/T12 (local rp-config) · **T13 (edge)** | ☐ |
 | AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ☐ |
 | AC13 — B1 contract-freeze + I5 negative gate | T03 | ☐ |
-| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ☐ |
+| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG leg done |
 | AC15 — wrangler-types/binding drift CI | T09 | ☐ |
 
 ---
@@ -74,6 +74,24 @@ AC14 (local PG isolation). · **Tests (`server/store/tests/admin_webauthn.rs`):*
 leg); `pg_admin_auth_store_isolates_invite_and_credentials_by_tenant` (Group-B token invisible to a
 Group-A-scoped store, AC14). Mirrors `server/store/tests/admin_invitations.rs` + `common/` (`app_store`
 as non-superuser `boundless_app`). · **Blockers:** none. **∥** yes (independent of T01/T03).
+- **Status:** ✅ DONE 2026-06-13. New `AdminWebAuthnStore` port trait + PII-free wire DTOs
+  (`AdminInviteRecord`/`AdminCredential`/`NewAdminCredential`/`RegisterCompleteOutcome`,
+  `core/server/src/admin_webauthn.rs`, snake_case + base64url-no-pad bytea, **keyed-serde pinned**);
+  `impl AdminWebAuthnStore for PgAuthStore` (`server/store/src/lib.rs`, RLS-scoped `query_typed*`,
+  ADR-0024) with `resolve`/`consume`/list/find/insert/`revoke_all`/`bump_sign_count` (only-if-greater,
+  +`revoked_at IS NULL`) + atomic **`register_complete`** (consume + revoke-priors + insert, one txn,
+  admin_id server-derived). `base64`+`uuid` promoted to runtime deps of `core/server` (workspace deps;
+  **no new crate version**; stack-matrix updated; wasm no-getrandom gate ✓). **Tests:** 9 real-PG18 in
+  `server/store/tests/admin_webauthn.rs` (resolve-through-core AC4b · single-use + concurrent-consume
+  R15 · `register_complete` atomic + revokes-priors R11 · persist-across-fresh-store AC3 · sign-count
+  only-if-greater R10 · duplicate-credential_id rejected · tenant isolation AC14) + 2 core serde-pin.
+  All green; clippy `-D warnings` clean; full core+store suites green. **Design call (flag for T03):**
+  AC4b's "match through the core" is realized as `admin_invitation_token_hash` + indexed equality (the
+  `classify_refresh` precedent), not the AC-named `_matches` — reconcile AC4b/ADR-0027 wording at T03
+  (→ DEFERRED). **Review:** 3 lenses (reviewer · security-auditor · adversarial design) + per-finding
+  adversarial verify — **0 crit/high, 0 confirmed findings**; 4 low/nits actioned in-slice (revoke-SQL
+  single-sourced · dup-credential test · `revoked_at IS NULL` on bump · public_key decode-asymmetry
+  doc), the rest → DEFERRED (T03/T04/T05 carry-forwards).
 
 ## T03 — OpenAPI freeze + contract test for the B1 surface
 **Does:** Add the B1 ops + PII-free schemas to `api/openapi.yaml` under the chosen prefix (T01); add a

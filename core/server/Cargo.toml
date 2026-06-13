@@ -29,6 +29,18 @@ rand_core.workspace = true
 # (R2, ADR-0025). `default-features = false` (pinned in core/Cargo.toml) → wasm32-safe, no getrandom,
 # and no NEW crate version (zeroize 1.8.2 already resolves transitively; this adds only the edge).
 zeroize.workspace = true
+# base64 — promoted from a core/crypto dev-dep to a RUNTIME dep here at spec 009 T02 (ADR-0027): the
+# Option B1 admin-WebAuthn wire DTOs (`AdminCredential`/`AdminInviteRecord`, `admin_webauthn.rs`)
+# serialize their `bytea` fields (credential_id/public_key/aaguid) as base64url-no-pad. The serde
+# adapter lives where the wire DTO + serde already live (single-sourced field shape, P4 — the seam
+# the spec-001 `ManifestPointer` miss came through). Pure-Rust, wasm32-safe, no getrandom; already a
+# workspace dep (core/crypto), so this adds NO new crate version — only the dependency edge.
+base64.workspace = true
+# uuid (serde feature, off the wasm randomness path — no v4/rng, per the workspace pin) — the B1
+# `AdminInviteRecord.group_id` wire field serializes as the canonical hyphenated UUID. Promoted from a
+# dev-dep to a RUNTIME edge here at spec 009 T02; same 1.x already pinned for `core::domain`'s
+# `MemberId`, so NO new crate version — only the dependency edge.
+uuid.workspace = true
 
 [dev-dependencies]
 # rand_chacha — seeded `ChaCha20Rng` (CryptoRng) so the `RngSecretSource` tests are reproducible.

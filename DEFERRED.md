@@ -635,6 +635,50 @@
 
 ---
 
+## Admin web deploy — store B1 surface (spec 009 T02 — out-of-scope register)
+
+> T02 (the `AdminWebAuthnStore` Postgres impl + the PII-free wire DTOs) is DONE; these are the
+> review carry-forwards (all low/nit — both reviews + the adversarial pass found 0 crit/high/confirmed).
+
+- [ ] **Reconcile the AC4b / ADR-0027 wording with the as-built token match.** `resolve_invitation_by_token`
+  / `consume_invitation` / `register_complete` realize "the match routes through the Rust core" (AC4b) as
+  `core::admin_invitation_token_hash` + indexed equality on the unique `token_hash` (timing-safe — the
+  compared value is a secret-keyed 256-bit HMAC, the `phone_lookup_hash`/`classify_refresh` precedent),
+  **not** a call to the AC-named `admin_invitation_token_matches`. The store/ports doc comments explain
+  this; lift that rationale into the AC4b text + ADR-0027 (≈ lines 59/134) so a future reader doesn't flag
+  the missing `_matches` call as a regression.
+  - **WHEN:** **T03** (when the contract is frozen / AC4b is ticked).
+
+- [ ] **Worker re-checks the consumed invitation's admin still holds `role=admin` (defense-in-depth).**
+  `register_complete` derives `admin_id` from the consumed invitation row (never web-supplied) and relies
+  on the mint-time invariant that an `admin_invitations` row only ever FKs a `role=admin` member. When T04
+  wires the route, add a defense-in-depth assertion (or document the reliance) that the derived `admin_id`
+  still resolves to a `role=admin` member before binding the credential — mirrors the existing ADR-0026
+  "Worker verifies asserted `X-Admin-Id` actually holds `role=admin`" item.
+  - **WHEN:** **T04** (the deployable Worker route).
+
+- [ ] **`StoreError` from the B1 admin-auth surface must reach the log only via the scrubbed `emit()`
+  sink (P2/I10).** `StoreError::Db`'s `Display` can echo a unique-violation `DETAIL` containing the
+  conflicting `bytea` (a `credential_id` or `token_hash` `\x…` blob). Add this admin-auth surface to the
+  existing "Route `StoreError` through the scrubbed `emit()` path (sec-audit W4)" item, and extend the I10
+  scrubber fixture's unique-violation `\x…` `DETAIL` case to cover a `credential_id`/`token_hash` conflict;
+  T04 must log `StoreError` via `emit()`, never `{e}`/`{:?}`.
+  - **WHEN:** **T04** (Worker logging) + the I10 scrubber suite (T08 of spec 001 / T07-shell-B).
+
+- [ ] **`AdminWebAuthnStore` standalone primitives have no wire consumer yet.** `revoke_all_for_admin` (and
+  `consume_invitation` standalone) ship as part of the full sanctioned port surface but are exercised only
+  by tests / via `register_complete` until the **additive backup-key enrollment** flow lands (spec 001 T15
+  register / a settings UI). Intentional (ADR-0027) — noted so they are not mistaken for unused methods.
+  - **WHEN:** the backup-key enrollment flow.
+
+- [ ] **Bless the B1 wire DTOs `AuditedResponse` + envelope shapes.** `AdminInviteRecord`/`AdminCredential`
+  are PII-free `Serialize` DTOs but are **not** yet on the `audited.rs` sealed `AuditedResponse` allowlist —
+  deferred to T04, where the Worker serializes them (and any `{credentials:[...]}`/`{invite:…}` envelopes
+  T03 freezes) through `admin_response_body`. T04 adds the `impl AuditedResponse`/`sealed::Sealed` for each.
+  - **WHEN:** **T04** (the deployable router) + **T03** (envelope shapes).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.
