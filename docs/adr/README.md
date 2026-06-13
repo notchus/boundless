@@ -48,6 +48,7 @@ The constitution (`.specify/memory/constitution.md`) holds higher authority than
 - [ADR-0024](./0024-hyperdrive-unnamed-statements.md) — Worker→Postgres uses `tokio-postgres`'s unnamed-statement `query_typed*` family (no driver fork); refines ADR-0019 and corrects its named/unnamed polarity
 - [ADR-0025](./0025-per-group-key-lifecycle.md) — Per-Group field-encryption key lifecycle: a symmetric secretbox key, KEK-wrapped in Cloudflare Secrets Store, generated at Group bootstrap (spec 008), rotation runbook-driven (I1)
 - [ADR-0026](./0026-admin-worker-shared-secret-trust.md) — Admin→Worker trust for `/api/admin/*` is a shared-secret BFF gate (`ADMIN_API_SECRET`, constant-time, fail-closed) + the WebAuthn-verified-BFF-asserted `X-Admin-Id` (the I5 audit actor); group from the single-install `GROUP_ID`. The real SvelteKit→Worker call is T10 (I5/I11; spec 008 T09)
+- [ADR-0027](./0027-admin-web-b1-persistence-routing.md) — Admin-web WebAuthn invite/credential **persistence** routes behind new server-to-server Rust Worker endpoints under `/api/admin/webauthn/*` (Option B1; web tier = zero Postgres); the invite-token HMAC compare stays in the core (P4), the ceremony + TTL/consumed verdict stay edge-TS (ADR-0017 carve-out scope unchanged). Refines/extends ADR-0026 (same shared-secret BFF surface) and ADR-0017 (store moves behind the Worker); a combined atomic `register-complete` txn (consume+revoke-priors+insert, R11); pre-session ops carry the secret but no `X-Admin-Id` (spec 009 D1/D2/D3)
 
 ## Suggested early ADRs to author (stubs)
 
