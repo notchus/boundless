@@ -929,6 +929,56 @@
 
 ---
 
+## Admin web deploy — operator first-admin seed (spec 009 T10 — out-of-scope register)
+
+> T10 (`scripts/seed-admin-invite.sh` + `server/store/examples/seed_admin_invite_pg.rs` +
+> `scripts/test-seed-admin-invite.sh`, AC7) is DONE — meta-test green against real PG18, both review
+> findings fixed in-slice. These are the open follow-ups.
+
+- [ ] **The live operator seed run + the deployed-edge onboarding flow.** The seed is proven account-free
+  (throwaway local PG); the operator running it against real Neon and Sarah completing the passkey
+  onboarding at the deployed URL is the live leg.
+  - **WHEN:** **T13** (the deploy) — see `docs/runbooks/deploy-admin-web.md` step 4.
+
+- [ ] **R18 — `created_by` = the Developer identity (audit actor).** The seed leaves
+  `admin_invitations.created_by` / `members.created_by` NULL — there is no Developer WebAuthn identity to
+  attribute the mint to yet, a documented I5/I11 audit-actor gap (NOT a fake sentinel UUID, a recorded
+  deviation from plan §10.4).
+  - **WHEN:** the Developer-minting UI (spec 001 **T08-shell**).
+
+- [ ] **Argv-secret hardening.** `seed-admin-invite.sh` already moves the owner URL + HMAC key to the
+  **env** (an improvement over `bootstrap-group.sh`, which still takes the owner URL as `$1`). Fold the
+  remaining `bootstrap-group.sh` argv-owner-URL into the existing deploy-hardening item (spec 008 deploy
+  tooling / the T11-review sec-auditor F2 argv-secret class).
+  - **WHEN:** the deploy-hardening pass.
+
+- [ ] **Precondition (documented, not a gap):** the seed needs the Group's `groups` row (the FK target) —
+  run `bootstrap-group.sh` first. The seed fails closed with a clear operator message if it is absent.
+  - **WHEN:** N/A (runbook-ordered: bootstrap-group → seed-admin-invite).
+
+---
+
+## Admin web deploy — deploy runbook (spec 009 T11 — out-of-scope register)
+
+> T11 (`docs/runbooks/deploy-admin-web.md`) is DONE; it is a doc, exercised live at T13.
+
+- [ ] **The runbook is exercised live at T13** — the real `wrangler` steps + `pnpm build` + `wrangler
+  deploy` + the smoke are the test (the doc itself has no automated test, like `deploy-worker.md`).
+  - **WHEN:** **T13** (operator deploy).
+
+- [ ] **The `main` + `[assets]` deploy-target keys + the AC15 drift-test classifier extension for the new
+  `ASSETS` binding.** The runbook documents adding the docs-verified adapter-cloudflare 7.2.8 Workers keys
+  (`main = ".svelte-kit/cloudflare/_worker.js"` + `[assets]`) at deploy; the new `ASSETS` binding is a
+  non-KV binding the `wrangler-types-match.test.ts` classifier must learn (today it scopes to KV).
+  - **WHEN:** **T13** (the deploy adds the keys) / spec 009 T09-register (extend the classifier).
+
+- [ ] **The custom-domain RP_ID cutover (D7)** — moving from the `*.workers.dev` host to the production
+  custom admin domain is a `[vars]` config change, but `RP_ID` is permanent, so it is a documented
+  passkey-reset (one Developer re-invite per admin, ADR-0016 D4). The runbook documents both hosts.
+  - **WHEN:** the production custom-domain cutover (a planned operational event).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.

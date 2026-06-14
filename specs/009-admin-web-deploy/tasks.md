@@ -24,7 +24,7 @@
 | AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ✓ all legs done |
 | AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ◐ T07 build-artifact leg done (tree-shake proven under hostile NODE_ENV) |
 | AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ✓ |
-| AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ☐ |
+| AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ✓ |
 | AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ✓ both legs done |
 | AC9 — build + deploy reachable | **T13 (edge)** | ☐ |
 | AC10 — live full E2E | **T13 (edge)** | ☐ |
@@ -329,6 +329,30 @@ emitted **only to stdout** (never argv, never a structured log line — R20); `c
 **Closes:** AC7. · **Tests:** `pg_seed_admin_creates_pending_admin_and_invitation` meta-test (1 null-PII
 admin + 1 invite; no PII; idempotent re-run respects `one_live_per_admin`); a fixture/assert that the
 seed's own log lines never carry the token. · **Blockers:** T02 (the store methods it reuses). **∥** yes.
+- **Status:** ✅ DONE 2026-06-14. New `server/store/examples/seed_admin_invite_pg.rs` (operator example,
+  never compiled into the lib/Worker) drives the **existing** core methods (P4 — no parallel store, no
+  schema change): no admin-id → `create_pending_admin_with_invitation` (null-PII pending Admin + first
+  invite); an admin-id → `reissue_admin_invitation` (atomic supersede-then-insert, R19). Token hash
+  computed **in the core** (`admin_invitation_token_hash`); native-TLS connection (Neon `sslmode=require`
+  / local `disable`, the `bootstrap_group_pg.rs` pattern). **No `println!`** (the lint forbids it in
+  non-test Rust): exit codes (0 created / 3 re-invited / 4 no-such-admin) + a file side-channel for the
+  non-secret admin id. New `scripts/seed-admin-invite.sh` — owner URL + HMAC key + token via **ENV, never
+  argv** (R20); token via `openssl rand -hex 32`; **token printed ONLY to stdout** (`admin_id`/`token`/
+  `onboard_url`), progress to stderr **redacted** (the owner password never logged, P2). `created_by`
+  stays **NULL** — no Developer WebAuthn identity yet, a documented audit-actor gap (R18/F5), NOT a fake
+  sentinel (a recorded deviation from plan §10.4). New `scripts/test-seed-admin-invite.sh` (the AC7
+  meta-test, mirrors `test-bootstrap-group.sh`): throwaway local DB → proves null-PII admin + 1 live
+  invite, **token only on stdout / never stderr** (R20), idempotent re-invite keeps exactly one live
+  invitation (`one_live_per_admin`), and a phantom admin-id is a clean error — **PASSES against real local
+  PG18**; wired into CI after `test-bootstrap-group.sh`. Example builds + clippy `-D warnings` clean.
+  **Review:** 3-lens adversarial workflow (reviewer · security-auditor · correctness) + per-finding
+  verification — 3 confirmed, all **fixed in-slice**: a HIGH+MED (the same defect — the meta-test's
+  defense-in-depth owner-password self-check greped the bare password, which false-fails deterministically
+  in CI where the common password `postgres` is a `postgres://`-scheme substring; passed locally only
+  because the local URL is password-less) → rewritten to assert on the whole `user:pass` **userinfo
+  segment** (a structured token the redacted log can't contain), verified against the exact CI-collision
+  case; a LOW (`SEED_INVITE_TTL_SECS=0` minted an already-expired invite) → added a `>0` guard. The Rust
+  example, the runbook, and the CI step were clean.
 
 ## T11 — Deploy runbook
 **Does:** `docs/runbooks/deploy-admin-web.md`, mirroring `deploy-worker.md`: KV create ×2, secrets
@@ -337,6 +361,18 @@ seed's own log lines never carry the token. · **Blockers:** T02 (the store meth
 `wrangler deploy`, the smoke (T12).
 **Touches:** `docs/runbooks/deploy-admin-web.md` (new). **Closes:** P12 (operability). · **Tests:** none
 (doc; the steps are exercised by T13). · **Blockers:** T09, T10 (so the steps are accurate). **∥** yes.
+- **Status:** ✅ DONE 2026-06-14. New `docs/runbooks/deploy-admin-web.md` (mirrors `deploy-worker.md`):
+  prerequisites (the Rust Worker already deployed + the Group bootstrapped) · **the two footguns up
+  front** — `ADMIN_API_SECRET` byte-identical to the Rust Worker's + can't-be-read-back (a mismatch →
+  opaque `ADMIN_UNAUTHORIZED` 401), and **RP_ID is permanent** (D7, the passkey-reset cutover) · steps:
+  create the 2 KV namespaces (`CHALLENGES` + `ADMIN_SESSIONS`) → fill the `[vars]` hosts → `wrangler secret
+  put ADMIN_API_SECRET` → **the operator first-admin seed (T10)** → **`pnpm build` (the load-bearing
+  `NODE_ENV=production` seam-stripping pin, never a bare `vite build`) + `wrangler deploy`** → the live
+  smoke (forward-references `smoke-deployed-admin-web.sh`, T12). The deploy step pins the **docs-verified**
+  adapter-cloudflare 7.2.8 Workers keys (`main = ".svelte-kit/cloudflare/_worker.js"` + `[assets]`) and
+  flags the AC15 drift-test classifier extension for the new `ASSETS` binding. Custom-domain RP_ID cutover
+  + troubleshooting (401 secret-mismatch / 503 group-key-missing / fail-closed) sections. Doc only —
+  exercised live in T13.
 
 ## T12 — Deployed-edge smoke script
 **Does:** `scripts/smoke-deployed-admin-web.sh`, mirroring `smoke-deployed-edge.sh`: seed invite → register

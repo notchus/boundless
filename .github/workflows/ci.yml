@@ -207,6 +207,13 @@ jobs:
         # toolchain installed above. Self-locating → run from repo root.
         working-directory: ${{ github.workspace }}
         run: bash scripts/test-bootstrap-group.sh
+      - name: Test the first-admin seed script (account-free; throwaway DB — null-PII admin, R20, idempotent re-invite)
+        # Proves scripts/seed-admin-invite.sh + examples/seed_admin_invite_pg.rs mint a null-PII pending
+        # Admin + one live invitation, keep the token OFF stderr (R20), and re-invite idempotently
+        # (one_live_per_admin upheld, R19). Self-contained throwaway DB (boundless_seed_admin_test);
+        # builds the example with the native toolchain installed above. Self-locating → run from root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/test-seed-admin-invite.sh
       - name: Provision the worker test DB (app role + migrations + grants — no seeding)
         # ubuntu-latest ships psql; the script creates the non-superuser LOGIN role the Worker connects
         # as, applies the T06 migrations into public, and grants DML. Self-locating → run from repo root.
