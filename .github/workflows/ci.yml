@@ -243,6 +243,12 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+      - name: Wrangler committed-credential gate over web/wrangler.toml (spec 009 T09 / AC6)
+        # No secret value (ADMIN_API_SECRET / HMAC_KEY / KEK / GROUP_KEY) or non-localhost Postgres
+        # connection string may be committed in web/wrangler.toml — ADMIN_API_SECRET is a `wrangler
+        # secret`; the [vars] (ADMIN_WORKER_BASE / WEBAUTHN_*) are non-secret config. Self-locating → root.
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/check-wrangler-credentials.sh web/wrangler.toml
       - name: Typecheck (svelte-check, strict)
         run: pnpm typecheck
       - name: Unit/integration tests (vitest)

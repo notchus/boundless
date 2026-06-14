@@ -8,10 +8,12 @@
 #   • The `kv-challenge-store.test.ts` Vitest suite calls `getPlatformProxy()` directly against this
 #     same binding (real Miniflare KV, no account).
 #
-# DEPLOY IS DEFERRED (T15-shell leg B, rides with T07-shell-B): there is no `main`/`assets`/
-# `pages_build_output_dir` here yet, so `pnpm build` builds in the adapter's default (Pages) mode with
-# no account; the real deploy-target keys + the real KV namespace `id` + the Hyperdrive binding for the
-# Postgres invite/credential stores are finalized in the deploy slice. See DEFERRED.md.
+# DEPLOY IS OPERATOR-GATED (spec 009 T13): there is no `main`/`assets`/`pages_build_output_dir` here yet,
+# so `pnpm build` builds in the adapter's default (Pages) mode with no account; the real deploy-target keys
+# + the real KV namespace `id`s are finalized at deploy. Under Option B1 (ADR-0027) the web tier holds
+# ZERO Postgres — WebAuthn invite/credential persistence lives behind the Rust admin Worker's B1 endpoints,
+# reached over `ADMIN_WORKER_BASE` + the `ADMIN_API_SECRET` BFF secret — so there is NO web-tier Hyperdrive
+# binding. See DEFERRED.md / docs/adr/0027.
 
 name = "boundless-admin-web"
 compatibility_date = "2026-06-05"
@@ -39,8 +41,19 @@ id = "challenges_placeholder_replaced_at_deploy"
 binding = "ADMIN_SESSIONS"
 id = "admin_sessions_placeholder_replaced_at_deploy"
 
-# Deferred (T15-shell leg B): the Postgres invite/credential stores run over Hyperdrive via the Worker
-# runtime (T07-shell-B). Uncomment + wire when that slice lands.
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = "hyperdrive_placeholder_replaced_at_deploy"
+# Plain (non-secret) configuration (spec 009 T09). These reach the DEPLOYED Worker via
+# `$env/dynamic/private`; in `vite dev` they are NOT visible there (they surface only via `platform.env`,
+# sveltejs/kit#15736), so the dev/e2e in-memory fallback path is unchanged. The byte-identical
+# `ADMIN_API_SECRET` (ADR-0026 BFF) is a `wrangler secret`, NEVER committed here — the credential-scan
+# gate (scripts/check-wrangler-credentials.sh) rejects any secret value in this file (AC6). Hosts carry
+# REPLACE_AT_DEPLOY placeholders; the operator fills the real `*.workers.dev` (or custom-domain) values at
+# deploy (T13).
+[vars]
+# The deployed Rust admin Worker origin (the ADR-0026 BFF target). A URL, not a secret.
+ADMIN_WORKER_BASE = "https://boundless-worker.REPLACE_AT_DEPLOY.workers.dev"
+# WebAuthn Relying-Party config (D7) — fully env-driven so the workers.dev → custom-domain cutover is a
+# config change, not code. RP_ID is PERMANENT: changing it after passkeys exist invalidates them. In
+# dev/test these stay unset (above), so `resolveRpConfig` derives localhost from the request URL.
+WEBAUTHN_RP_ID = "boundless-admin-web.REPLACE_AT_DEPLOY.workers.dev"
+WEBAUTHN_ORIGIN = "https://boundless-admin-web.REPLACE_AT_DEPLOY.workers.dev"
+WEBAUTHN_RP_NAME = "Boundless"

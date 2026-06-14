@@ -1,8 +1,9 @@
-// DEV-ONLY test seam: seed a pending-admin invitation into the interim in-memory store so the
-// Playwright real-ceremony test can register against it. Hard-gated on `dev` (from $app/environment,
-// compile-time `false` in any production build → 404), and namespaced under /api/test/*. The real
-// invite is minted by T08's Worker; this route + the in-memory backend are removed when the
-// KV/Postgres adapters land (T15-shell, DEFERRED).
+// DEV-ONLY test seam: seed a pending-admin invitation into the dev-durable (in-memory) invite store so the
+// Playwright onboarding e2e can register against it. Hard-gated on `dev` (from $app/environment,
+// compile-time `false` in any production build → 404) AND tree-shaken from the prod bundle — proven by
+// tests/build-gates/no-dev-seams.test.ts (AC5). Kept under spec 009 T07 Option A (an invite-seed is unavoidable
+// for the dev onboarding e2e; AC5 is the I11 guarantee). In prod the real invite is operator-seeded into
+// Postgres and resolved via the Worker's B1 endpoint (ADR-0027) — never through this route.
 
 import { dev } from '$app/environment';
 import { error, json } from '@sveltejs/kit';

@@ -1,7 +1,10 @@
 // DEV-ONLY test seam: mint an admin session + set the §10-F cookie directly, so the Playwright member
 // e2e can drive the authenticated `(app)` surface without re-running the full WebAuthn ceremony each
 // test (that ceremony is covered by `admin-onboarding.spec.ts`). Hard-gated on `dev` (404 in any
-// production build). Mirrors the real sign-in's cookie, just without the assertion.
+// production build) AND tree-shaken from the prod bundle — proven by tests/build-gates/no-dev-seams.test.ts
+// (AC5), so this session-minting seam is unreachable in prod (R21/I11). Kept under spec 009 T07 Option A;
+// it writes to the dev-durable session backend (the Miniflare KV in `vite dev`). Mirrors the real
+// sign-in's cookie, just without the assertion.
 
 import { dev } from '$app/environment';
 import { error, json } from '@sveltejs/kit';

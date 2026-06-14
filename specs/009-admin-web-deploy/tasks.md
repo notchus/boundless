@@ -22,17 +22,17 @@
 | AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
 | AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ✓ |
 | AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ✓ all legs done |
-| AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ☐ |
-| AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ☐ |
+| AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ◐ T07 build-artifact leg done (tree-shake proven under hostile NODE_ENV) |
+| AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ✓ |
 | AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ☐ |
-| AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ◐ T04 worker leg done |
+| AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ✓ both legs done |
 | AC9 — build + deploy reachable | **T13 (edge)** | ☐ |
 | AC10 — live full E2E | **T13 (edge)** | ☐ |
-| AC11 — RP_ID/origin/Referrer-Policy | T09/T12 (local rp-config) · **T13 (edge)** | ☐ |
-| AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ☐ |
+| AC11 — RP_ID/origin/Referrer-Policy | T09 (local rp-config) · T12 (Referrer-Policy) · **T13 (edge)** | ◐ T09 local env-driven rp-config leg done |
+| AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ◐ store swap behavior-preserving in dev (152 unit green); axe ×variant e2e is CI-gated |
 | AC13 — B1 contract-freeze + I5 negative gate | T03 | ✓ |
 | AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG + T04 miniflare legs done |
-| AC15 — wrangler-types/binding drift CI | T09 | ☐ |
+| AC15 — wrangler-types/binding drift CI | T09 | ✓ |
 
 ---
 
@@ -253,6 +253,25 @@ seed against a dev backend.
 `ac3_credential_persists_across_cold_start` (virtual authenticator → credential survives a fresh store);
 re-run `admin-onboarding.spec.ts` + `admin-members.spec.ts` as the F12/AC12 regression gate (axe ×variant
 stays green). · **Blockers:** T05, T06. **∥** no.
+- **Status:** ✅ DONE 2026-06-14. `webauthn-deps.ts`: `getWebAuthnDeps` builds ONE per-request
+  `WorkerRegistrationHandshake` shared by `selectInviteStore` + `selectCredentialStore` (the R11
+  register-complete coalescing); the in-memory stores become the dev fallbacks; `resolveInviteStatus`
+  resolves through the selected store; `register.ts`/`authenticate.ts` UNCHANGED (R12, verified). **Dev-seam
+  decision = Option A (owner-chosen):** KEEP all four `/api/test/*` seams (dev-gated), relying on AC5
+  tree-shaking as the prod I11 guarantee — a documented deviation from this task's literal "delete
+  seed-session/seed-invite," which spec §F permits ("repoint-to-durable-store-in-dev"); the keep-and-tree-shake
+  rationale + the literal-delete future option are recorded in DEFERRED.md. **AC5:**
+  `tests/build-gates/no-dev-seams.test.ts` runs the REAL `pnpm build` under a hostile `NODE_ENV=test` and
+  asserts every seam handler's first statement is an unconditional `error(404)`. **Hardening from the review
+  (HIGH):** SvelteKit inlines `dev` from NODE_ENV (NOT Vite `--mode` — both verified), so a `NODE_ENV=test`
+  build shipped the LIVE session-minting seam — **pinned `NODE_ENV=production` in the `package.json` build
+  script**; the AC5 test now proves that pin is load-bearing (builds under the hostile env). Web suite **152**
+  green; typecheck clean; `pnpm build` green. **AC12:** the store swap is behavior-preserving in dev (selectors
+  fall back to the same in-memory stores when `ADMIN_WORKER_BASE` is unset), so the unit suite stands in
+  locally; the axe ×variant Playwright regression is CI-gated. **Review:** 4-lens adversarial workflow
+  (reviewer · security-auditor · platform-parity · correctness) + per-finding verification — 7 confirmed: 2
+  HIGH/MED (the NODE_ENV pin + a `delete env.VITEST` typecheck break) **fixed in-slice**; 4 LOW (scrub gaps,
+  no-console strip edge) → DEFERRED; 1 LOW (this Option-A doc divergence) closed here + in DEFERRED.
 
 ## T08 — Web: scrubbed logging (P2/I10)
 **Does:** `web/src/lib/server/log.ts` (`emit()` scrubber sink) + a `handleError` hook in
@@ -262,6 +281,16 @@ stays green). · **Blockers:** T05, T06. **∥** no.
 no-KV / no-backend operator strings (assert they carry no secret substring) and a **URL-embedded opaque
 invite token** (assert redacted, R13); `handleError` routes uncaught throws through the sink. · **Blockers:**
 none. **∥** yes (parallel with T05, T06).
+- **Status:** ✅ DONE 2026-06-14. New pure `web/src/lib/server/log.ts` — `scrub()` redacts Bearer secrets /
+  `postgres://` conn-strings / ≥32-char high-entropy blobs (incl. the 64-hex/UUID/base64url invite token,
+  R13); `emit()` is the SOLE sanctioned `console` sink; `logServerError()`. `hooks.server.ts` `handleError`
+  routes uncaught throws through it, logging `route.id` (the pattern, never `url.pathname`) and returning
+  void (SvelteKit's default client shape → no new user-visible copy, P8). **Tests:** `web-emit-scrubber.test.ts`
+  (10) + `web/tests/cross-platform/web-no-raw-console.test.ts` (grep-as-test: no raw `console.*` in `web/src`
+  except `log.ts`). Web suite green; typecheck clean. **Review:** the scrub residual gaps (phone/name/address
+  PII; all-digit / base64-`+/=` / sub-32 blobs; the shared `stripComments` `//`-in-string edge) are LOW and
+  mirror the Rust scrubber's already-deferred gaps → DEFERRED (the web tier's primary PII defense is
+  structural: route-id logging + wire-DTOs only; PII stays in the Worker).
 
 ## T09 — wrangler config + bindings + type-drift CI
 **Does:** `web/wrangler.toml` — real `CHALLENGES` id, add `[[kv_namespaces]] ADMIN_SESSIONS`,
@@ -274,6 +303,21 @@ binding (platform-parity F5).
 `web/wrangler.toml` (AC6); `web/tests/build/wrangler-types-match.test.ts` (regen `wrangler types` → diff
 vs committed, AC15); `web/src/lib/server/webauthn/rp-config.test.ts` (RP config fully env-driven, no
 hard-coded host). · **Blockers:** T06 (the `ADMIN_SESSIONS` binding exists). **∥** yes (after T06).
+- **Status:** ✅ DONE 2026-06-14. `wrangler.toml`: added `[vars]` (`ADMIN_WORKER_BASE` +
+  `WEBAUTHN_RP_ID`/`_ORIGIN`/`_RP_NAME`, `REPLACE_AT_DEPLOY` placeholders, **no secret** — `ADMIN_API_SECRET`
+  stays a `wrangler secret`); removed the stale `[[hyperdrive]]` block + comments (B1 = zero web Postgres,
+  platform-parity F5). Verified (docs-researcher + sveltejs/kit#15736): `[vars]` reach the deployed Worker via
+  `$env/dynamic/private` but NOT `vite dev` (only `platform.env`), so the dev/e2e fallback path is unchanged.
+  New pure `webauthn/rp-config.ts` (`resolveRpConfig`: env wins; dev → request URL; outside dev with
+  RP_ID/ORIGIN unset → **throws**, never trusts the request Host — ADR-0017); `webauthn-deps.ts::rpConfig`
+  now calls it. **AC15 is a drift test, NOT the literal D6 generated `App.Platform`:** `wrangler types`' full
+  output bundles a 14k-line workerd runtime whose global `KVNamespace` collides with the pinned
+  `@cloudflare/workers-types` the project uses via `import type` (and the env-only output needs a global
+  `KVNamespace` the project deliberately avoids) → kept the hand-typed `app.d.ts` +
+  `tests/build-gates/wrangler-types-match.test.ts` (runs `wrangler types --include-runtime=false`, asserts the
+  BINDINGS — identifier-typed; `[vars]` are string-literal-typed and excluded — match `App.Platform.env`).
+  **AC6:** the `web` CI job now runs `check-wrangler-credentials.sh web/wrangler.toml`. **Tests:**
+  `rp-config.test.ts` (5) + `wrangler-types-match.test.ts` (1). Web suite green; typecheck clean.
 
 ## T10 — Operator first-admin seed
 **Does:** `scripts/seed-admin-invite.sh` + `server/store/examples/seed_admin_invite_pg.rs` — drive the

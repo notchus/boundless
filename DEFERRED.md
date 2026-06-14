@@ -835,6 +835,100 @@
 
 ---
 
+## Admin web deploy — deps swap + dev-seam Option A (spec 009 T07 — out-of-scope register)
+
+> T07 (the Worker-backed invite/credential store swap + the AC5 build-artifact gate) is DONE. The store
+> swap is behavior-preserving in dev (`ADMIN_WORKER_BASE`/`ADMIN_API_SECRET` are unset under `vite dev`, so
+> the selectors fall back to the same in-memory stores). These are the deferrals + the recorded decision.
+
+- [x] **Decision: dev-seam handling = Option A (keep all four `/api/test/*` seams + rely on AC5
+  tree-shaking), NOT the literal tasks.md "delete seed-session/seed-invite".** The owner chose this; spec §F
+  explicitly permits "repoint-to-durable-store-in-dev." Rationale: the member-session e2e needs a sign-in →
+  a registered passkey → a live invite, so an invite-seed is unavoidable in the no-Postgres `vite dev`
+  environment; AC5 (every seam handler 404s in the prod build) is the real I11 guarantee. **Future
+  hardening option (if AC5-tree-shake is ever deemed insufficient):** delete the two authority seams and
+  rewrite the member e2e to obtain its session via a full virtual-authenticator ceremony.
+  - **WHEN:** a security-hardening pass, only if the tree-shake guarantee is questioned.
+
+- [ ] **Deploy-hygiene: the I11 seam-stripping depends on `NODE_ENV`.** SvelteKit inlines `dev` from
+  `NODE_ENV` (NOT Vite's `--mode` — both verified empirically): `NODE_ENV=production`/unset → `dev=false` →
+  seams 404; ANY non-production `NODE_ENV` (e.g. `test`, which vitest sets) → `dev=true` → the seam ships
+  LIVE. Mitigated in-slice by pinning `NODE_ENV=production` in `web/package.json`'s build script, and the
+  AC5 test (`tests/build-gates/no-dev-seams.test.ts`) builds under a hostile `NODE_ENV=test` to prove the
+  pin is load-bearing. The **deploy runbook (T11) must build via `pnpm build`** (which carries the pin) and
+  document this — never a bare `vite build` with a polluted `NODE_ENV`.
+  - **WHEN:** **T11** (the deploy runbook) — capture the `pnpm build` requirement + the NODE_ENV note.
+
+- [ ] **AC5 deployed-edge 404 probe + AC12 axe ×variant Playwright regression.** The build-artifact tree-shake
+  leg is proven; the live deployed-edge probe (each `/api/test/*` returns 404 on the real Worker) is the T13
+  edge leg, and the admin-onboarding/admin-members axe regression runs in the GitHub-only `web` e2e job
+  (not locally gated, per the project convention; the store swap is behavior-preserving in dev).
+  - **WHEN:** **T13** (edge probe) / first CI run of the extended `web` job (AC12 e2e).
+
+- [ ] **Sign-out / logout route (carried from the T06 register).** `revokeSession` is store-tested only; no
+  `/api/admin/auth/signout` route exists yet. When it lands it must `cookies.delete(ADMIN_SESSION_COOKIE)`
+  AND `await revokeSession(...)` (delete the KV key, not just the cookie).
+  - **WHEN:** the sign-out slice / **T12** (the smoke flow drives it).
+
+---
+
+## Admin web deploy — scrubbed logging (spec 009 T08 — out-of-scope register)
+
+> T08 (the web `emit()` scrubber sink + `handleError` + the no-raw-`console` lint) is DONE. The named AC8
+> requirements (Bearer secrets, `postgres://` conn-strings, the invite token off the log path) are met.
+> These are the review's LOW residual gaps, mirroring the Rust scrubber's already-deferred posture.
+
+- [ ] **`scrub()` residual detector gaps (review LOW).** It does not detect phone numbers, member names, or
+  street addresses, and the high-entropy blob rule misses all-digit 32-char tokens, standard base64 with
+  `+/=` (the Bearer rule includes `+/=` but the blob rule's charset does not — an inconsistency), sub-32-char
+  tokens, and dashed grouped codes (`BNDL-…`/`CODE-ABCD-…`). These mirror the **Rust scrubber's deferred
+  residual-gap list** (spec 001 T16 register). The web tier's PRIMARY PII defense is structural — the BFF
+  carries only wire DTOs, PII stays in the Worker, and `handleError` logs the route PATTERN, never
+  `url.pathname` — so the scrubber is a backstop, not the front line. Tighten (entropy/charset heuristic;
+  align the blob charset with the Bearer rule) on a privacy-hardening pass, with a positive test per closed
+  gap; weigh over-redaction.
+  - **WHEN:** a privacy-hardening pass (with the Rust `emit()` sink work; mirror its residual-gap closures).
+
+- [ ] **`stripComments` false-negative in the grep-as-test lints (review LOW).** A real `console.*` placed
+  after a string literal that contains ` //` on the SAME line is hidden by the regex comment-stripper
+  (`web-no-raw-console.test.ts`, and the identical helper in the spec-001 T05
+  `production-invite-store-is-worker-backed.test.ts`). The common case (a bare `console.log`) is caught; the
+  edge needs a real tokenizer. Shared with the existing T05 lint — fix both together if it ever matters.
+  - **WHEN:** a lint-hardening pass (fix the shared `stripComments` once, in both lints).
+
+- [ ] **Route the B1 `StoreError` + the Rust-Worker log path through a scrubbed sink (separate from this web
+  sink).** This slice is the WEB `emit()`; the deployable Rust-Worker `boundless::logging::emit()` sink
+  (T07-shell-B) and the B1 `StoreError`→`emit()` routing (spec 009 T04 register) are still pending.
+  - **WHEN:** **T07-shell-B** (the Rust-Worker sink) / spec 009 T04 register.
+
+---
+
+## Admin web deploy — wrangler config + bindings (spec 009 T09 — out-of-scope register)
+
+> T09 (the `[vars]` + the env-driven `resolveRpConfig` + the AC15 drift test + the AC6 credential scan) is
+> DONE. The platform-parity F5 stale-Hyperdrive-comment cleanup is also done (closes that leg of the T06
+> register item).
+
+- [ ] **Real resource ids + `[vars]` host values at deploy (T13).** `wrangler.toml` carries
+  `REPLACE_AT_DEPLOY` placeholders for the two KV `id`s and the `ADMIN_WORKER_BASE`/`WEBAUTHN_*` hosts; the
+  operator fills the real `*.workers.dev` (or custom-domain) values at deploy. `ADMIN_API_SECRET` is a
+  `wrangler secret` (byte-identical to the Rust Worker's — R6), never committed.
+  - **WHEN:** **T13** (operator deploy).
+
+- [ ] **D6 literal "`App.Platform` generated by `wrangler types`" was DECLINED — drift test instead.**
+  `wrangler types`' full output bundles a 14k-line workerd runtime whose global `KVNamespace` collides with
+  the pinned `@cloudflare/workers-types` (used via `import type`, deliberately, to avoid global pollution),
+  and the env-only output needs a global `KVNamespace` the project also avoids. So `app.d.ts` stays
+  hand-typed and AC15's INTENT (binding drift fails the build) is met by
+  `tests/build-gates/wrangler-types-match.test.ts`. **Supersedes the T06 register item's "wrangler-types-
+  generated App.Platform" expectation.** The drift test classifies only identifier-typed BINDINGS (the
+  `[vars]` are string-literal-typed and excluded); extend the classifier when a non-KV binding
+  (DurableObject / R2 / Hyperdrive) is first added.
+  - **WHEN:** revisit only if the project drops the `import type` discipline / adopts the full generated
+    runtime types, or when a non-KV binding lands (extend the drift-test classifier).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.

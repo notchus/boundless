@@ -6,12 +6,14 @@
 // store (`KvChallengeStore`, ADR-0017 D3) whenever the `CHALLENGES` binding is present — on the edge
 // under adapter-cloudflare, and in `vite dev`/Playwright where the adapter exposes a local Miniflare KV
 // (T15-shell leg A). It falls back to the in-memory store only for Vitest unit tests / adapterless runs.
-// The **invite/credential** stores remain in-memory (the **Postgres** stores over Hyperdrive — incl. the
-// invite-token HMAC routed through the core per ADR-0017's P4 carve-out — are T15-shell leg B,
-// DEFERRED.md). The RP config is derived from the request URL (env-overridable). This mirrors the Rust
-// Worker composing a real store for one port and an in-memory `DeviceStore` for another until its
-// dependency lands. There is no production deploy yet, so the in-memory invite/credential backend cannot
-// accidentally serve real traffic.
+// The **invite/credential** stores are now the **Worker-backed** B1 adapters (`selectInviteStore` /
+// `selectCredentialStore`, spec 009 T05/T07) whenever `ADMIN_WORKER_BASE` + `ADMIN_API_SECRET` are
+// configured (the deployed edge) — the web tier holds zero Postgres + zero crypto; the invite-token HMAC
+// runs in the Rust core (ADR-0017 P4 carve-out / ADR-0027). They fall back to the in-memory stores ONLY in
+// dev/test (the selectors fail closed in prod, so a misconfigured deploy refuses to serve a fake backend).
+// The RP config is resolved by the pure `resolveRpConfig`. A SINGLE per-request `WorkerRegistrationHandshake`
+// is shared by both stores so `register.ts`'s three-call registration tail coalesces into the one atomic
+// `register-complete` Worker op (R11), while `register.ts`/`authenticate.ts` stay unchanged (R12).
 
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
@@ -21,6 +23,12 @@ import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/ser
 import { buildRegistrationOptions, CHALLENGE_TTL_SECS, evaluateInvite, WebAuthnError } from '$lib/server/webauthn';
 import type { ChallengeStore, Clock, RpConfig, WebAuthnDeps } from '$lib/server/webauthn';
 import { selectChallengeStore } from '$lib/server/webauthn/kv-challenge-store';
+import { resolveRpConfig } from '$lib/server/webauthn/rp-config';
+import {
+	selectCredentialStore,
+	selectInviteStore,
+	WorkerRegistrationHandshake,
+} from '$lib/server/webauthn/worker-stores';
 import {
 	MemoryChallengeStore,
 	MemoryCredentialStore,
@@ -30,9 +38,11 @@ import {
 /** Real server clock (unix seconds) — the only ambient input; everything else is injected. */
 const clock: Clock = { now: () => Math.floor(Date.now() / 1000) };
 
-// In-memory backend. `challenges` is now only the FALLBACK (used when no KV binding is present, e.g.
-// Vitest); `invites`/`credentials` remain the live interim stores (leg B). `let` so the dev-only
-// `/api/test/reset` seam can swap them.
+// In-memory backend — now the dev/test FALLBACK for all three ports. `challenges` is used when no
+// `CHALLENGES` KV binding is present (Vitest/adapterless); `invites`/`credentials` are used when
+// `ADMIN_WORKER_BASE`/`ADMIN_API_SECRET` are unconfigured (dev/e2e under `vite dev`, where the Worker-backed
+// selectors fall back to these). `let` so the dev-only `/api/test/reset` seam can swap them for per-test
+// isolation. In production the selectors return the real stores (or fail closed); these are never reached.
 let challenges = new MemoryChallengeStore(clock);
 let invites = new MemoryInviteStore();
 let credentials = new MemoryCredentialStore();
@@ -54,21 +64,39 @@ function challengeStore(platform: App.Platform | undefined): ChallengeStore {
 
 /**
  * Relying-Party config. Production MUST pin these via env (`WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGIN`/
- * `WEBAUTHN_RP_NAME`) to the known admin domain — never trust the request Host. For the local/test
- * slice we derive from the request URL (localhost), which the env override supersedes when set.
+ * `WEBAUTHN_RP_NAME`, the wrangler.toml `[vars]`) to the known admin domain — never trust the request
+ * Host. The pure `resolveRpConfig` (spec 009 T09) owns the policy: env wins; dev falls back to the request
+ * URL (localhost); outside dev an unset RP config fails closed (throws) rather than trusting the Host.
  */
 function rpConfig(url: URL): RpConfig {
-	return {
-		rpName: env.WEBAUTHN_RP_NAME ?? 'Boundless',
-		rpID: env.WEBAUTHN_RP_ID ?? url.hostname,
-		origin: env.WEBAUTHN_ORIGIN ?? url.origin,
-	};
+	// Narrow `$env/dynamic/private` (an index-signature Record) to the RP slice the resolver reads.
+	return resolveRpConfig(
+		{
+			WEBAUTHN_RP_NAME: env.WEBAUTHN_RP_NAME,
+			WEBAUTHN_RP_ID: env.WEBAUTHN_RP_ID,
+			WEBAUTHN_ORIGIN: env.WEBAUTHN_ORIGIN,
+		},
+		url,
+		{ dev },
+	);
 }
 
-/** Build the deps for one request. Reads the current store singletons (so a dev reset is honored);
- *  selects the real KV challenge store when `platform.env.CHALLENGES` is bound (else in-memory). */
+/**
+ * Build the deps for one request. Selects the real KV challenge store when `platform.env.CHALLENGES` is
+ * bound (else the in-memory fallback), and the Worker-backed invite/credential stores when
+ * `ADMIN_WORKER_BASE`+`ADMIN_API_SECRET` are configured (else the dev fallbacks; fail-closed in prod).
+ * ONE `WorkerRegistrationHandshake` is shared by both stores for this request — that is the R11
+ * register-complete coalescing (`markConsumed` stashes the token, `insert` fires the one atomic op).
+ */
 export function getWebAuthnDeps(url: URL, platform?: App.Platform): WebAuthnDeps {
-	return { rp: rpConfig(url), clock, challenges: challengeStore(platform), invites, credentials };
+	const handshake = new WorkerRegistrationHandshake();
+	return {
+		rp: rpConfig(url),
+		clock,
+		challenges: challengeStore(platform),
+		invites: selectInviteStore(env.ADMIN_WORKER_BASE, env.ADMIN_API_SECRET, invites, dev, handshake),
+		credentials: selectCredentialStore(env.ADMIN_WORKER_BASE, env.ADMIN_API_SECRET, credentials, dev, handshake),
+	};
 }
 
 // — Ceremony challenge key (the KV-challenge key in production) round-tripped via a short-lived
@@ -94,7 +122,10 @@ export function newCeremonyKey(): string {
  * minted lazily by the first register click (`startRegistrationCeremony` via the GET endpoint).
  */
 export async function resolveInviteStatus(token: string): Promise<'live' | 'expired'> {
-	const verdict = evaluateInvite(await invites.load(token), clock.now());
+	// Resolve via the SELECTED invite store (the Worker-backed one in prod, the dev fallback otherwise) so
+	// the SSR status matches the ceremony's store. `load` is read-only — the throwaway handshake is unused.
+	const store = selectInviteStore(env.ADMIN_WORKER_BASE, env.ADMIN_API_SECRET, invites, dev, new WorkerRegistrationHandshake());
+	const verdict = evaluateInvite(await store.load(token), clock.now());
 	return verdict.status === 'live' ? 'live' : 'expired';
 }
 
@@ -136,6 +167,14 @@ export async function startRegistrationCeremony(
 }
 
 // — Dev-only test seams (the `/api/test/*` routes guard these behind `dev`) —
+//
+// Spec 009 T07 / Option A: these seed/reset the DEV-DURABLE backends — here the in-memory invite/credential
+// fallbacks that `vite dev`/Playwright actually run against (no Worker is configured in dev, so the
+// selectors fall back to them). They are `dev`-gated AND tree-shaken from the production bundle (`dev`
+// inlines to `false`), proven by `tests/build-gates/no-dev-seams.test.ts` (AC5) — so no authority-minting seam is
+// reachable in prod (R21/I11). (The literal "delete the authority seams" was weighed against this and
+// declined: an invite-seed is unavoidable for the dev onboarding e2e, and AC5 is the real guarantee — see
+// DEFERRED.md spec 009 T07.)
 
 export interface SeedInviteInput {
 	readonly token: string;
@@ -145,7 +184,8 @@ export interface SeedInviteInput {
 	readonly consumedAt?: number | null;
 }
 
-/** Seed a pending-admin invitation (dev/test only — the real invite is minted by T08's Worker). */
+/** Seed a pending-admin invitation into the dev-durable (in-memory) backend (dev/test only; the real
+ *  invite is operator-seeded into Postgres and resolved via the Worker B1 endpoint in prod). */
 export function seedInvite(input: SeedInviteInput): void {
 	invites.add(input.token, {
 		adminId: input.adminId,
@@ -155,7 +195,7 @@ export function seedInvite(input: SeedInviteInput): void {
 	});
 }
 
-/** Reset the interim in-memory backend (dev/test only) for per-test isolation. */
+/** Reset the dev-durable (in-memory) fallback backend (dev/test only) for per-test isolation. */
 export function resetStores(): void {
 	challenges = new MemoryChallengeStore(clock);
 	invites = new MemoryInviteStore();

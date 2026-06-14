@@ -1,8 +1,8 @@
-// DEV-ONLY test seam: seed a member into the interim in-memory member backend so the Playwright member
-// e2e can list/view/edit it without the Worker. Hard-gated on `dev` (compile-time `false` in any
-// production build → 404), namespaced under /api/test/*. Real members are issued via the Worker; this
-// route + the in-memory backend are removed when the live deployed BFF→Worker round-trip lands
-// (DEFERRED.md → T10).
+// DEV-ONLY test seam: seed a member into the dev-durable (in-memory) member backend so the Playwright
+// member e2e can list/view/edit it without the Worker. Hard-gated on `dev` (compile-time `false` in any
+// production build → 404) AND tree-shaken from the prod bundle — proven by tests/build-gates/no-dev-seams.test.ts
+// (AC5). Kept under spec 009 T07 Option A. In prod, real members are issued/read via the Worker BFF
+// (ADR-0026) — never through this route.
 
 import { dev } from '$app/environment';
 import { error, json } from '@sveltejs/kit';
