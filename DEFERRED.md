@@ -979,6 +979,46 @@
 
 ---
 
+## Admin web deploy — deployed-edge smoke harness (spec 009 T12 — out-of-scope register)
+
+> T12 (`scripts/smoke-deployed-admin-web.sh` + the opt-in Playwright deployed-ceremony leg + the
+> `Referrer-Policy` header + the `POST /api/admin/auth/signout` route) is DONE. The smoke is authored +
+> lint-clean (`bash -n`); the sign-out route + Referrer-Policy are unit/e2e-green locally. The harness
+> **executes live at T13** — there is no clean local dry-run (the dev `/api/test/*` seams are *live* under
+> `vite dev`, so the AC5 seam-404 assertion only holds against a prod build).
+>
+> **In-slice scope expansion (recorded):** tasks.md says "Touches: only the script," but the harness's
+> assertions are only real with two small AC-mapped additions — the `Referrer-Policy` header (AC11, the
+> tracker assigns it to T12) and the sign-out route (AC10's sign-out leg; DEFERRED named "T12 (the smoke
+> flow drives it)" as its WHEN). Both shipped here.
+
+- [ ] **The live run is T13** — the operator runs `smoke-deployed-admin-web.sh <deployed-url>` (and, opt-in,
+  `DEPLOYED_CEREMONY=1` + a fresh `SMOKE_INVITE_TOKEN` from `seed-admin-invite.sh` for the full passkey
+  chain, + `CROSS_TENANT_INVITE_TOKEN` with a 2nd Group seeded). Closes the **(edge)** legs AC9/AC10/AC11/
+  AC14 (and the AC5 deployed-edge seam-404 probe).
+  - **WHEN:** **T13** (operator deploy — `docs/runbooks/deploy-admin-web.md` step 6).
+
+- [ ] **No visible sign-out UI affordance yet** — `POST /api/admin/auth/signout` exists and is driven by the
+  smoke/ceremony directly, but a real Admin has no sign-out button. Add a catalog-keyed nav sign-out
+  control (a `<form method="POST" action="/api/admin/auth/signout">` in `(app)/+layout.svelte`) with its
+  i18n key (`admin.nav.sign_out`) + the a11y/axe pass — a tiny follow-up, deferred to keep T12 to the
+  harness.
+  - **WHEN:** an admin-nav polish slice (or whenever the signed-in chrome is next touched).
+
+- [ ] **The deployed-ceremony leaves a test member in the live roster** — the AC10 ceremony issues one
+  member (unique timestamped phone/name) and there is no member-delete surface (I12 unbuilt), so each live
+  smoke run adds a `Smoke <stamp>` member. Operator note: ignore/rename them, or clear them once
+  `core::deletion` (I12) ships.
+  - **WHEN:** N/A (documented harness behavior) / cleanup arrives with the I12 deletion spec.
+
+- [ ] **Optional `shellcheck` CI step for the new script** — `shellcheck` is not on the dev PATH, so the
+  script is `bash -n`-checked + reviewed against the proven `smoke-deployed-edge.sh` idioms only. The other
+  operator scripts have meta-tests instead of shellcheck; a shared `shellcheck scripts/*.sh` CI lint would
+  cover all of them.
+  - **WHEN:** a CI-hardening pass (covers every `scripts/*.sh`, not just this one).
+
+---
+
 ## Constitution
 
 - [ ] **Replace `Ratified: TODO`** in `.specify/memory/constitution.md` with a real date.

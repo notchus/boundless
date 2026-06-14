@@ -6,6 +6,7 @@ import type { Handle, HandleServerError } from '@sveltejs/kit';
 
 import { direction, resolveLocale } from '$lib/i18n';
 import { logServerError } from '$lib/server/log';
+import { applySecurityHeaders } from '$lib/server/security-headers';
 
 // Route every uncaught server error through the scrubbed sink (P2/I10, spec 009 T08) so a thrown secret /
 // connection string / URL-embedded invite token can never reach a persisted log. Returns void → SvelteKit's
@@ -19,8 +20,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.locale = locale;
 	const dir = direction(locale);
 
-	return resolve(event, {
+	const response = await resolve(event, {
 		transformPageChunk: ({ html }) =>
 			html.replace('lang="en" dir="ltr"', `lang="${locale}" dir="${dir}"`),
 	});
+
+	// App-wide response security headers (spec 009 T12, AC11 — `Referrer-Policy: no-referrer` guards the
+	// URL-embedded invite token, F13). The contract lives in the pure `security-headers` core (unit-tested).
+	return applySecurityHeaders(response);
 };

@@ -174,14 +174,29 @@ Note the printed URL (e.g. `https://boundless-admin-web.<account>.workers.dev`).
 
 ### 6 — Smoke the deployed dashboard
 
+Always-on checks (no seed needed) — reachable + fail-closed gate + `Referrer-Policy: no-referrer` on the
+invite route + `RP_ID` not `localhost` (HTTPS) + every `/api/test/*` seam returning 404:
+
 ```bash
 bash scripts/smoke-deployed-admin-web.sh https://boundless-admin-web.<account>.workers.dev
 ```
 
-The live proof (spec 009 T12): a seeded invite → passkey registration → sign-in → the member list shows
-the live roster → issue one member → sign-out → a request with the revoked cookie returns the
-`/admin/signin` redirect; plus `Referrer-Policy: no-referrer` on the invite route, `RP_ID` not
-`localhost`, and the `/api/test/*` seams returning 404. (Written and run as part of T12/T13.)
+The full AC10 passkey flow (a seeded invite → passkey registration → sign-in → the live roster → issue one
+member → sign-out → the revoked cookie returns the `/admin/signin` redirect). It can't be curl'd, so the
+script shells out to a Chromium virtual-authenticator Playwright leg — opt in with a **fresh**
+`seed-admin-invite.sh` token (the registration consumes it; re-seed for a re-run):
+
+```bash
+# mint a fresh invite (step 4) → export its `token=` → run the ceremony:
+SMOKE_INVITE_TOKEN="<fresh token from step 4>" DEPLOYED_CEREMONY=1 \
+  bash scripts/smoke-deployed-admin-web.sh https://boundless-admin-web.<account>.workers.dev
+```
+
+> The ceremony **issues one test member** (a `Smoke <timestamp>` rider) and there is no member-delete yet
+> — ignore/rename it (cleanup arrives with the I12 deletion spec).
+
+Cross-tenant isolation (AC14 edge leg, opt-in) — prove a token seeded in a **second** Group is invisible
+(resolves 410, like a never-issued token): set `CROSS_TENANT_INVITE_TOKEN=<a token seeded in Group B>`.
 
 ---
 

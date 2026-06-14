@@ -22,16 +22,16 @@
 | AC3 — passkey persists across cold start | T02 (store) · T07 (e2e ceremony) | ◐ T02 store leg done |
 | AC4a — invite single-use + TTL + atomic consume | T02 (PG) · T04 (worker) | ✓ |
 | AC4b — HMAC compare in core, prod store Worker-backed | T02 (core route) · T04 (worker assertion) · T05 (web) | ✓ all legs done |
-| AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T13 (edge probe) | ◐ T07 build-artifact leg done (tree-shake proven under hostile NODE_ENV) |
+| AC5 — no reachable `/api/test/*` in prod | T07 (build-artifact) · T12 (edge-probe harness) · T13 (edge probe) | ◐ T07 build-artifact leg done (tree-shake proven under hostile NODE_ENV); T12 adds the live seam-404 probe |
 | AC6 — `wrangler.toml` no secret/real-id in `[vars]` | T09 | ✓ |
 | AC7 — operator seed (null-PII admin + invite, idempotent) | T10 | ✓ |
 | AC8 — web never logs PII/secrets; token off both log paths | T04 (worker) · T08 (web) | ✓ both legs done |
 | AC9 — build + deploy reachable | **T13 (edge)** | ☐ |
-| AC10 — live full E2E | **T13 (edge)** | ☐ |
-| AC11 — RP_ID/origin/Referrer-Policy | T09 (local rp-config) · T12 (Referrer-Policy) · **T13 (edge)** | ◐ T09 local env-driven rp-config leg done |
+| AC10 — live full E2E | T12 (smoke + ceremony harness) · **T13 (edge run)** | ◐ harness built (sign-out route + Playwright ceremony leg); runs live at T13 |
+| AC11 — RP_ID/origin/Referrer-Policy | T09 (local rp-config) · T12 (Referrer-Policy + sign-out) · **T13 (edge)** | ◐ T09 rp-config + T12 Referrer-Policy (unit+e2e green) done; rpId-not-localhost edge leg T13 |
 | AC12 — a11y/i18n unchanged-and-green | T07 (regression run) | ◐ store swap behavior-preserving in dev (152 unit green); axe ×variant e2e is CI-gated |
 | AC13 — B1 contract-freeze + I5 negative gate | T03 | ✓ |
-| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · **T13 (edge)** | ◐ T02 PG + T04 miniflare legs done |
+| AC14 — new endpoints RLS-scoped (cross-tenant) | T02 (PG) · T04 (miniflare) · T12 (edge harness) · **T13 (edge run)** | ◐ T02 PG + T04 miniflare legs done; T12 adds the pre-session cross-tenant invite-resolve probe |
 | AC15 — wrangler-types/binding drift CI | T09 | ✓ |
 
 ---
@@ -382,6 +382,34 @@ cross-tenant block. Written + lint-clean locally; **run** live in T13.
 **Touches:** `scripts/smoke-deployed-admin-web.sh` (new). **Closes:** (provides the AC10/AC11/AC14-edge
 harness). · **Tests:** shellcheck / a dry-run against `wrangler dev` if feasible. · **Blockers:** T04, T07
 (the flow it drives must exist). **∥** yes.
+- **Status:** ✅ DONE 2026-06-14. New `scripts/smoke-deployed-admin-web.sh` (the admin-web analog of
+  `smoke-deployed-edge.sh`): always-on curl checks — `/admin/signin` reachable · unauth `/admin/members`
+  → 307 `/admin/signin` (fail-closed) · `Referrer-Policy: no-referrer` on the onboard route (AC11/F13) ·
+  every `/api/test/*` → 404 (AC5 edge probe) · no-leak — plus deployed-host-only rpId≠localhost==host +
+  HTTPS (AC11), and three opt-in blocks (live invite-resolve `SMOKE_INVITE_TOKEN`; the full passkey
+  ceremony `DEPLOYED_CEREMONY=1`; the ≥2-Group cross-tenant invite-resolve probe `CROSS_TENANT_INVITE_TOKEN`,
+  AC14 edge leg — mirrors edge-smoke §4). **In-slice scope expansion (beyond the task's "Touches: only the
+  script", both AC-mapped — recorded in DEFERRED):** (a) **`Referrer-Policy: no-referrer`** app-wide via a
+  pure `web/src/lib/server/security-headers.ts` core called by `hooks.server.ts` (AC11 — the tracker
+  assigns Referrer-Policy to T12; the invite token rides in the URL path, F13); (b) **`POST
+  /api/admin/auth/signout`** reusing the existing `revokeSession` (KV-delete + cookie-clear + 303 →
+  `/admin/signin`) — AC10's sign-out leg, which had no route. **Ceremony approach (owner-chosen this
+  session):** a pure-bash/curl smoke can't do a WebAuthn ceremony, so the script shells out (opt-in) to a
+  Chromium CDP-virtual-authenticator **Playwright leg** (`web/playwright.deployed.config.ts` +
+  `web/tests/smoke/deployed-ceremony.spec.ts`) driving the REAL deployed routes
+  (register→signin→list→issue→signout), the invite from the operator seed (T10), separate testDir so the
+  normal e2e job never runs it. **Tests (local-green):** `security-headers.test.ts` (2, bare Vitest) +
+  `tests/e2e/admin-signout.spec.ts` (2, live under `vite dev` — revoke→bounce AC10 + Referrer-Policy AC11);
+  full web suite 154 green; typecheck clean; `bash -n` clean; the deployed config lists 1 test + throws
+  without `DEPLOYED_BASE`. The smoke + ceremony **execute live at T13** (no clean local dry-run — the dev
+  seams are live under `vite dev`, so the AC5 seam-404 assertion only holds against a prod build). **Review:**
+  3-lens adversarial workflow (reviewer · security-auditor · bash/correctness) + per-finding refutation —
+  8 findings, **3 distinct confirmed, all fixed in-slice**: a **HIGH** (the ceremony asserted the in-memory
+  fake's `BNDL-` code prefix, but the live Worker mints 64-char hex → the AC10 issue-step would have failed
+  deterministically at T13 → now asserts the format-agnostic "Member added." status) + 2 LOW (the
+  invite-resolve tmpfile → `mktemp`+EXIT-trap, matching the sibling; the single-use token → out of the curl
+  argv via `curl -K -` stdin config, closing the argv-secret class for this script). The rest refuted
+  (0 uncertain).
 
 ## T13 — (edge) Deploy + live verification — OPERATOR-GATED
 **Does:** The human-gated run (the agent never runs `wrangler deploy`): `pnpm build`, create the 2 KV
